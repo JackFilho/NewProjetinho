@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste Upload Favicon</title>
+</head>
+<body>
+    <h1>Teste de Upload de Favicon</h1>
+    
+    <form id="faviconForm">
+        <div>
+            <label for="favicon">Selecionar Favicon:</label>
+            <input type="file" id="favicon" name="favicon" accept="image/*" required>
+        </div>
+        <button type="submit">Upload Favicon</button>
+    </form>
+    
+    <div id="result"></div>
+    
+    <script>
+        document.getElementById('faviconForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('favicon');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Selecione um arquivo');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('favicon', file);
+            
+            try {
+                console.log('Enviando arquivo:', file.name);
+                
+                const response = await fetch('/api/upload/favicon', {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'include'
+                });
+                
+                console.log('Status:', response.status);
+                console.log('Headers:', Object.fromEntries(response.headers.entries()));
+                
+                const responseText = await response.text();
+                console.log('Response:', responseText);
+                
+                if (response.ok) {
+                    const result = JSON.parse(responseText);
+                    document.getElementById('result').innerHTML = `
+                        <h3>✅ Upload realizado com sucesso!</h3>
+                        <p><strong>URL:</strong> ${result.url}</p>
+                        <p><strong>Filename:</strong> ${result.filename}</p>
+                        <p><strong>Size:</strong> ${result.size} bytes</p>
+                        <img src="${result.url}" alt="Favicon" style="max-width: 64px;">
+                    `;
+                } else {
+                    document.getElementById('result').innerHTML = `
+                        <h3>❌ Erro no upload</h3>
+                        <p><strong>Status:</strong> ${response.status}</p>
+                        <p><strong>Erro:</strong> ${responseText}</p>
+                    `;
+                }
+            } catch (error) {
+                console.error('Erro:', error);
+                document.getElementById('result').innerHTML = `
+                    <h3>❌ Erro de rede</h3>
+                    <p>${error.message}</p>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>

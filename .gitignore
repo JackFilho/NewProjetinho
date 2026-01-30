@@ -1,0 +1,18 @@
+node_modules
+dist
+.DS_Store
+server/public
+vite.config.ts.*
+*.tar.gz
+*.zip
+
+# Arquivos de ambiente
+*.env
+.env
+.env.local
+.env.production
+.env.development
+*server/index.ts
+server/index.ts
+*uploads
+ uploads
