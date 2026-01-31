@@ -645,32 +645,6 @@ async function generateBasicAvailabilityInfo(
     text += `   • ${service.name} - ${service.duration || 30}min - ${price} (ID: ${service.id})\n`;
   }
 
-  text += `
-═══════════════════════════════════════════════════════════════════
-📌 COMO AGENDAR:
-═══════════════════════════════════════════════════════════════════
-
-1. Pergunte ao cliente qual SERVIÇO deseja
-2. Pergunte qual PROFISSIONAL prefere (ou se não tem preferência)
-3. Pergunte qual DATA deseja agendar
-4. Quando o cliente informar a DATA, inclua na sua resposta o comando:
-   [MOSTRAR_HORARIOS_LIVRES:ID_SERVICO:ID_PROFISSIONAL:DATA_FORMATO_YYYY-MM-DD]
-
-   Exemplo: Se o cliente quer "Corte de Cabelo" (ID 1) com "João" (ID 2) no dia 05/02/2026:
-   [MOSTRAR_HORARIOS_LIVRES:1:2:2026-02-05]
-
-5. O sistema vai substituir esse comando pelos horários disponíveis automaticamente
-6. Após o cliente escolher o horário, peça o NOME e TELEFONE
-7. Confirme todos os dados antes de finalizar
-
-⚠️ IMPORTANTE:
-- SEMPRE use o comando [MOSTRAR_HORARIOS_LIVRES:...] para buscar horários
-- NÃO invente horários! O comando retorna apenas horários REALMENTE disponíveis
-- Se não houver horários, sugira outra data ou profissional
-- Use o formato de data YYYY-MM-DD (ex: 2026-02-05 para 05/02/2026)
-
-`;
-
   return text;
 }
 
@@ -5036,7 +5010,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Get company info
       const companyResult = await db.execute(sql`
-        SELECT id, fantasy_name, document, address, google_maps_location, courses_description, courses_images, courses_pdfs, phone, zip_code, number, neighborhood, city, state, email, password, plan_id, plan_status, is_active, ai_agent_prompt, agent_inactivity_timeout, auto_select_professional, openai_api_key, openai_model, openai_temperature, openai_max_tokens, human_request_enabled, human_request_contact, human_request_message, human_request_keywords, human_request_timeout, ignored_numbers, birthday_message, reset_token, reset_token_expires, tour_enabled, trial_expires_at, trial_alert_shown, subscription_status, n8n_webhook_url, n8n_webhook_enabled, created_at, updated_at
+        SELECT id, fantasy_name, document, address, google_maps_location, courses_description, courses_images, courses_pdfs, phone, zip_code, number, neighborhood, city, state, email, password, plan_id, plan_status, is_active, ai_agent_prompt, agent_inactivity_timeout, auto_select_professional, openai_api_key, openai_model, openai_temperature, openai_max_tokens, human_request_enabled, human_request_contact, human_request_message, human_request_keywords, human_request_timeout, course_notification_enabled, course_notification_contact, course_notification_message, course_notification_keywords, course_notification_timeout, ignored_numbers, birthday_message, reset_token, reset_token_expires, tour_enabled, trial_expires_at, trial_alert_shown, subscription_status, n8n_webhook_url, n8n_webhook_enabled, created_at, updated_at
         FROM companies WHERE id = ${companyId}
       `);
 
@@ -5080,6 +5054,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         humanRequestMessage: company.human_request_message,
         humanRequestKeywords: company.human_request_keywords,
         humanRequestTimeout: company.human_request_timeout,
+        courseNotificationEnabled: company.course_notification_enabled === 1,
+        courseNotificationContact: company.course_notification_contact,
+        courseNotificationMessage: company.course_notification_message,
+        courseNotificationKeywords: company.course_notification_keywords,
+        courseNotificationTimeout: company.course_notification_timeout ?? 30,
         ignoredNumbers: company.ignored_numbers,
         birthdayMessage: company.birthday_message,
         resetToken: company.reset_token,
@@ -5449,6 +5428,53 @@ if (ignoredNumbers !== undefined) {
       });
     } catch (error) {
       console.error("❌ [HUMAN-REQUEST] Error updating human request config:", error);
+      res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
+  // Company course notification configuration
+  app.put('/api/company/course-notification', async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      console.log('🔧 [COURSE-NOTIFICATION] Update request - CompanyId:', companyId);
+
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { courseNotificationEnabled, courseNotificationContact, courseNotificationMessage, courseNotificationKeywords, courseNotificationTimeout } = req.body;
+
+      console.log('🔧 [COURSE-NOTIFICATION] Received data:', {
+        courseNotificationEnabled,
+        courseNotificationTimeout,
+        typeOfTimeout: typeof courseNotificationTimeout
+      });
+
+      // Build update object - always include all fields
+      const updateData: any = {
+        courseNotificationEnabled: courseNotificationEnabled ? 1 : 0,
+        courseNotificationContact: courseNotificationContact || null,
+        courseNotificationMessage: courseNotificationMessage || null,
+        courseNotificationKeywords: courseNotificationKeywords || null,
+        courseNotificationTimeout: typeof courseNotificationTimeout === 'number' ? courseNotificationTimeout : 30,
+      };
+
+      console.log('🔧 [COURSE-NOTIFICATION] Saving updateData:', updateData);
+
+      const updatedCompany = await storage.updateCompany(companyId, updateData);
+
+      console.log('🔧 [COURSE-NOTIFICATION] Saved company timeout:', updatedCompany.courseNotificationTimeout);
+
+      res.json({
+        message: "Configuração de notificação de cursos atualizada com sucesso",
+        courseNotificationEnabled: updatedCompany.courseNotificationEnabled === 1,
+        courseNotificationContact: updatedCompany.courseNotificationContact,
+        courseNotificationMessage: updatedCompany.courseNotificationMessage,
+        courseNotificationKeywords: updatedCompany.courseNotificationKeywords,
+        courseNotificationTimeout: updatedCompany.courseNotificationTimeout
+      });
+    } catch (error) {
+      console.error("❌ [COURSE-NOTIFICATION] Error updating course notification config:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
     }
   });
@@ -6253,12 +6279,70 @@ if (ignoredNumbers !== undefined) {
           // Try to find existing conversation
           let conversation = await storage.getConversation(whatsappInstance.companyId, whatsappInstance.id, phoneNumber);
 
+          // ========================================
+          // 🎓 COURSE NOTIFICATION - CHECK FIRST (before timeout check)
+          // ========================================
+          // We need to detect course keywords BEFORE checking timeout
+          // so that even if in human mode, we can still process course inquiries
+
+          let courseKeywordDetected = false;
+          let shouldPauseCourseAI = false;
+          let courseTimeoutValue = 0;
+
+          if (company.courseNotificationEnabled === 1) {
+            console.log('🔍 [COURSE-NOTIFICATION] Pre-check: Feature enabled - checking for keywords...');
+
+            let messageTextToCheckForCourse = messageText;
+            let courseKeywords: string[] = [];
+
+            try {
+              if (company.courseNotificationKeywords) {
+                if (company.courseNotificationKeywords.startsWith('[')) {
+                  courseKeywords = JSON.parse(company.courseNotificationKeywords);
+                } else {
+                  courseKeywords = company.courseNotificationKeywords
+                    .split('\n')
+                    .map((k: string) => k.trim())
+                    .filter((k: string) => k.length > 0);
+                }
+              }
+            } catch (error) {
+              console.log('⚠️ [COURSE-NOTIFICATION] Error parsing keywords:', error);
+            }
+
+            if (courseKeywords.length > 0 && messageTextToCheckForCourse) {
+              const messageTextLowerForCourse = messageTextToCheckForCourse.toLowerCase();
+              courseKeywordDetected = courseKeywords.some((keyword: string) =>
+                messageTextLowerForCourse.includes(keyword.toLowerCase())
+              );
+
+              if (courseKeywordDetected) {
+                console.log('✅ [COURSE-NOTIFICATION] Course keyword detected in pre-check!');
+                console.log('🔍 [COURSE-NOTIFICATION] Raw timeout from DB:', company.courseNotificationTimeout, 'type:', typeof company.courseNotificationTimeout);
+                // Use ?? instead of || to handle 0 correctly (0 means "don't pause")
+                courseTimeoutValue = company.courseNotificationTimeout ?? 30;
+                shouldPauseCourseAI = courseTimeoutValue > 0;
+                console.log(`⚙️ [COURSE-NOTIFICATION] Timeout value: ${courseTimeoutValue} minutes`);
+                console.log(`⚙️ [COURSE-NOTIFICATION] Will pause AI: ${shouldPauseCourseAI}`);
+              }
+            }
+          }
+
           if (conversation && conversation.takeoverMode === 'human') {
             console.log('🔍 HUMAN TAKEOVER ACTIVE: Checking timeout...');
 
-            // Always use agentInactivityTimeout for manual takeovers
-            // humanRequestTimeout is only relevant when client explicitly requests human assistance
-            console.log(`⚙️ Using Agent Inactivity timeout: ${timeoutMinutes} minutes`);
+            // Determine which timeout to use:
+            // - If course notification is enabled and has a timeout > 0, use courseNotificationTimeout
+            // - Otherwise use agentInactivityTimeout
+            let effectiveTimeout = timeoutMinutes; // default: agentInactivityTimeout
+
+            if (company.courseNotificationEnabled === 1 && company.courseNotificationTimeout !== undefined && company.courseNotificationTimeout !== null) {
+              // Use course notification timeout if it's set (even if 0, which means no pause)
+              effectiveTimeout = company.courseNotificationTimeout;
+              console.log(`⚙️ Using Course Notification timeout: ${effectiveTimeout} minutes`);
+            } else {
+              console.log(`⚙️ Using Agent Inactivity timeout: ${effectiveTimeout} minutes`);
+            }
 
             const now = new Date();
             const lastMessageTime = new Date(conversation.lastMessageAt || 0);
@@ -6266,18 +6350,25 @@ if (ignoredNumbers !== undefined) {
 
             console.log('⏰ Last human message:', lastMessageTime.toISOString());
             console.log('⏰ Minutes elapsed:', minutesSinceLastMessage.toFixed(2));
-            console.log(`⏰ Timeout threshold: ${timeoutMinutes} minutes`);
+            console.log(`⏰ Timeout threshold: ${effectiveTimeout} minutes`);
 
-            if (minutesSinceLastMessage < timeoutMinutes) {
-              console.log('🚫 HUMAN TAKEOVER ACTIVE: AI blocked');
-              console.log(`⏰ Time remaining: ${(timeoutMinutes - minutesSinceLastMessage).toFixed(2)} minutes`);
-              console.log('👤 Human is still in control of this conversation');
+            if (minutesSinceLastMessage < effectiveTimeout) {
+              // Check if this is a course keyword - if so, let AI respond first
+              if (courseKeywordDetected) {
+                console.log('🎓 [COURSE-NOTIFICATION] Course keyword detected - letting AI respond before pause');
+                // Don't return, let the AI process the course inquiry
+                // After AI responds, we'll pause again
+              } else {
+                console.log('🚫 HUMAN TAKEOVER ACTIVE: AI blocked');
+                console.log(`⏰ Time remaining: ${(effectiveTimeout - minutesSinceLastMessage).toFixed(2)} minutes`);
+                console.log('👤 Human is still in control of this conversation');
 
-              return res.status(200).json({
-                received: true,
-                processed: true,
-                reason: `Human takeover active - ${(timeoutMinutes - minutesSinceLastMessage).toFixed(2)} minutes remaining`
-              });
+                return res.status(200).json({
+                  received: true,
+                  processed: true,
+                  reason: `Human takeover active - ${(effectiveTimeout - minutesSinceLastMessage).toFixed(2)} minutes remaining`
+                });
+              }
             } else {
               console.log('✅ HUMAN TAKEOVER TIMEOUT: Returning control to AI');
               console.log('🤖 AI agent resuming conversation handling');
@@ -6497,6 +6588,224 @@ if (ignoredNumbers !== undefined) {
                   });
                 }
               }
+            }
+          }
+
+          // ========================================
+          // 🎓 COURSE NOTIFICATION - Store data for post-AI processing
+          // ========================================
+          // We already detected course keywords above (before timeout check)
+          // Now we just need to store data for sending notification AFTER AI responds
+          // The AI will respond first, then we'll send notification and pause if configured
+
+          if (courseKeywordDetected) {
+            console.log('🎓 [COURSE-NOTIFICATION] Course keyword was detected');
+            console.log(`⚙️ [COURSE-NOTIFICATION] Pause AI after: ${shouldPauseCourseAI}, timeout=${courseTimeoutValue} minutes`);
+
+            // Get course PDFs to send
+            let coursePdfsToSend: string[] = [];
+            if (company.coursesPdfs) {
+              coursePdfsToSend = company.coursesPdfs
+                .split(',')
+                .map((url: string) => url.trim())
+                .filter((url: string) => url.length > 0);
+              console.log('📄 [COURSE-NOTIFICATION] PDFs available:', coursePdfsToSend);
+            }
+
+            // If we have PDFs, send them directly WITHOUT AI response
+            if (coursePdfsToSend.length > 0) {
+              console.log('📄 [COURSE-NOTIFICATION] Sending PDF directly (skipping AI response)');
+
+              // Create conversation if it doesn't exist
+              if (!conversation) {
+                conversation = await storage.createConversation({
+                  companyId: whatsappInstance.companyId,
+                  whatsappInstanceId: whatsappInstance.id,
+                  phoneNumber: phoneNumber,
+                  contactName: message.pushName || phoneNumber,
+                  lastMessageAt: new Date(),
+                  takeoverMode: shouldPauseCourseAI ? 'human' : 'agent'
+                });
+              }
+
+              // Save user message
+              await storage.createMessage({
+                conversationId: conversation.id,
+                content: messageText,
+                role: 'user',
+                messageType: 'text',
+                delivered: true,
+                timestamp: new Date(),
+              });
+
+              // Format phone number for Evolution API
+              let pdfPhoneForApi = phoneNumber.replace(/\D/g, '');
+              if (!pdfPhoneForApi.startsWith('55') && pdfPhoneForApi.length >= 10) {
+                pdfPhoneForApi = '55' + pdfPhoneForApi;
+              }
+
+              // Send PDFs directly
+              try {
+                const globalSettings = await storage.getGlobalSettings();
+                if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
+                  const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+
+                  for (const pdfUrl of coursePdfsToSend) {
+                    try {
+                      console.log('📤 [COURSE-PDF] Sending PDF:', pdfUrl);
+
+                      // Extract file path from URL
+                      let filePath = pdfUrl;
+                      try {
+                        const urlObj = new URL(pdfUrl);
+                        filePath = urlObj.pathname.substring(1);
+                      } catch {
+                        filePath = pdfUrl.replace(/^\//, '');
+                      }
+
+                      // Full path on server
+                      const fullPath = path.join(process.cwd(), filePath);
+
+                      if (!fs.existsSync(fullPath)) {
+                        console.error('❌ [COURSE-PDF] File not found:', fullPath);
+                        continue;
+                      }
+
+                      // Read file and convert to base64
+                      const fileBuffer = fs.readFileSync(fullPath);
+                      const base64Data = fileBuffer.toString('base64');
+
+                      // Create filename with company name
+                      const companyNameSafe = (company.fantasyName || 'empresa')
+                        .toLowerCase()
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .replace(/[^a-z0-9]/g, '-')
+                        .replace(/-+/g, '-')
+                        .replace(/^-|-$/g, '');
+                      const customFileName = `${companyNameSafe}-cursos.pdf`;
+
+                      // Prepare caption with course description
+                      const caption = company.coursesDescription
+                        ? `📄 *Informações do Curso*\n\n${company.coursesDescription}`
+                        : '📄 Informações do Curso';
+
+                      // Send document via Evolution API
+                      const mediaPayload = {
+                        number: pdfPhoneForApi,
+                        mediatype: 'document',
+                        mimetype: 'application/pdf',
+                        caption: caption,
+                        media: base64Data,
+                        fileName: customFileName
+                      };
+
+                      const mediaResponse = await fetch(`${correctedApiUrl}/message/sendMedia/${instanceName}`, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'apikey': globalSettings.evolutionApiGlobalKey
+                        },
+                        body: JSON.stringify(mediaPayload)
+                      });
+
+                      if (mediaResponse.ok) {
+                        console.log('✅ [COURSE-PDF] PDF sent successfully:', customFileName);
+
+                        // Save assistant message (PDF sent)
+                        await storage.createMessage({
+                          conversationId: conversation.id,
+                          content: `[PDF enviado: ${customFileName}]\n\n${caption}`,
+                          role: 'assistant',
+                          messageType: 'document',
+                          delivered: true,
+                          timestamp: new Date(),
+                        });
+                      } else {
+                        const errorText = await mediaResponse.text();
+                        console.error('❌ [COURSE-PDF] Failed to send PDF:', mediaResponse.status, errorText);
+                      }
+                    } catch (pdfError) {
+                      console.error('❌ [COURSE-PDF] Error sending PDF:', pdfError);
+                    }
+                  }
+
+                  // Send notification to configured contact
+                  if (company.courseNotificationContact) {
+                    const defaultMessage = shouldPauseCourseAI
+                      ? '🎓 *Interesse em Curso Detectado!*\n\n👤 Cliente: {clientName}\n📞 Telefone: {clientPhone}\n💬 Mensagem: {message}\n⏰ Horário: {time}\n\n⏸️ O agente IA foi pausado por ' + courseTimeoutValue + ' minutos.'
+                      : '🎓 *Interesse em Curso Detectado!*\n\n👤 Cliente: {clientName}\n📞 Telefone: {clientPhone}\n💬 Mensagem: {message}\n⏰ Horário: {time}\n\n✅ PDF do curso enviado automaticamente.';
+
+                    let notificationMessage = company.courseNotificationMessage || defaultMessage;
+                    const now = new Date();
+                    notificationMessage = notificationMessage
+                      .replace('{clientName}', message.pushName || phoneNumber)
+                      .replace('{clientPhone}', phoneNumber)
+                      .replace('{message}', messageText?.substring(0, 200) || '')
+                      .replace('{time}', now.toLocaleString('pt-BR'));
+
+                    await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': globalSettings.evolutionApiGlobalKey
+                      },
+                      body: JSON.stringify({
+                        number: company.courseNotificationContact,
+                        text: notificationMessage
+                      })
+                    });
+                    console.log('✅ [COURSE-NOTIFICATION] Notification sent');
+                  }
+
+                  // Pause AI if configured
+                  if (shouldPauseCourseAI && conversation) {
+                    await storage.updateConversation(conversation.id, {
+                      takeoverMode: 'human',
+                      lastMessageAt: new Date(),
+                    });
+                    console.log(`✅ [COURSE-NOTIFICATION] AI paused for ${courseTimeoutValue} minutes`);
+                  }
+                }
+              } catch (error) {
+                console.error('❌ [COURSE-PDF] Error in course PDF process:', error);
+              }
+
+              // Return - don't let AI respond
+              return res.status(200).json({
+                received: true,
+                processed: true,
+                reason: 'Course PDF sent directly'
+              });
+            }
+
+            // If no PDFs available, let AI respond normally
+            // Store data for post-AI processing (notification only)
+            (req as any).courseNotificationData = {
+              shouldSendNotification: true,
+              shouldPauseAI: shouldPauseCourseAI,
+              timeoutMinutes: courseTimeoutValue,
+              contactName: message.pushName || phoneNumber,
+              phoneNumber: phoneNumber,
+              messageText: messageText,
+              courseNotificationContact: company.courseNotificationContact,
+              courseNotificationMessage: company.courseNotificationMessage,
+              instanceName: instanceName,
+              coursePdfsToSend: [],
+              coursesDescription: company.coursesDescription,
+              companyName: company.fantasyName
+            };
+
+            // Create conversation if it doesn't exist
+            if (!conversation) {
+              conversation = await storage.createConversation({
+                companyId: whatsappInstance.companyId,
+                whatsappInstanceId: whatsappInstance.id,
+                phoneNumber: phoneNumber,
+                contactName: message.pushName || phoneNumber,
+                lastMessageAt: new Date(),
+                takeoverMode: 'agent'
+              });
             }
           }
 
@@ -7145,9 +7454,9 @@ INFORMAÇÕES DA EMPRESA:
   company.city && company.state ? `${company.city}/${company.state}` : company.city || company.state
 ].filter(Boolean).join(', ') || 'Não informado'}${company.googleMapsLocation ? `\n- Localização Google Maps: ${company.googleMapsLocation}` : ''}
 - Telefone: ${company.phone || 'Não informado'}
-- CEP: ${company.zipCode || 'Não informado'}${company.coursesDescription ? `\n\nINFORMAÇÕES SOBRE CURSOS:\n${company.coursesDescription}` : ''}${company.coursesImages ? `\n\n🖼️ IMAGENS DOS CURSOS DISPONÍVEIS:\n${company.coursesImages}` : ''}${company.coursesPdfs ? `\n\n📄 PDFs DOS CURSOS DISPONÍVEIS:\n${company.coursesPdfs}` : ''}
+- CEP: ${company.zipCode || 'Não informado'}${company.coursesDescription ? `\n\n🎓 ========================================\nINFORMAÇÕES SOBRE CURSOS (ENVIAR EXATAMENTE COMO ESTÁ):\n========================================\n${company.coursesDescription}` : ''}
 
-Use essas informações para responder perguntas sobre localização, endereço, telefone e como chegar ao estabelecimento.${company.googleMapsLocation ? '\n\nIMPORTANTE: Quando o cliente perguntar sobre o endereço ou localização, além de informar o endereço completo, envie também o link do Google Maps para facilitar a navegação.\n\n⚠️ ATENÇÃO - FORMATO DE LINKS: Ao enviar o link do Google Maps, envie APENAS a URL completa SEM formatação markdown. NÃO use [texto](link). Envie o link direto, por exemplo: "Para facilitar, aqui está o link do Google Maps: https://maps.app.goo.gl/xxxxx"' : ''}${company.coursesImages || company.coursesPdfs ? '\n\n🎓 ========================================\n⚠️ REGRA OBRIGATÓRIA - ENVIO DE MATERIAIS DE CURSO\n========================================\n\nSEMPRE que você responder qualquer pergunta sobre cursos (valores, detalhes, informações, etc), você DEVE incluir as imagens/PDFs disponíveis.\n\n📋 COMO FAZER:\n\n1. Escreva sua resposta normalmente (descrição, valor, detalhes do curso)\n2. DEPOIS da sua resposta, em uma NOVA LINHA, adicione o comando:\n   [ENVIAR_ARQUIVO_CURSO:URL_COMPLETA_DO_ARQUIVO]\n\n3. Use a URL EXATA que aparece acima em "🖼️ IMAGENS DOS CURSOS" ou "📄 PDFs DOS CURSOS"\n\n✅ EXEMPLO CORRETO:\n\nCliente: "tem curso iniciante?"\n\nSua resposta:\nBom dia! 😊 O curso iniciante tem o valor de R$ 500,00.\n\nSe quiser saber mais detalhes ou garantir sua vaga, é só me avisar!\n[ENVIAR_ARQUIVO_CURSO:http://localhost:5000/uploads/courses/course-1769256177061-113766429.jfif]\n\n⚠️ ATENÇÃO:\n- O comando [ENVIAR_ARQUIVO_CURSO:URL] deve vir APÓS sua resposta\n- Copie a URL EXATAMENTE como aparece acima\n- NÃO inclua a URL diretamente no texto da resposta\n- O sistema enviará automaticamente a imagem/PDF como anexo no WhatsApp' : ''}
+Use essas informações para responder perguntas sobre localização, endereço, telefone e como chegar ao estabelecimento.${company.googleMapsLocation ? '\n\nIMPORTANTE: Quando o cliente perguntar sobre o endereço ou localização, além de informar o endereço completo, envie também o link do Google Maps para facilitar a navegação.\n\n⚠️ ATENÇÃO - FORMATO DE LINKS: Ao enviar o link do Google Maps, envie APENAS a URL completa SEM formatação markdown. NÃO use [texto](link). Envie o link direto, por exemplo: "Para facilitar, aqui está o link do Google Maps: https://maps.app.goo.gl/xxxxx"' : ''}${company.coursesDescription ? `\n\n🎓 ========================================\n⚠️ REGRAS CRÍTICAS - PERGUNTAS SOBRE CURSOS\n========================================\n\n🚨 REGRA ÚNICA - DESCRIÇÃO EXATA:\nQuando o cliente perguntar sobre cursos, você DEVE enviar as informações EXATAMENTE como estão cadastradas acima em "INFORMAÇÕES SOBRE CURSOS".\nNÃO resuma, NÃO reformule, NÃO omita detalhes. Copie e cole a informação INTEIRA.\n\n📄 NOTA: O sistema enviará automaticamente o PDF do curso após sua resposta. Você NÃO precisa mencionar o PDF na sua mensagem.` : ''}
 
 HOJE É: ${today.toLocaleDateString('pt-BR')} (${['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'][today.getDay()]})
 HORÁRIO ATUAL: ${today.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
@@ -7228,29 +7537,29 @@ ETAPA 2 - SERVIÇO:
    → "Aqui estão os serviços disponíveis:\n[lista]\n\nQual serviço você gostaria?"
    → AGUARDE o cliente escolher o serviço`}
 
-ETAPA ${shouldAutoSelect ? '2' : '3'} - NOME:
-   → SOMENTE APÓS o cliente escolher o SERVIÇO, pergunte o nome
-   → "Qual é o seu nome?"
-   → AGUARDE o cliente informar o nome
-   → ⚠️ NUNCA pergunte o nome ANTES do serviço!
-
-ETAPA ${shouldAutoSelect ? '3' : '4'} - DATA:
-   → APÓS ter o nome, pergunte a data
+ETAPA ${shouldAutoSelect ? '2' : '3'} - DATA:
+   → APÓS o cliente escolher o SERVIÇO, pergunte a data
    → "Em qual dia você gostaria de agendar?"
    → AGUARDE o cliente informar a data
 
-ETAPA ${shouldAutoSelect ? '4' : '5'} - HORÁRIO:
+ETAPA ${shouldAutoSelect ? '3' : '4'} - HORÁRIO:
    → APÓS ter a data, use o comando para buscar horários:
    → [MOSTRAR_HORARIOS_LIVRES:ID_SERVICO:ID_PROFISSIONAL:DATA_YYYY-MM-DD]
    → "Vou verificar os horários!\n\n[MOSTRAR_HORARIOS_LIVRES:X:Y:YYYY-MM-DD]\n\nQual horário você prefere?"
+
+ETAPA ${shouldAutoSelect ? '4' : '5'} - NOME:
+   → SOMENTE APÓS o cliente escolher o HORÁRIO, pergunte o nome
+   → "Qual é o seu nome?"
+   → AGUARDE o cliente informar o nome
+   → ⚠️ NUNCA pergunte o nome ANTES do horário!
 
 ETAPA ${shouldAutoSelect ? '5' : '6'} - CONFIRMAÇÃO:
    → APÓS ter todos os dados, mostre o RESUMO e peça confirmação com "SIM"
 
 ⚠️ REGRAS CRÍTICAS:
 - NUNCA pule etapas - siga a ordem EXATA acima
-- NUNCA pergunte o NOME antes de ter o SERVIÇO
-- NUNCA pergunte a DATA antes de ter o NOME
+- NUNCA pergunte o NOME antes de ter o HORÁRIO
+- NUNCA pergunte a DATA antes de ter o SERVIÇO
 - Se o cliente pular etapas, volte e colete os dados faltantes NA ORDEM CORRETA
 - Ao listar serviços, mostre APENAS o nome (sem preço nem duração)
 
@@ -7599,67 +7908,62 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                       // Enviar erro ao cliente
                       try {
                         console.log('📤 [CONFLITO] Iniciando envio de mensagem de conflito ao cliente...');
-                        const instances = await storage.getWhatsappInstancesByCompany(company.id);
-                        const activeInstanceForConflict = instances.find(i => i.status === 'connected');
-                        console.log(`📤 [CONFLITO] Instância encontrada: ${activeInstanceForConflict?.instanceName || 'NENHUMA'}`);
+                        // Usar a instância já obtida no escopo (whatsappInstance) ao invés de buscar novamente
+                        console.log(`📤 [CONFLITO] Usando instância já obtida: ${whatsappInstance.instanceName}`);
 
-                        if (activeInstanceForConflict) {
-                          const globalSettings = await storage.getGlobalSettings();
-                          console.log(`📤 [CONFLITO] Evolution API URL: ${globalSettings?.evolutionApiUrl || 'NÃO CONFIGURADA'}`);
+                        const globalSettings = await storage.getGlobalSettings();
+                        console.log(`📤 [CONFLITO] Evolution API URL: ${globalSettings?.evolutionApiUrl || 'NÃO CONFIGURADA'}`);
 
-                          if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
-                            let formattedPhone = phoneNumber.replace(/\D/g, '');
-                            if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
-                              formattedPhone = '55' + formattedPhone;
-                            }
-                            console.log(`📤 [CONFLITO] Telefone formatado: ${formattedPhone}`);
+                        if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
+                          let formattedPhone = phoneNumber.replace(/\D/g, '');
+                          if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
+                            formattedPhone = '55' + formattedPhone;
+                          }
+                          console.log(`📤 [CONFLITO] Telefone formatado: ${formattedPhone}`);
 
-                            const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-                            console.log(`📤 [CONFLITO] URL corrigida: ${correctedApiUrl}`);
+                          const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+                          console.log(`📤 [CONFLITO] URL corrigida: ${correctedApiUrl}`);
 
-                            console.log('📤 [CONFLITO] Enviando typing presence...');
-                            await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, activeInstanceForConflict.instanceName, formattedPhone, 2000);
-                            await new Promise(resolve => setTimeout(resolve, 2000));
+                          console.log('📤 [CONFLITO] Enviando typing presence...');
+                          await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, whatsappInstance.instanceName, formattedPhone, 2000);
+                          await new Promise(resolve => setTimeout(resolve, 2000));
 
-                            console.log('📤 [CONFLITO] Enviando mensagem via Evolution API...');
-                            const sendUrl = `${correctedApiUrl}/message/sendText/${activeInstanceForConflict.instanceName}`;
-                            console.log(`📤 [CONFLITO] URL de envio: ${sendUrl}`);
+                          console.log('📤 [CONFLITO] Enviando mensagem via Evolution API...');
+                          const sendUrl = `${correctedApiUrl}/message/sendText/${whatsappInstance.instanceName}`;
+                          console.log(`📤 [CONFLITO] URL de envio: ${sendUrl}`);
 
-                            const conflictResponse = await fetch(sendUrl, {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': globalSettings.evolutionApiGlobalKey
-                              },
-                              body: JSON.stringify({
-                                number: formattedPhone,
-                                text: conflictMessage
-                              })
+                          const conflictResponse = await fetch(sendUrl, {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              'apikey': globalSettings.evolutionApiGlobalKey
+                            },
+                            body: JSON.stringify({
+                              number: formattedPhone,
+                              text: conflictMessage
+                            })
+                          });
+
+                          const responseText = await conflictResponse.text();
+                          console.log(`📤 [CONFLITO] Resposta da API (${conflictResponse.status}): ${responseText.substring(0, 200)}`);
+
+                          if (conflictResponse.ok) {
+                            console.log('✅ Mensagem de conflito enviada com sucesso (PRÉ-VALIDAÇÃO)');
+
+                            await storage.createMessage({
+                              conversationId: conversation.id,
+                              content: conflictMessage,
+                              role: 'assistant',
+                              messageType: 'text',
+                              delivered: true,
+                              timestamp: new Date(),
                             });
-
-                            const responseText = await conflictResponse.text();
-                            console.log(`📤 [CONFLITO] Resposta da API (${conflictResponse.status}): ${responseText.substring(0, 200)}`);
-
-                            if (conflictResponse.ok) {
-                              console.log('✅ Mensagem de conflito enviada com sucesso (PRÉ-VALIDAÇÃO)');
-
-                              await storage.createMessage({
-                                conversationId: conversation.id,
-                                content: conflictMessage,
-                                role: 'assistant',
-                                messageType: 'text',
-                                delivered: true,
-                                timestamp: new Date(),
-                              });
-                            } else {
-                              console.error(`❌ [CONFLITO] Falha ao enviar mensagem: Status ${conflictResponse.status}`);
-                              console.error(`❌ [CONFLITO] Resposta: ${responseText}`);
-                            }
                           } else {
-                            console.error('❌ [CONFLITO] Evolution API não configurada');
+                            console.error(`❌ [CONFLITO] Falha ao enviar mensagem: Status ${conflictResponse.status}`);
+                            console.error(`❌ [CONFLITO] Resposta: ${responseText}`);
                           }
                         } else {
-                          console.error('❌ [CONFLITO] Nenhuma instância WhatsApp conectada');
+                          console.error('❌ [CONFLITO] Evolution API não configurada');
                         }
                       } catch (error) {
                         console.error('❌ Erro ao enviar mensagem de conflito:', error);
@@ -8909,6 +9213,67 @@ Por favor, escolha um dos horários disponíveis acima.`;
                     } catch (error) {
                       console.error('❌ [HUMAN-REQUEST] Error sending notification:', error);
                     }
+                  }
+                }
+
+                // ========================================
+                // 🎓 PROCESS COURSE NOTIFICATION AFTER AI RESPONSE
+                // ========================================
+                // Note: PDFs are now sent directly BEFORE AI response when keyword is detected
+                // This section only handles cases where there are no PDFs (AI responds normally)
+                if ((req as any).courseNotificationData?.shouldSendNotification) {
+                  console.log('✅ [COURSE-NOTIFICATION] Processing course notification AFTER AI response (no PDF case)...');
+                  const courseData = (req as any).courseNotificationData;
+
+                  // Send notification to configured contact
+                  if (courseData.courseNotificationContact) {
+                    console.log('📤 [COURSE-NOTIFICATION] Sending notification to:', courseData.courseNotificationContact);
+
+                    try {
+                      const globalSettings = await storage.getGlobalSettings();
+                      if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
+                        const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+
+                        // Adjust default message based on whether AI will pause
+                        const defaultMessage = courseData.shouldPauseAI
+                          ? '🎓 *Interesse em Curso Detectado!*\n\n👤 Cliente: {clientName}\n📞 Telefone: {clientPhone}\n💬 Mensagem: {message}\n⏰ Horário: {time}\n\n⏸️ O agente IA foi pausado por ' + courseData.timeoutMinutes + ' minutos.'
+                          : '🎓 *Interesse em Curso Detectado!*\n\n👤 Cliente: {clientName}\n📞 Telefone: {clientPhone}\n💬 Mensagem: {message}\n⏰ Horário: {time}\n\n✅ O agente IA respondeu sobre os cursos.';
+
+                        let notificationMessage = courseData.courseNotificationMessage || defaultMessage;
+
+                        const now = new Date();
+                        notificationMessage = notificationMessage
+                          .replace('{clientName}', courseData.contactName)
+                          .replace('{clientPhone}', courseData.phoneNumber)
+                          .replace('{message}', courseData.messageText?.substring(0, 200) || '')
+                          .replace('{time}', now.toLocaleString('pt-BR'));
+
+                        await fetch(`${correctedApiUrl}/message/sendText/${courseData.instanceName}`, {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': globalSettings.evolutionApiGlobalKey
+                          },
+                          body: JSON.stringify({
+                            number: courseData.courseNotificationContact,
+                            text: notificationMessage
+                          })
+                        });
+                        console.log('✅ [COURSE-NOTIFICATION] Notification sent');
+                      }
+                    } catch (error) {
+                      console.error('❌ [COURSE-NOTIFICATION] Error sending notification:', error);
+                    }
+                  }
+
+                  // Pause AI if configured
+                  if (courseData.shouldPauseAI && conversation) {
+                    console.log(`⏸️ [COURSE-NOTIFICATION] Pausing AI for ${courseData.timeoutMinutes} minutes`);
+                    await storage.updateConversation(conversation.id, {
+                      takeoverMode: 'human',
+                      lastMessageAt: new Date(),
+                    });
+                    console.log('✅ [COURSE-NOTIFICATION] AI paused');
                   }
                 }
 

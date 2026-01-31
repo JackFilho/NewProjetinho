@@ -14,12 +14,12 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Settings, Building2, Lock, User, MessageSquare, Trash2, Plus, Smartphone, QrCode, RefreshCw, Bot, Key, Gift, Calendar, Bell, Clock, CheckCircle, Send, XCircle, LogOut, CreditCard, DollarSign, PhoneOff, PauseCircle, Upload, X } from "lucide-react";
+import { Settings, Building2, Lock, User, MessageSquare, Trash2, Plus, Smartphone, QrCode, RefreshCw, Bot, Key, Gift, Calendar, Bell, Clock, CheckCircle, Send, XCircle, LogOut, CreditCard, DollarSign, PhoneOff, PauseCircle, Upload, X, GraduationCap } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useCompanyAuth } from "@/hooks/useCompanyAuth";
 import { FloatingHelpButton } from "@/components/floating-help-button";
 import { z } from "zod";
-import { companyProfileSchema, companyPasswordSchema, companyAiAgentSchema, companyHumanRequestSchema, companyIgnoredNumbersSchema, whatsappInstanceSchema, webhookConfigSchema, companySettingsSchema, asaasConfigSchema } from "@/lib/validations";
+import { companyProfileSchema, companyPasswordSchema, companyAiAgentSchema, companyHumanRequestSchema, companyCourseNotificationSchema, companyIgnoredNumbersSchema, whatsappInstanceSchema, webhookConfigSchema, companySettingsSchema, asaasConfigSchema } from "@/lib/validations";
 
 // Função formatDocument local para evitar problemas de importação
 function formatDocument(value: string): string {
@@ -82,6 +82,7 @@ type CompanyProfileData = z.infer<typeof companyProfileSchema>;
 type CompanyPasswordData = z.infer<typeof companyPasswordSchema>;
 type CompanyAiAgentData = z.infer<typeof companyAiAgentSchema>;
 type CompanyHumanRequestData = z.infer<typeof companyHumanRequestSchema>;
+type CompanyCourseNotificationData = z.infer<typeof companyCourseNotificationSchema>;
 type CompanyIgnoredNumbersData = z.infer<typeof companyIgnoredNumbersSchema>;
 type WhatsappInstanceData = z.infer<typeof whatsappInstanceSchema>;
 type WebhookConfigData = z.infer<typeof webhookConfigSchema>;
@@ -355,6 +356,24 @@ export default function CompanySettings() {
       humanRequestMessage: company.humanRequestMessage || "",
       humanRequestKeywords: company.humanRequestKeywords || "",
       humanRequestTimeout: company.humanRequestTimeout ?? 30,
+    } : undefined,
+  });
+
+  const courseNotificationForm = useForm<CompanyCourseNotificationData>({
+    resolver: zodResolver(companyCourseNotificationSchema),
+    defaultValues: {
+      courseNotificationEnabled: false,
+      courseNotificationContact: "",
+      courseNotificationMessage: "",
+      courseNotificationKeywords: "",
+      courseNotificationTimeout: 30,
+    },
+    values: company ? {
+      courseNotificationEnabled: company.courseNotificationEnabled === true,
+      courseNotificationContact: company.courseNotificationContact || "",
+      courseNotificationMessage: company.courseNotificationMessage || "",
+      courseNotificationKeywords: company.courseNotificationKeywords || "",
+      courseNotificationTimeout: company.courseNotificationTimeout ?? 30,
     } : undefined,
   });
 
@@ -636,6 +655,34 @@ export default function CompanySettings() {
     },
   });
 
+  const updateCourseNotificationMutation = useMutation({
+    mutationFn: async (data: CompanyCourseNotificationData) => {
+      const response = await apiRequest("/api/company/course-notification", "PUT", data);
+      return response;
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: "Configurações salvas",
+        description: "As configurações de notificação de cursos foram atualizadas com sucesso.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/company/auth/profile"] });
+      courseNotificationForm.reset({
+        courseNotificationEnabled: data.courseNotificationEnabled || false,
+        courseNotificationContact: data.courseNotificationContact || "",
+        courseNotificationMessage: data.courseNotificationMessage || "",
+        courseNotificationKeywords: data.courseNotificationKeywords || "",
+        courseNotificationTimeout: data.courseNotificationTimeout ?? 30,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Falha ao atualizar configurações de cursos. Tente novamente.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const resumeAgentMutation = useMutation({
     mutationFn: async () => {
       const response = await apiRequest("/api/company/agent/resume", "POST", {});
@@ -721,6 +768,10 @@ export default function CompanySettings() {
 
   const onHumanRequestSubmit = (data: CompanyHumanRequestData) => {
     updateHumanRequestMutation.mutate(data);
+  };
+
+  const onCourseNotificationSubmit = (data: CompanyCourseNotificationData) => {
+    updateCourseNotificationMutation.mutate(data);
   };
 
   const onBirthdayMessageSubmit = (data: BirthdayMessageData) => {
@@ -2548,6 +2599,164 @@ export default function CompanySettings() {
                       className="min-w-[140px]"
                     >
                       {updateHumanRequestMutation.isPending ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          Salvando...
+                        </>
+                      ) : (
+                        "Salvar Configurações"
+                      )}
+                    </Button>
+                  </div>
+                </form>
+              </Form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <GraduationCap className="w-5 h-5" />
+                Notificação de Interesse em Cursos
+              </CardTitle>
+              <CardDescription>
+                Configure o sistema de notificação quando clientes demonstrarem interesse em cursos
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Form {...courseNotificationForm}>
+                <form onSubmit={courseNotificationForm.handleSubmit(onCourseNotificationSubmit)} className="space-y-4">
+                  <FormField
+                    control={courseNotificationForm.control}
+                    name="courseNotificationEnabled"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">
+                            Ativar Notificação de Cursos
+                          </FormLabel>
+                          <div className="text-sm text-gray-500">
+                            Envia notificação quando cliente mencionar palavras-chave relacionadas a cursos
+                          </div>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  {courseNotificationForm.watch("courseNotificationEnabled") && (
+                    <>
+                      <FormField
+                        control={courseNotificationForm.control}
+                        name="courseNotificationContact"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Número ou Grupo WhatsApp para Notificação</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="Ex: 120363404730378309@g.us ou 5511999999999"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                            <div className="text-sm text-gray-500">
+                              <p>• Para grupo: cole o ID do grupo (ex: 120363404730378309@g.us)</p>
+                              <p>• Para número: use formato internacional (ex: 5511999999999)</p>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={courseNotificationForm.control}
+                        name="courseNotificationMessage"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Mensagem de Notificação</FormLabel>
+                            <FormControl>
+                              <Textarea
+                                placeholder="Ex: 🎓 Interesse em Curso Detectado!&#10;&#10;👤 Cliente: {clientName}&#10;📞 Telefone: {clientPhone}&#10;💬 Mensagem: {message}&#10;⏰ Horário: {time}"
+                                rows={6}
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                            <div className="text-sm text-gray-500">
+                              <p>Variáveis disponíveis:</p>
+                              <p>• {"{clientName}"} - Nome do cliente</p>
+                              <p>• {"{clientPhone}"} - Telefone do cliente</p>
+                              <p>• {"{message}"} - Mensagem enviada pelo cliente</p>
+                              <p>• {"{time}"} - Horário da mensagem</p>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={courseNotificationForm.control}
+                        name="courseNotificationKeywords"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Palavras-chave (uma por linha)</FormLabel>
+                            <FormControl>
+                              <Textarea
+                                placeholder="curso&#10;cursos&#10;formação&#10;capacitação&#10;treinamento&#10;aula&#10;aulas"
+                                rows={5}
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                            <div className="text-sm text-gray-500">
+                              <p>Digite uma palavra-chave ou frase por linha</p>
+                              <p>Quando o cliente enviar uma mensagem contendo essas palavras, uma notificação será enviada.</p>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={courseNotificationForm.control}
+                        name="courseNotificationTimeout"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Tempo de Inatividade do Atendimento</FormLabel>
+                            <FormControl>
+                              <select
+                                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                                value={field.value ?? 30}
+                                onChange={(e) => field.onChange(parseInt(e.target.value))}
+                              >
+                                <option value={0}>Não pausar IA (apenas notificar)</option>
+                                <option value={10}>10 minutos</option>
+                                <option value={20}>20 minutos</option>
+                                <option value={30}>30 minutos</option>
+                                <option value={60}>1 hora</option>
+                              </select>
+                            </FormControl>
+                            <FormMessage />
+                            <div className="text-sm text-gray-500">
+                              <p>Após detectar uma palavra-chave de curso:</p>
+                              <p>• Se "Não pausar IA": apenas envia notificação, IA continua respondendo</p>
+                              <p>• Se definir tempo: IA pausa e aguarda atendimento humano pelo período selecionado</p>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+                    </>
+                  )}
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="submit"
+                      disabled={updateCourseNotificationMutation.isPending}
+                      className="min-w-[140px]"
+                    >
+                      {updateCourseNotificationMutation.isPending ? (
                         <>
                           <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
                           Salvando...

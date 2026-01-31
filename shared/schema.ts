@@ -76,6 +76,12 @@ export const companies = mysqlTable("companies", {
   humanRequestMessage: text("human_request_message"), // Custom notification message
   humanRequestKeywords: text("human_request_keywords"), // JSON array of trigger keywords
   humanRequestTimeout: int("human_request_timeout").notNull().default(30), // Minutes: 10, 20, 30, 60
+  // Course notification settings (similar to human request)
+  courseNotificationEnabled: int("course_notification_enabled").notNull().default(0), // Enable/disable course notification feature
+  courseNotificationContact: varchar("course_notification_contact", { length: 255 }), // WhatsApp group ID or phone number for course notifications
+  courseNotificationMessage: text("course_notification_message"), // Custom notification message for course inquiries
+  courseNotificationKeywords: text("course_notification_keywords"), // Keywords that trigger course notification (one per line)
+  courseNotificationTimeout: int("course_notification_timeout").notNull().default(30), // Minutes: 10, 20, 30, 60
   ignoredNumbers: text("ignored_numbers"), // List of phone numbers to ignore (one per line)
   birthdayMessage: text("birthday_message"),
   resetToken: varchar("reset_token", { length: 255 }),

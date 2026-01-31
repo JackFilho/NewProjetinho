@@ -124,6 +124,14 @@ export const companyHumanRequestSchema = z.object({
   ).default(30),
 });
 
+export const companyCourseNotificationSchema = z.object({
+  courseNotificationEnabled: z.boolean().default(false),
+  courseNotificationContact: z.string().optional(),
+  courseNotificationMessage: z.string().optional(),
+  courseNotificationKeywords: z.string().optional(),
+  courseNotificationTimeout: z.number().default(30),
+});
+
 export const companyIgnoredNumbersSchema = z.object({
   ignoredNumbers: z.string().optional(),
 });
