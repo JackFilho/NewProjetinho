@@ -271,6 +271,92 @@ async function sendTypingPresence(
   }
 }
 
+/**
+ * Envia webhook para N8N quando ocorre um erro no agendamento
+ * Tipos de erro:
+ * - EXTRACTION_FAILED: Falha ao extrair dados do agendamento
+ * - VALIDATION_FAILED: Dados incompletos ou inválidos
+ * - CONFLICT: Horário já ocupado
+ * - PROFESSIONAL_UNAVAILABLE: Profissional indisponível
+ * - SERVICE_NOT_FOUND: Serviço não encontrado
+ * - DATABASE_ERROR: Erro ao salvar no banco
+ * - AI_ERROR: Erro na chamada da IA (OpenAI)
+ * - UNKNOWN: Erro desconhecido
+ */
+async function sendAppointmentErrorWebhook(
+  companyId: number,
+  errorType: string,
+  errorMessage: string,
+  details: {
+    conversationId?: number;
+    phoneNumber?: string;
+    clientName?: string;
+    professionalId?: number;
+    professionalName?: string;
+    serviceId?: number;
+    serviceName?: string;
+    requestedDate?: string;
+    requestedTime?: string;
+    additionalInfo?: string;
+  }
+): Promise<void> {
+  try {
+    const company = await storage.getCompanyById(companyId);
+
+    if (!company?.n8nWebhookEnabled || !company?.n8nWebhookUrl) {
+      return; // Webhook não configurado
+    }
+
+    const webhookPayload = {
+      event: 'appointment.error',
+      timestamp: new Date().toISOString(),
+      errorType,
+      errorMessage,
+      details: {
+        conversationId: details.conversationId,
+        phoneNumber: details.phoneNumber,
+        clientName: details.clientName,
+        professional: {
+          id: details.professionalId,
+          name: details.professionalName
+        },
+        service: {
+          id: details.serviceId,
+          name: details.serviceName
+        },
+        requestedDate: details.requestedDate,
+        requestedTime: details.requestedTime,
+        additionalInfo: details.additionalInfo
+      },
+      company: {
+        id: companyId,
+        name: company.fantasyName
+      }
+    };
+
+    console.log('🚨 [ERROR WEBHOOK] Enviando notificação de erro para N8N');
+
+    if (process.env.DEBUG_N8N_WEBHOOK === 'true') {
+      console.log('🔍 [ERROR WEBHOOK] URL:', company.n8nWebhookUrl);
+      console.log('📦 [ERROR WEBHOOK] Payload:', JSON.stringify(webhookPayload, null, 2));
+    }
+
+    const response = await fetch(company.n8nWebhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(webhookPayload)
+    });
+
+    if (!response.ok) {
+      console.error('⚠️ N8N error webhook failed:', response.status, response.statusText);
+    } else {
+      console.log('✅ [ERROR WEBHOOK] N8N notificado sobre erro no agendamento');
+    }
+  } catch (webhookError) {
+    console.error('⚠️ Error sending error webhook to n8n:', webhookError);
+  }
+}
+
 // Helper function to list client's future appointments
 async function listClientAppointments(clientPhone: string, companyId: number): Promise<string> {
   try {
@@ -408,6 +494,10 @@ interface AvailabilityCache {
 const availabilityCache = new Map<number, AvailabilityCache>();
 const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutos de cache
 
+// Limpar cache ao iniciar para forçar uso do novo sistema
+console.log('🗑️ Limpando cache de disponibilidade (inicialização)');
+availabilityCache.clear();
+
 /**
  * Detecta se a mensagem do usuário está relacionada a agendamento/disponibilidade
  * Esta função economiza recursos ao evitar consultas desnecessárias ao banco de dados
@@ -481,14 +571,14 @@ async function getAvailabilityInfoSmart(
   }
 
   // Cache expirado ou não existe - gera nova disponibilidade
-  console.log('📋 Gerando informações de disponibilidade PRÉ-CALCULADAS (cache expirado ou primeiro acesso)');
+  console.log('📋 Gerando informações básicas (horários sob demanda)');
 
   let availabilityInfo: string;
 
-  // MODO NOVO: Se temos serviços, usar disponibilidade pré-calculada
+  // MODO OTIMIZADO: Apenas informações básicas, horários buscados sob demanda
   if (services && services.length > 0) {
-    console.log('🆕 Usando NOVO sistema de disponibilidade pré-calculada');
-    availabilityInfo = await generatePrecalculatedAvailability(companyId, professionals, services);
+    console.log('🆕 Usando sistema OTIMIZADO (horários sob demanda)');
+    availabilityInfo = await generateBasicAvailabilityInfo(companyId, professionals, services);
   } else {
     // MODO ANTIGO: Fallback para compatibilidade
     console.log('📋 Usando sistema antigo de disponibilidade');
@@ -517,9 +607,79 @@ export function clearAvailabilityCache(companyId: number): void {
 // ==================== FIM DO SISTEMA INTELIGENTE ====================
 
 /**
+ * Gera informações básicas dos profissionais e serviços (SEM horários pré-calculados)
+ * Os horários serão buscados sob demanda quando o usuário informar a data
+ */
+async function generateBasicAvailabilityInfo(
+  companyId: number,
+  professionals: any[],
+  services: any[]
+): Promise<string> {
+  const dayNames = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+
+  // Data de hoje para referência
+  const today = getBrazilDate();
+  const todayStr = formatDateLocal(today);
+  const todayFormatted = today.toLocaleDateString('pt-BR');
+
+  let text = `
+═══════════════════════════════════════════════════════════════════
+📋 INFORMAÇÕES PARA AGENDAMENTO
+═══════════════════════════════════════════════════════════════════
+
+📅 Data de hoje: ${todayFormatted}
+
+`;
+
+  // Listar profissionais ativos
+  const activeProfessionals = professionals.filter(p => p.active);
+  text += `👥 PROFISSIONAIS DISPONÍVEIS:\n`;
+  for (const prof of activeProfessionals) {
+    text += `   • ${prof.name} (ID: ${prof.id})\n`;
+  }
+
+  // Listar serviços
+  text += `\n💇 SERVIÇOS OFERECIDOS:\n`;
+  for (const service of services) {
+    const price = service.price ? `R$ ${parseFloat(service.price).toFixed(2)}` : 'Consultar';
+    text += `   • ${service.name} - ${service.duration || 30}min - ${price} (ID: ${service.id})\n`;
+  }
+
+  text += `
+═══════════════════════════════════════════════════════════════════
+📌 COMO AGENDAR:
+═══════════════════════════════════════════════════════════════════
+
+1. Pergunte ao cliente qual SERVIÇO deseja
+2. Pergunte qual PROFISSIONAL prefere (ou se não tem preferência)
+3. Pergunte qual DATA deseja agendar
+4. Quando o cliente informar a DATA, inclua na sua resposta o comando:
+   [MOSTRAR_HORARIOS_LIVRES:ID_SERVICO:ID_PROFISSIONAL:DATA_FORMATO_YYYY-MM-DD]
+
+   Exemplo: Se o cliente quer "Corte de Cabelo" (ID 1) com "João" (ID 2) no dia 05/02/2026:
+   [MOSTRAR_HORARIOS_LIVRES:1:2:2026-02-05]
+
+5. O sistema vai substituir esse comando pelos horários disponíveis automaticamente
+6. Após o cliente escolher o horário, peça o NOME e TELEFONE
+7. Confirme todos os dados antes de finalizar
+
+⚠️ IMPORTANTE:
+- SEMPRE use o comando [MOSTRAR_HORARIOS_LIVRES:...] para buscar horários
+- NÃO invente horários! O comando retorna apenas horários REALMENTE disponíveis
+- Se não houver horários, sugira outra data ou profissional
+- Use o formato de data YYYY-MM-DD (ex: 2026-02-05 para 05/02/2026)
+
+`;
+
+  return text;
+}
+
+/**
  * Gera informações de disponibilidade com horários PRÉ-CALCULADOS
  * Esta função usa o serviço de disponibilidade para calcular horários precisos,
  * removendo a necessidade do agente de IA fazer cálculos complexos
+ *
+ * @deprecated Use generateBasicAvailabilityInfo + busca sob demanda para melhor performance
  */
 async function generatePrecalculatedAvailability(
   companyId: number,
@@ -528,9 +688,9 @@ async function generatePrecalculatedAvailability(
 ): Promise<string> {
   const dayNames = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
 
-  // Gerar próximos 7 dias
+  // Gerar próximos 3 dias (reduzido para otimizar o prompt)
   const nextDays = [];
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 3; i++) {
     const date = getBrazilDate();
     date.setDate(date.getDate() + i);
     const dateStr = formatDateLocal(date);
@@ -620,6 +780,9 @@ async function generatePrecalculatedAvailability(
 
 4. Se todos os horários estão ocupados para uma data:
    → Sugira outra data ou outro profissional
+
+5. Se o cliente pedir uma data que NÃO está na lista acima:
+   → Use a função de buscar horários passando a data específica
 
 `;
 
@@ -1223,8 +1386,6 @@ async function getAvailableTimesForService(
   dateStr: string
 ): Promise<string> {
   try {
-    console.log(`📅 Calculando horários disponíveis para serviço ${serviceId}, profissional ${professionalId}, data ${dateStr}`);
-
     // Buscar informações do serviço
     const services = await storage.getServicesByCompany(companyId);
     const service = services.find(s => s.id === serviceId);
@@ -1234,7 +1395,6 @@ async function getAvailableTimesForService(
     }
 
     const serviceDuration = service.duration || 30;
-    console.log(`⏱️  Duração do serviço "${service.name}": ${serviceDuration} minutos`);
 
     // Buscar informações do profissional
     const professionals = await storage.getProfessionalsByCompany(companyId);
@@ -1268,7 +1428,6 @@ async function getAvailableTimesForService(
       const exceptionalSchedule = professionalExceptionalSchedules[0];
       workStartTime = exceptionalSchedule.startTime;
       workEndTime = exceptionalSchedule.endTime;
-      console.log(`⚠️ Horário EXCEPCIONAL para ${dateStr}: ${workStartTime} às ${workEndTime}`);
     } else {
       // Buscar horário regular de trabalho para este dia
       const daySchedule = professionalSchedules.find(s => s.dayOfWeek === dayOfWeek && s.isEnabled);
@@ -1280,18 +1439,29 @@ async function getAvailableTimesForService(
 
       workStartTime = daySchedule.startTime;
       workEndTime = daySchedule.endTime;
-      console.log(`📋 Horário de trabalho: ${workStartTime} às ${workEndTime}`);
     }
 
-    // Buscar agendamentos existentes para este dia
+    // Buscar agendamentos existentes para este dia (excluindo cancelados)
     const [existingAppointments] = await pool.execute(
-      `SELECT appointment_time, duration FROM appointments
-       WHERE company_id = ? AND professional_id = ? AND appointment_date = ? AND status != 'Cancelado'
+      `SELECT appointment_time, duration, status, client_name FROM appointments
+       WHERE company_id = ? AND professional_id = ? AND appointment_date = ?
+       AND status NOT IN ('Cancelado', 'cancelado', 'cancelled')
        ORDER BY appointment_time`,
       [companyId, professionalId, dateStr]
     ) as any;
 
-    console.log(`📊 Agendamentos existentes: ${existingAppointments.length}`);
+    // DEBUG: Mostrar parâmetros da busca e agendamentos encontrados
+    console.log(`\n========== DEBUG HORÁRIOS ==========`);
+    console.log(`📌 Parâmetros: companyId=${companyId}, professionalId=${professionalId}, date=${dateStr}`);
+    console.log(`📊 Agendamentos encontrados: ${existingAppointments.length}`);
+    if (existingAppointments.length > 0) {
+      existingAppointments.forEach((apt: any) => {
+        console.log(`   ➡️ ${apt.appointment_time} | Duração: ${apt.duration}min | Status: ${apt.status} | Cliente: ${apt.client_name}`);
+      });
+    } else {
+      console.log(`   ⚠️ NENHUM agendamento encontrado para estes parâmetros!`);
+    }
+    console.log(`====================================\n`);
 
     // Converter horário de início e fim para minutos
     const [startHour, startMin] = workStartTime.split(':').map(Number);
@@ -1326,7 +1496,6 @@ async function getAvailableTimesForService(
 
         if ((currentTimeMinutes < aptEndMinutes) && (newEndMinutes > aptStartMinutes)) {
           hasConflict = true;
-          console.log(`  ⚠️  ${timeStr} conflita com agendamento existente ${apt.appointment_time}-${Math.floor(aptEndMinutes/60)}:${String(aptEndMinutes%60).padStart(2,'0')}`);
           break;
         }
       }
@@ -1351,32 +1520,24 @@ async function getAvailableTimesForService(
 
       if (!hasConflict && !isBreakTime) {
         availableTimes.push(timeStr);
-        console.log(`  ✅ ${timeStr} disponível`);
       }
 
       currentTimeMinutes += timeInterval;
     }
 
-    // Formatar resposta
+    // Formatar resposta - apenas os horários de forma simples
     if (availableTimes.length === 0) {
-      return `❌ Nenhum horário disponível para ${service.name} (${serviceDuration}min) com ${professional.name} nesta data.\n\nTodos os horários estão ocupados ou não há espaço suficiente para um serviço de ${serviceDuration} minutos.`;
+      return `Não há horários disponíveis nesta data.`;
     }
 
-    const formattedDate = date.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
-    let response = `✅ *Horários disponíveis para ${service.name}* (${serviceDuration}min)\n`;
-    response += `👤 Profissional: ${professional.name}\n`;
-    response += `📅 Data: ${formattedDate}\n\n`;
-    response += `⏰ *Horários livres:*\n`;
-
-    // Agrupar horários em linhas de 4
-    for (let i = 0; i < availableTimes.length; i += 4) {
-      const group = availableTimes.slice(i, i + 4);
+    // Retorna apenas os horários agrupados
+    let response = '';
+    for (let i = 0; i < availableTimes.length; i += 5) {
+      const group = availableTimes.slice(i, i + 5);
       response += `${group.join(' | ')}\n`;
     }
 
-    response += `\n_Total: ${availableTimes.length} horário(s) disponível(is)_`;
-
-    return response;
+    return response.trim();
   } catch (error) {
     console.error('❌ Erro ao calcular horários disponíveis:', error);
     return '❌ Erro ao calcular horários disponíveis. Por favor, tente novamente.';
@@ -2536,6 +2697,18 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 
   } catch (error) {
     console.error('❌ Error creating appointment from AI confirmation:', error);
+
+    // Enviar webhook de erro geral
+    try {
+      await sendAppointmentErrorWebhook(companyId, 'DATABASE_ERROR', `Erro ao criar agendamento: ${error instanceof Error ? error.message : 'Erro desconhecido'}`, {
+        conversationId,
+        phoneNumber,
+        additionalInfo: `Stack: ${error instanceof Error ? error.stack : 'N/A'}`
+      });
+    } catch (webhookErr) {
+      console.error('⚠️ Falha ao enviar webhook de erro:', webhookErr);
+    }
+
     return null;
   }
 }
@@ -2819,7 +2992,7 @@ REGRAS CRÍTICAS - SÓ EXTRAIA SE TODAS AS CONDIÇÕES FOREM ATENDIDAS:
    - Serviço ESPECÍFICO escolhido
    - Data ESPECÍFICA (dia da semana + data)
    - Horário ESPECÍFICO
-   - Telefone do cliente
+   - TELEFONE: NÃO é necessário na conversa (será preenchido automaticamente com o número do WhatsApp)
 
 3. INSTRUÇÕES PARA DATAS - MUITO IMPORTANTE:
    - PRIORIZE a data EXATA mencionada na conversa, especialmente no RESUMO do agendamento
@@ -2852,13 +3025,15 @@ NÃO use \`\`\`json, NÃO use \`\`\`, NÃO adicione texto antes ou depois.
 
 Retorne EXATAMENTE um destes dois formatos:
 1. Se os dados estão completos, retorne APENAS o JSON:
-{"clientName":"Nome do cliente","clientPhone":"Telefone","professionalId":123,"serviceId":456,"appointmentDate":"YYYY-MM-DD","appointmentTime":"HH:MM"}
+{"clientName":"Nome do cliente","professionalId":123,"serviceId":456,"appointmentDate":"YYYY-MM-DD","appointmentTime":"HH:MM"}
 
 2. Se falta algum dado ou não há confirmação, retorne APENAS:
 DADOS_INCOMPLETOS
 
 Exemplo de resposta válida (sem aspas externas, sem formatação):
-{"clientName":"Maria Silva","clientPhone":"11999999999","professionalId":1,"serviceId":2,"appointmentDate":"2025-12-18","appointmentTime":"14:00"}
+{"clientName":"Maria Silva","professionalId":1,"serviceId":2,"appointmentDate":"2025-12-18","appointmentTime":"14:00"}
+
+NOTA: O telefone NÃO precisa estar no JSON - será preenchido automaticamente pelo sistema.
 
 ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025", você DEVE retornar appointmentDate como "2025-12-18" (formato YYYY-MM-DD). NÃO use o dia da semana para calcular a data, use a DATA EXATA mostrada!`;
 
@@ -2874,6 +3049,14 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
 
     if (!extractedData || extractedData === 'DADOS_INCOMPLETOS' || extractedData.includes('DADOS_INCOMPLETOS')) {
       console.log('⚠️ Incomplete appointment data or missing confirmation, skipping creation');
+
+      // Enviar webhook de erro
+      await sendAppointmentErrorWebhook(companyId, 'EXTRACTION_FAILED', 'Dados do agendamento incompletos ou cliente não confirmou', {
+        conversationId,
+        phoneNumber: conversation.phoneNumber,
+        additionalInfo: 'Cliente pode não ter confirmado com SIM/OK ou faltam dados obrigatórios'
+      });
+
       return;
     }
 
@@ -2911,26 +3094,57 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
       console.log('🧹 Cleaned data for parsing:', cleanedData);
 
       const appointmentData = JSON.parse(cleanedData);
-      
-      // Validação final de todos os campos obrigatórios
-      if (!appointmentData.clientName || !appointmentData.clientPhone || 
+
+      // SEMPRE usar o telefone do WhatsApp automaticamente
+      appointmentData.clientPhone = conversation.phoneNumber;
+      console.log('📱 Usando telefone do WhatsApp automaticamente:', appointmentData.clientPhone);
+
+      // Validação final de todos os campos obrigatórios (sem exigir telefone pois é automático)
+      if (!appointmentData.clientName ||
           !appointmentData.professionalId || !appointmentData.serviceId ||
           !appointmentData.appointmentDate || !appointmentData.appointmentTime) {
         console.log('⚠️ Missing required appointment fields after extraction, skipping creation');
+
+        // Identificar quais campos estão faltando
+        const missingFields = [];
+        if (!appointmentData.clientName) missingFields.push('nome do cliente');
+        if (!appointmentData.professionalId) missingFields.push('profissional');
+        if (!appointmentData.serviceId) missingFields.push('serviço');
+        if (!appointmentData.appointmentDate) missingFields.push('data');
+        if (!appointmentData.appointmentTime) missingFields.push('horário');
+
+        // Enviar webhook de erro
+        await sendAppointmentErrorWebhook(companyId, 'VALIDATION_FAILED', `Campos obrigatórios faltando: ${missingFields.join(', ')}`, {
+          conversationId,
+          phoneNumber: conversation.phoneNumber,
+          clientName: appointmentData.clientName,
+          professionalId: appointmentData.professionalId,
+          serviceId: appointmentData.serviceId,
+          requestedDate: appointmentData.appointmentDate,
+          requestedTime: appointmentData.appointmentTime,
+          additionalInfo: `Campos extraídos: ${JSON.stringify(appointmentData)}`
+        });
+
         return;
       }
 
-      // Se o telefone não foi extraído corretamente, usar o telefone da conversa
-      if (!appointmentData.clientPhone || appointmentData.clientPhone === 'DADOS_INCOMPLETOS') {
-        appointmentData.clientPhone = conversation.phoneNumber;
-      }
-      
       console.log('✅ Valid appointment data extracted with explicit confirmation:', JSON.stringify(appointmentData, null, 2));
 
       // Find the service to get duration
       const service = services.find(s => s.id === appointmentData.serviceId);
       if (!service) {
         console.log('⚠️ Service not found');
+
+        // Enviar webhook de erro
+        await sendAppointmentErrorWebhook(companyId, 'SERVICE_NOT_FOUND', `Serviço ID ${appointmentData.serviceId} não encontrado`, {
+          conversationId,
+          phoneNumber: conversation.phoneNumber,
+          clientName: appointmentData.clientName,
+          serviceId: appointmentData.serviceId,
+          requestedDate: appointmentData.appointmentDate,
+          requestedTime: appointmentData.appointmentTime
+        });
+
         return;
       }
 
@@ -6962,66 +7176,99 @@ ${availabilityInfo}
 ${specificDateInfo}
 
 ═══════════════════════════════════════════════════════════════════
-🚨 REGRA ABSOLUTAMENTE OBRIGATÓRIA - HORÁRIOS PRÉ-CALCULADOS 🚨
+🚨 REGRA ABSOLUTAMENTE OBRIGATÓRIA - BUSCAR HORÁRIOS 🚨
 ═══════════════════════════════════════════════════════════════════
 
-O sistema JÁ CALCULOU todos os horários disponíveis na seção acima.
-NÃO FAÇA CÁLCULOS - apenas CONSULTE a lista de horários disponíveis!
+Quando o cliente informar a DATA desejada, você DEVE incluir na sua resposta o comando:
+[MOSTRAR_HORARIOS_LIVRES:ID_SERVICO:ID_PROFISSIONAL:DATA_YYYY-MM-DD]
 
-✅ COMO FUNCIONA:
-1. Procure na seção "HORÁRIOS DISPONÍVEIS PRÉ-CALCULADOS" acima
-2. Encontre o PROFISSIONAL → SERVIÇO → DATA desejados
-3. Os horários com ✅ são os ÚNICOS que podem ser agendados
-4. Se aparecer ❌, significa que NÃO há horários disponíveis
+O sistema vai SUBSTITUIR esse comando pelos horários disponíveis automaticamente.
 
-⚠️ REGRAS DE OURO:
-• Se o horário NÃO está na lista ✅, ele NÃO PODE ser agendado
-• NUNCA tente calcular ou deduzir outros horários
-• O sistema já considerou: duração do serviço, pausas, agendamentos existentes
-• Confie 100% na lista pré-calculada
+✅ COMO USAR:
+1. Colete: SERVIÇO + PROFISSIONAL + DATA
+2. Quando tiver a DATA, inclua o comando na resposta
+3. O sistema mostrará os horários disponíveis
 
-📋 EXEMPLO DE USO:
-Cliente quer: "Corte de cabelo com João na segunda"
-→ Procure: PROFISSIONAL: JOÃO → Serviço: Corte de cabelo → segunda-feira
-→ Se vir: ✅ 09:00, 10:00, 14:00, 15:00
-→ Responda: "Os horários disponíveis para segunda são: 09:00, 10:00, 14:00 ou 15:00"
+📋 EXEMPLO:
+Cliente quer: "Corte de cabelo com Estevão amanhã" (amanhã = 31/01/2026)
+→ Serviço: Corte de cabelo (ID: 5)
+→ Profissional: Estevão (ID: 65)
+→ Data: 2026-01-31
+
+Sua resposta deve ser:
+"Vou verificar os horários disponíveis para amanhã!
+
+[MOSTRAR_HORARIOS_LIVRES:5:65:2026-01-31]
+
+Qual horário você prefere?"
+
+⚠️ IMPORTANTE:
+• Use o ID do serviço e profissional (veja nas listas acima)
+• A data DEVE estar no formato YYYY-MM-DD (ex: 2026-01-31)
+• NÃO invente horários - o comando retorna apenas horários REAIS
+• Se "amanhã" = 31/01/2026, use 2026-01-31
 
 ═══════════════════════════════════════════════════════════════════
 
-INSTRUÇÕES OBRIGATÓRIAS:
+🚨🚨🚨 ORDEM OBRIGATÓRIA DE COLETA DE DADOS - SIGA EXATAMENTE ESTA SEQUÊNCIA 🚨🚨🚨
+
 ${shouldAutoSelect ?
-`- IMPORTANTE: Este estabelecimento possui apenas um profissional (${activeProfessionals[0].name}), portanto NÃO pergunte qual profissional o cliente deseja
-- Quando o cliente mencionar "agendar", "horário", "agendamento" ou similar, vá DIRETAMENTE para a lista de serviços
-- Use o formato: "Aqui estão os serviços disponíveis:\n[lista dos serviços]\n\nQual serviço você gostaria de agendar?"`
+`ETAPA 1 - SERVIÇO (profissional único: ${activeProfessionals[0].name}):
+   → Quando cliente quiser agendar, mostre a lista de serviços IMEDIATAMENTE
+   → "Aqui estão os serviços disponíveis:\n[lista]\n\nQual serviço você gostaria?"
+   → AGUARDE o cliente escolher o serviço`
 :
-`- SEMPRE que o cliente mencionar "agendar", "horário", "agendamento" ou similar, ofereça IMEDIATAMENTE a lista completa de profissionais
-- Use o formato: "Temos os seguintes profissionais disponíveis:\n[lista dos profissionais]\n\nCom qual profissional você gostaria de agendar?"
-- Após a escolha do profissional, ofereça IMEDIATAMENTE a lista completa de serviços disponíveis`}
-- Após ${shouldAutoSelect ? 'iniciar o agendamento' : 'a escolha do profissional'}, ofereça a lista completa de serviços disponíveis
-- Use o formato: "Aqui estão os serviços disponíveis:\n[lista dos serviços]\n\nQual serviço você gostaria de agendar?"
-- 🚨 IMPORTANTE: Ao listar os serviços, mostre APENAS o nome do serviço. NÃO mencione o preço nem a duração
+`ETAPA 1 - PROFISSIONAL:
+   → Quando cliente quiser agendar, mostre a lista de profissionais PRIMEIRO
+   → "Temos os seguintes profissionais:\n[lista]\n\nCom qual você gostaria de agendar?"
+   → AGUARDE o cliente escolher o profissional
+
+ETAPA 2 - SERVIÇO:
+   → APÓS escolher o profissional, mostre a lista de serviços
+   → "Aqui estão os serviços disponíveis:\n[lista]\n\nQual serviço você gostaria?"
+   → AGUARDE o cliente escolher o serviço`}
+
+ETAPA ${shouldAutoSelect ? '2' : '3'} - NOME:
+   → SOMENTE APÓS o cliente escolher o SERVIÇO, pergunte o nome
+   → "Qual é o seu nome?"
+   → AGUARDE o cliente informar o nome
+   → ⚠️ NUNCA pergunte o nome ANTES do serviço!
+
+ETAPA ${shouldAutoSelect ? '3' : '4'} - DATA:
+   → APÓS ter o nome, pergunte a data
+   → "Em qual dia você gostaria de agendar?"
+   → AGUARDE o cliente informar a data
+
+ETAPA ${shouldAutoSelect ? '4' : '5'} - HORÁRIO:
+   → APÓS ter a data, use o comando para buscar horários:
+   → [MOSTRAR_HORARIOS_LIVRES:ID_SERVICO:ID_PROFISSIONAL:DATA_YYYY-MM-DD]
+   → "Vou verificar os horários!\n\n[MOSTRAR_HORARIOS_LIVRES:X:Y:YYYY-MM-DD]\n\nQual horário você prefere?"
+
+ETAPA ${shouldAutoSelect ? '5' : '6'} - CONFIRMAÇÃO:
+   → APÓS ter todos os dados, mostre o RESUMO e peça confirmação com "SIM"
+
+⚠️ REGRAS CRÍTICAS:
+- NUNCA pule etapas - siga a ordem EXATA acima
+- NUNCA pergunte o NOME antes de ter o SERVIÇO
+- NUNCA pergunte a DATA antes de ter o NOME
+- Se o cliente pular etapas, volte e colete os dados faltantes NA ORDEM CORRETA
+- Ao listar serviços, mostre APENAS o nome (sem preço nem duração)
+
+═══════════════════════════════════════════════════════════════════
+
+INSTRUÇÕES ADICIONAIS:
 - 🚨 PREÇOS: Informe o valor de um serviço APENAS quando o cliente PERGUNTAR especificamente (ex: "quanto custa?", "qual o valor?"). Consulte a seção "PREÇOS DOS SERVIÇOS" acima para responder
-- Após a escolha do serviço, peça apenas o primeiro nome do cliente (exemplo: "Qual é o seu nome?")
-- Após o nome, peça PRIMEIRO a data desejada (em etapas separadas):
-  1. ETAPA 1 - DATA: Pergunte "Em qual dia você gostaria de agendar?" e aguarde a resposta
-     * Apenas faça a pergunta simples: "Em qual dia você gostaria de agendar?"
-  2. ETAPA 2 - HORÁRIO: Apenas APÓS receber a data:
-     * Consulte a seção "HORÁRIOS DISPONÍVEIS PRÉ-CALCULADOS" acima
-     * Encontre: PROFISSIONAL → SERVIÇO → DATA
-     * Liste APENAS os horários que aparecem com ✅
-     * Exemplo: "Os horários disponíveis são: 09:00, 10:00, 14:00, 15:00. Qual você prefere?"
 - NUNCA peça data e horário na mesma mensagem - sempre separado em duas etapas
 - REGRA DE CONFIRMAÇÃO DE DATA: Quando cliente mencionar dias da semana, use as datas da seção "PRÓXIMOS DIAS DA SEMANA"
 - Se cliente falar "segunda" (sem data), use a data da segunda-feira listada acima
 - AGENDAMENTOS FUTUROS: Cliente pode agendar até 30 dias. Se pedir data além dos 7 dias mostrados, aceite normalmente
 - HORÁRIOS INDISPONÍVEIS:
-  * Se cliente pedir um horário que NÃO está na lista pré-calculada, diga: "Esse horário não está disponível."
-  * Mostre os horários que ESTÃO disponíveis na lista
-  * Se a data aparecer como ❌ NÃO DISPONÍVEL, sugira outra data
-- Após confirmar o horário (que deve estar na lista ✅), peça o telefone para finalizar
+  * Se não houver horários disponíveis, sugira outra data
+  * NÃO invente horários - confie apenas no que o comando retornar
+- NÃO peça o telefone do cliente - o sistema usará automaticamente o número do WhatsApp
 - REGRA OBRIGATÓRIA DE RESUMO E CONFIRMAÇÃO:
-  * Quando tiver TODOS os dados (profissional, serviço, nome, data/hora disponível, telefone), NÃO confirme imediatamente
-  * PRIMEIRO envie um RESUMO COMPLETO do agendamento: "Perfeito! Vou confirmar seu agendamento:\n\n👤 Nome: [nome]\n🏢 Profissional: [profissional]\n💼 Serviço: [serviço]\n📅 Data: [dia da semana], [data]\n🕐 Horário: [horário]\n📱 Telefone: [telefone]\n\nEstá tudo correto? Responda SIM para confirmar ou me informe se algo precisa ser alterado."
+  * Quando tiver TODOS os dados (profissional, serviço, nome, data/hora disponível), NÃO confirme imediatamente
+  * PRIMEIRO envie um RESUMO COMPLETO do agendamento: "Perfeito! Vou confirmar seu agendamento:\n\n👤 Nome: [nome]\n🏢 Profissional: [profissional]\n💼 Serviço: [serviço]\n📅 Data: [dia da semana], [data]\n🕐 Horário: [horário]\n\nEstá tudo correto? Responda SIM para confirmar ou me informe se algo precisa ser alterado."
   * AGUARDE o cliente responder "SIM", "OK" ou confirmação similar
   * APENAS APÓS a confirmação com "SIM" ou "OK", confirme o agendamento final
   * Se cliente não confirmar com "SIM/OK", continue coletando correções
@@ -7255,10 +7502,187 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                     if (processingLocks.has(lockKey)) {
                       processingLocks.delete(lockKey);
                     }
-                    return;
+
+                    // IMPORTANTE: Enviar resposta HTTP para o webhook não reenviar
+                    return res.status(200).json({
+                      received: true,
+                      processed: true,
+                      validationFailed: true,
+                      message: 'Pré-validação falhou - dados insuficientes'
+                    });
                   }
 
-                  console.log('✅ PRÉ-VALIDAÇÃO PASSOU: Todos os dados estão corretos');
+                  // ========================================
+                  // 🔍 VERIFICAR CONFLITO DE HORÁRIO ANTES DE CHAMAR IA
+                  // ========================================
+                  console.log('🔍 Verificando conflito de horário na PRÉ-VALIDAÇÃO...');
+
+                  // Extrair data do resumo
+                  const dateMatch = summaryMessage.content.match(/(\d{2}\/\d{2}\/\d{4})/);
+                  let appointmentDateStr = '';
+                  if (dateMatch) {
+                    const [day, month, year] = dateMatch[1].split('/');
+                    appointmentDateStr = `${year}-${month}-${day}`;
+                  }
+
+                  // Extrair horário do resumo
+                  const timeExtracted = details.time.match(/(\d{1,2}):(\d{2})/);
+                  let appointmentTimeStr = '';
+                  if (timeExtracted) {
+                    appointmentTimeStr = `${timeExtracted[1].padStart(2, '0')}:${timeExtracted[2]}`;
+                  }
+
+                  if (appointmentDateStr && appointmentTimeStr && professional && service) {
+                    // Buscar agendamentos existentes para verificar conflito
+                    const existingAppointments = await storage.getAppointmentsByCompany(company.id);
+                    const serviceDuration = service.duration || 30;
+
+                    // Converter horário para minutos
+                    const [reqHour, reqMin] = appointmentTimeStr.split(':').map(Number);
+                    const requestedStartMinutes = reqHour * 60 + reqMin;
+                    const requestedEndMinutes = requestedStartMinutes + serviceDuration;
+
+                    // Verificar conflitos
+                    let hasConflict = false;
+                    let conflictingAppointment: any = null;
+
+                    for (const apt of existingAppointments) {
+                      // Verificar mesma data e profissional
+                      const aptDateStr = apt.appointmentDate instanceof Date
+                        ? apt.appointmentDate.toISOString().split('T')[0]
+                        : String(apt.appointmentDate).split('T')[0];
+
+                      if (aptDateStr === appointmentDateStr &&
+                          apt.professionalId === professional.id &&
+                          apt.status !== 'Cancelado' && apt.status !== 'cancelado' && apt.status !== 'cancelled') {
+
+                        // Converter horário existente para minutos
+                        const [existHour, existMin] = apt.appointmentTime.split(':').map(Number);
+                        const existingStartMinutes = existHour * 60 + existMin;
+                        const existingEndMinutes = existingStartMinutes + (apt.duration || 30);
+
+                        // Verificar sobreposição
+                        if (requestedStartMinutes < existingEndMinutes && requestedEndMinutes > existingStartMinutes) {
+                          hasConflict = true;
+                          conflictingAppointment = apt;
+                          break;
+                        }
+                      }
+                    }
+
+                    if (hasConflict && conflictingAppointment) {
+                      const conflictEndMinutes = (parseInt(conflictingAppointment.appointmentTime.split(':')[0]) * 60 +
+                                                  parseInt(conflictingAppointment.appointmentTime.split(':')[1])) +
+                                                  (conflictingAppointment.duration || 30);
+                      const conflictEndFormatted = `${Math.floor(conflictEndMinutes/60)}:${String(conflictEndMinutes%60).padStart(2,'0')}`;
+
+                      console.log(`❌ PRÉ-VALIDAÇÃO: Conflito de horário detectado!`);
+                      console.log(`   Cliente ${conflictingAppointment.clientName} já possui agendamento das ${conflictingAppointment.appointmentTime} às ${conflictEndFormatted}`);
+
+                      // Enviar mensagem de conflito ao cliente
+                      const conflictMessage = `❌ *Conflito de Horário Detectado*\n\nDesculpe, mas não foi possível confirmar seu agendamento pois o horário das ${appointmentTimeStr} já está ocupado por outro cliente.\n\nPor favor, escolha outro horário disponível.`;
+
+                      // Enviar webhook de erro para N8N
+                      await sendAppointmentErrorWebhook(company.id, 'CONFLICT', 'Horário já está ocupado - detectado na pré-validação', {
+                        conversationId: conversation.id,
+                        phoneNumber,
+                        clientName: details.name,
+                        professionalId: professional.id,
+                        professionalName: professional.name,
+                        serviceId: service.id,
+                        serviceName: service.name,
+                        requestedDate: appointmentDateStr,
+                        requestedTime: appointmentTimeStr,
+                        additionalInfo: `Conflito com agendamento de ${conflictingAppointment.clientName} às ${conflictingAppointment.appointmentTime}`
+                      });
+
+                      // Enviar erro ao cliente
+                      try {
+                        console.log('📤 [CONFLITO] Iniciando envio de mensagem de conflito ao cliente...');
+                        const instances = await storage.getWhatsappInstancesByCompany(company.id);
+                        const activeInstanceForConflict = instances.find(i => i.status === 'connected');
+                        console.log(`📤 [CONFLITO] Instância encontrada: ${activeInstanceForConflict?.instanceName || 'NENHUMA'}`);
+
+                        if (activeInstanceForConflict) {
+                          const globalSettings = await storage.getGlobalSettings();
+                          console.log(`📤 [CONFLITO] Evolution API URL: ${globalSettings?.evolutionApiUrl || 'NÃO CONFIGURADA'}`);
+
+                          if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
+                            let formattedPhone = phoneNumber.replace(/\D/g, '');
+                            if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
+                              formattedPhone = '55' + formattedPhone;
+                            }
+                            console.log(`📤 [CONFLITO] Telefone formatado: ${formattedPhone}`);
+
+                            const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+                            console.log(`📤 [CONFLITO] URL corrigida: ${correctedApiUrl}`);
+
+                            console.log('📤 [CONFLITO] Enviando typing presence...');
+                            await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, activeInstanceForConflict.instanceName, formattedPhone, 2000);
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+
+                            console.log('📤 [CONFLITO] Enviando mensagem via Evolution API...');
+                            const sendUrl = `${correctedApiUrl}/message/sendText/${activeInstanceForConflict.instanceName}`;
+                            console.log(`📤 [CONFLITO] URL de envio: ${sendUrl}`);
+
+                            const conflictResponse = await fetch(sendUrl, {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'apikey': globalSettings.evolutionApiGlobalKey
+                              },
+                              body: JSON.stringify({
+                                number: formattedPhone,
+                                text: conflictMessage
+                              })
+                            });
+
+                            const responseText = await conflictResponse.text();
+                            console.log(`📤 [CONFLITO] Resposta da API (${conflictResponse.status}): ${responseText.substring(0, 200)}`);
+
+                            if (conflictResponse.ok) {
+                              console.log('✅ Mensagem de conflito enviada com sucesso (PRÉ-VALIDAÇÃO)');
+
+                              await storage.createMessage({
+                                conversationId: conversation.id,
+                                content: conflictMessage,
+                                role: 'assistant',
+                                messageType: 'text',
+                                delivered: true,
+                                timestamp: new Date(),
+                              });
+                            } else {
+                              console.error(`❌ [CONFLITO] Falha ao enviar mensagem: Status ${conflictResponse.status}`);
+                              console.error(`❌ [CONFLITO] Resposta: ${responseText}`);
+                            }
+                          } else {
+                            console.error('❌ [CONFLITO] Evolution API não configurada');
+                          }
+                        } else {
+                          console.error('❌ [CONFLITO] Nenhuma instância WhatsApp conectada');
+                        }
+                      } catch (error) {
+                        console.error('❌ Erro ao enviar mensagem de conflito:', error);
+                      }
+
+                      // RETORNAR - NÃO chamar IA
+                      console.log('🔓 Liberando lock (PRÉ-VALIDAÇÃO - CONFLITO)');
+                      const lockKeyConflict = `${company.id}:${instanceName}:${phoneNumber}`;
+                      if (processingLocks.has(lockKeyConflict)) {
+                        processingLocks.delete(lockKeyConflict);
+                      }
+
+                      // IMPORTANTE: Enviar resposta HTTP para o webhook não reenviar
+                      return res.status(200).json({
+                        received: true,
+                        processed: true,
+                        conflict: true,
+                        message: 'Conflito de horário detectado na pré-validação'
+                      });
+                    }
+                  }
+
+                  console.log('✅ PRÉ-VALIDAÇÃO PASSOU: Todos os dados estão corretos e sem conflitos');
                   console.log('➡️ Continuando com chamada da IA...');
                 } else {
                   console.log('⚠️ Mensagem de resumo não encontrada, continuando normalmente...');
@@ -7279,6 +7703,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 
               // Process special commands for appointment management
               console.log('🔍 Checking for special commands in AI response...');
+              console.log('📝 AI Response (primeiros 500 chars):', aiResponse.substring(0, 500));
 
               // Process [LISTAR_AGENDAMENTOS] command
               if (aiResponse.includes('[LISTAR_AGENDAMENTOS]')) {
@@ -9054,6 +9479,13 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                           const errorMessage = `❌ *Conflito de Horário Detectado*\n\nDesculpe, mas não foi possível confirmar seu agendamento pois o horário solicitado já está ocupado por outro cliente.\n\nPor favor, escolha outro horário disponível e tente novamente.`;
 
+                          // Enviar webhook de erro para N8N
+                          await sendAppointmentErrorWebhook(company.id, 'CONFLICT', 'Horário já está ocupado por outro cliente', {
+                            conversationId: conversation.id,
+                            phoneNumber,
+                            additionalInfo: 'Conflito detectado ao tentar criar agendamento com pagamento'
+                          });
+
                           // Send error message via Evolution API
                           const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
                           let formattedPhoneForError = phoneNumber.replace(/\D/g, '');
@@ -9061,7 +9493,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             formattedPhoneForError = '55' + formattedPhoneForError;
                           }
 
-                          await fetch(`${correctedApiUrl}/message/sendText/${activeInstance.instanceName}`, {
+                          await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
                             method: 'POST',
                             headers: {
                               'Content-Type': 'application/json',
@@ -9150,6 +9582,13 @@ _Formas de pagamento disponíveis: Pix, Cartão de Crédito, Boleto_`;
 
                           const errorMessage = `❌ *Conflito de Horário Detectado*\n\nDesculpe, mas não foi possível confirmar seu agendamento pois o horário solicitado já está ocupado por outro cliente.\n\nPor favor, escolha outro horário disponível e tente novamente.`;
 
+                          // Enviar webhook de erro para N8N
+                          await sendAppointmentErrorWebhook(company.id, 'CONFLICT', 'Horário já está ocupado por outro cliente', {
+                            conversationId: conversation.id,
+                            phoneNumber,
+                            additionalInfo: 'Conflito detectado - link de pagamento não criado'
+                          });
+
                           // Send error message via Evolution API
                           const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
                           let formattedPhoneForError = phoneNumber.replace(/\D/g, '');
@@ -9205,6 +9644,13 @@ _Formas de pagamento disponíveis: Pix, Cartão de Crédito, Boleto_`;
                         console.log('❌ Agendamento não foi criado devido a conflito. Enviando mensagem de erro ao usuário...');
 
                         const errorMessage = `❌ *Conflito de Horário Detectado*\n\nDesculpe, mas não foi possível confirmar seu agendamento pois o horário solicitado já está ocupado por outro cliente.\n\nPor favor, escolha outro horário disponível e tente novamente.`;
+
+                        // Enviar webhook de erro para N8N
+                        await sendAppointmentErrorWebhook(company.id, 'CONFLICT', 'Horário já está ocupado por outro cliente', {
+                          conversationId: conversation.id,
+                          phoneNumber,
+                          additionalInfo: 'Conflito detectado - agendamento direto sem pagamento'
+                        });
 
                         // Send error message via Evolution API
                         const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
@@ -9267,7 +9713,18 @@ _Formas de pagamento disponíveis: Pix, Cartão de Crédito, Boleto_`;
 
             } catch (aiError: any) {
               console.error('Error generating AI response:', aiError);
-              
+
+              // Enviar webhook de erro para N8N
+              try {
+                await sendAppointmentErrorWebhook(company.id, 'AI_ERROR', `Erro na IA: ${aiError.message || 'Erro desconhecido'}`, {
+                  conversationId: conversation.id,
+                  phoneNumber,
+                  additionalInfo: `Tipo: ${aiError.code || aiError.status || 'unknown'} | Stack: ${aiError.stack?.substring(0, 500) || 'N/A'}`
+                });
+              } catch (webhookErr) {
+                console.error('⚠️ Falha ao enviar webhook de erro:', webhookErr);
+              }
+
               // Send fallback response when AI is not available
               let fallbackMessage = `Olá! 👋
 
@@ -13048,6 +13505,18 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 
   } catch (error) {
     console.error('❌ Error creating appointment from AI confirmation:', error);
+
+    // Enviar webhook de erro geral
+    try {
+      await sendAppointmentErrorWebhook(companyId, 'DATABASE_ERROR', `Erro ao criar agendamento: ${error instanceof Error ? error.message : 'Erro desconhecido'}`, {
+        conversationId,
+        phoneNumber,
+        additionalInfo: `Stack: ${error instanceof Error ? error.stack : 'N/A'}`
+      });
+    } catch (webhookErr) {
+      console.error('⚠️ Falha ao enviar webhook de erro:', webhookErr);
+    }
+
     return null;
   }
 }
@@ -13331,7 +13800,7 @@ REGRAS CRÍTICAS - SÓ EXTRAIA SE TODAS AS CONDIÇÕES FOREM ATENDIDAS:
    - Serviço ESPECÍFICO escolhido
    - Data ESPECÍFICA (dia da semana + data)
    - Horário ESPECÍFICO
-   - Telefone do cliente
+   - TELEFONE: NÃO é necessário na conversa (será preenchido automaticamente com o número do WhatsApp)
 
 3. INSTRUÇÕES PARA DATAS - MUITO IMPORTANTE:
    - PRIORIZE a data EXATA mencionada na conversa, especialmente no RESUMO do agendamento
@@ -13364,13 +13833,15 @@ NÃO use \`\`\`json, NÃO use \`\`\`, NÃO adicione texto antes ou depois.
 
 Retorne EXATAMENTE um destes dois formatos:
 1. Se os dados estão completos, retorne APENAS o JSON:
-{"clientName":"Nome do cliente","clientPhone":"Telefone","professionalId":123,"serviceId":456,"appointmentDate":"YYYY-MM-DD","appointmentTime":"HH:MM"}
+{"clientName":"Nome do cliente","professionalId":123,"serviceId":456,"appointmentDate":"YYYY-MM-DD","appointmentTime":"HH:MM"}
 
 2. Se falta algum dado ou não há confirmação, retorne APENAS:
 DADOS_INCOMPLETOS
 
 Exemplo de resposta válida (sem aspas externas, sem formatação):
-{"clientName":"Maria Silva","clientPhone":"11999999999","professionalId":1,"serviceId":2,"appointmentDate":"2025-12-18","appointmentTime":"14:00"}
+{"clientName":"Maria Silva","professionalId":1,"serviceId":2,"appointmentDate":"2025-12-18","appointmentTime":"14:00"}
+
+NOTA: O telefone NÃO precisa estar no JSON - será preenchido automaticamente pelo sistema.
 
 ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025", você DEVE retornar appointmentDate como "2025-12-18" (formato YYYY-MM-DD). NÃO use o dia da semana para calcular a data, use a DATA EXATA mostrada!`;
 
@@ -13386,6 +13857,14 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
 
     if (!extractedData || extractedData === 'DADOS_INCOMPLETOS' || extractedData.includes('DADOS_INCOMPLETOS')) {
       console.log('⚠️ Incomplete appointment data or missing confirmation, skipping creation');
+
+      // Enviar webhook de erro
+      await sendAppointmentErrorWebhook(companyId, 'EXTRACTION_FAILED', 'Dados do agendamento incompletos ou cliente não confirmou', {
+        conversationId,
+        phoneNumber: conversation.phoneNumber,
+        additionalInfo: 'Cliente pode não ter confirmado com SIM/OK ou faltam dados obrigatórios'
+      });
+
       return;
     }
 
@@ -13423,26 +13902,57 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
       console.log('🧹 Cleaned data for parsing:', cleanedData);
 
       const appointmentData = JSON.parse(cleanedData);
-      
-      // Validação final de todos os campos obrigatórios
-      if (!appointmentData.clientName || !appointmentData.clientPhone || 
+
+      // SEMPRE usar o telefone do WhatsApp automaticamente
+      appointmentData.clientPhone = conversation.phoneNumber;
+      console.log('📱 Usando telefone do WhatsApp automaticamente:', appointmentData.clientPhone);
+
+      // Validação final de todos os campos obrigatórios (sem exigir telefone pois é automático)
+      if (!appointmentData.clientName ||
           !appointmentData.professionalId || !appointmentData.serviceId ||
           !appointmentData.appointmentDate || !appointmentData.appointmentTime) {
         console.log('⚠️ Missing required appointment fields after extraction, skipping creation');
+
+        // Identificar quais campos estão faltando
+        const missingFields = [];
+        if (!appointmentData.clientName) missingFields.push('nome do cliente');
+        if (!appointmentData.professionalId) missingFields.push('profissional');
+        if (!appointmentData.serviceId) missingFields.push('serviço');
+        if (!appointmentData.appointmentDate) missingFields.push('data');
+        if (!appointmentData.appointmentTime) missingFields.push('horário');
+
+        // Enviar webhook de erro
+        await sendAppointmentErrorWebhook(companyId, 'VALIDATION_FAILED', `Campos obrigatórios faltando: ${missingFields.join(', ')}`, {
+          conversationId,
+          phoneNumber: conversation.phoneNumber,
+          clientName: appointmentData.clientName,
+          professionalId: appointmentData.professionalId,
+          serviceId: appointmentData.serviceId,
+          requestedDate: appointmentData.appointmentDate,
+          requestedTime: appointmentData.appointmentTime,
+          additionalInfo: `Campos extraídos: ${JSON.stringify(appointmentData)}`
+        });
+
         return;
       }
 
-      // Se o telefone não foi extraído corretamente, usar o telefone da conversa
-      if (!appointmentData.clientPhone || appointmentData.clientPhone === 'DADOS_INCOMPLETOS') {
-        appointmentData.clientPhone = conversation.phoneNumber;
-      }
-      
       console.log('✅ Valid appointment data extracted with explicit confirmation:', JSON.stringify(appointmentData, null, 2));
 
       // Find the service to get duration
       const service = services.find(s => s.id === appointmentData.serviceId);
       if (!service) {
         console.log('⚠️ Service not found');
+
+        // Enviar webhook de erro
+        await sendAppointmentErrorWebhook(companyId, 'SERVICE_NOT_FOUND', `Serviço ID ${appointmentData.serviceId} não encontrado`, {
+          conversationId,
+          phoneNumber: conversation.phoneNumber,
+          clientName: appointmentData.clientName,
+          serviceId: appointmentData.serviceId,
+          requestedDate: appointmentData.appointmentDate,
+          requestedTime: appointmentData.appointmentTime
+        });
+
         return;
       }
 

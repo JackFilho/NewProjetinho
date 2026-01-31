@@ -127,10 +127,6 @@ export async function getAvailableSlots(
   dateStr: string // Formato YYYY-MM-DD
 ): Promise<AvailabilityResult> {
   try {
-    console.log(`\n========================================`);
-    console.log(`📅 CALCULANDO DISPONIBILIDADE`);
-    console.log(`========================================`);
-    console.log(`📌 Company: ${companyId}, Professional: ${professionalId}, Service: ${serviceId}, Date: ${dateStr}`);
 
     // 1. Buscar informações do serviço
     const services = await storage.getServicesByCompany(companyId);
@@ -157,7 +153,6 @@ export async function getAvailableSlots(
     }
 
     const serviceDuration = service.duration || 30;
-    console.log(`⏱️ Serviço: ${service.name} (${serviceDuration} minutos)`);
 
     // 2. Buscar informações do profissional
     const professionals = await storage.getProfessionalsByCompany(companyId);
@@ -183,13 +178,10 @@ export async function getAvailableSlots(
       };
     }
 
-    console.log(`👤 Profissional: ${professional.name}`);
-
     // 3. Verificar dia da semana
     const date = new Date(dateStr + 'T12:00:00');
     const dayOfWeek = date.getDay();
     const dayName = getDayName(dayOfWeek);
-    console.log(`📆 Dia da semana: ${dayName} (${dayOfWeek})`);
 
     // 4. Verificar se é dia de folga
     const daysOff = await storage.getProfessionalDaysOffByDateRange(professionalId, dateStr, dateStr);
@@ -227,7 +219,7 @@ export async function getAvailableSlots(
       workStartTime = exceptionalSchedules[0].startTime;
       workEndTime = exceptionalSchedules[0].endTime;
       isExceptional = true;
-      console.log(`⚠️ Horário EXCEPCIONAL: ${workStartTime} às ${workEndTime}`);
+      // Horário excepcional aplicado
     } else {
       // Usar horário regular
       const daySchedule = regularSchedules.find(s => s.dayOfWeek === dayOfWeek && s.isEnabled);
@@ -254,7 +246,6 @@ export async function getAvailableSlots(
 
       workStartTime = daySchedule.startTime;
       workEndTime = daySchedule.endTime;
-      console.log(`📋 Horário de trabalho: ${workStartTime} às ${workEndTime}`);
     }
 
     // 6. Buscar pausas do dia
@@ -264,12 +255,12 @@ export async function getAvailableSlots(
       start: b.startTime,
       end: b.endTime
     }));
-    console.log(`☕ Pausas: ${dayBreaks.length > 0 ? dayBreaks.map(b => `${b.startTime}-${b.endTime}`).join(', ') : 'Nenhuma'}`);
 
-    // 7. Buscar agendamentos existentes
+    // 7. Buscar agendamentos existentes (excluindo apenas cancelados)
     const [existingAppointments] = await pool.execute(
-      `SELECT appointment_time, duration, client_name FROM appointments
-       WHERE company_id = ? AND professional_id = ? AND appointment_date = ? AND status != 'Cancelado' AND status != 'cancelado'
+      `SELECT appointment_time, duration, client_name, status FROM appointments
+       WHERE company_id = ? AND professional_id = ? AND appointment_date = ?
+       AND status NOT IN ('Cancelado', 'cancelado', 'cancelled')
        ORDER BY appointment_time`,
       [companyId, professionalId, dateStr]
     ) as any;
@@ -285,7 +276,6 @@ export async function getAvailableSlots(
         clientName: apt.client_name
       };
     });
-    console.log(`📊 Agendamentos existentes: ${existingAppointments.length}`);
 
     // 8. Calcular horários disponíveis
     const workStartMinutes = timeToMinutes(workStartTime);
@@ -294,8 +284,6 @@ export async function getAvailableSlots(
     const configuredInterval = professional.timeInterval || 0;
     const timeInterval = configuredInterval === 0 ? serviceDuration : configuredInterval;
     const minimumAdvanceHours = professional.minimumAdvanceHours || 0;
-
-    console.log(`⏱️ Intervalo de tempo: ${configuredInterval === 0 ? 'Sem intervalo (usando duração do serviço: ' + serviceDuration + 'min)' : timeInterval + ' minutos'}`);
 
     // Calcular horário mínimo considerando antecedência
     const now = getBrazilDate();
@@ -311,7 +299,6 @@ export async function getAvailableSlots(
       if (timeInterval > 0) {
         minTimeMinutes = Math.ceil(minTimeMinutes / timeInterval) * timeInterval;
       }
-      console.log(`⏰ Antecedência mínima aplicada: ${minimumAdvanceHours}h (mín: ${minutesToTime(minTimeMinutes)})`);
     }
 
     const availableSlots: string[] = [];
@@ -329,7 +316,6 @@ export async function getAvailableSlots(
 
       // Verificar antecedência mínima (para hoje)
       if (slotStart < minTimeMinutes) {
-        console.log(`  ⏰ ${timeStr}: Não atende antecedência mínima`);
         currentMinutes += timeInterval;
         continue;
       }
@@ -343,7 +329,6 @@ export async function getAvailableSlots(
 
         if (hasOverlap(slotStart, slotEnd, aptStart, aptEnd)) {
           hasAppointmentConflict = true;
-          console.log(`  ❌ ${timeStr}: Conflito com agendamento ${apt.appointment_time}-${minutesToTime(aptEnd)}`);
           break;
         }
       }
@@ -361,7 +346,6 @@ export async function getAvailableSlots(
 
         if (hasOverlap(slotStart, slotEnd, brkStart, brkEnd)) {
           hasBreakConflict = true;
-          console.log(`  ☕ ${timeStr}: Conflito com pausa ${brk.startTime}-${brk.endTime}`);
           break;
         }
       }
@@ -373,13 +357,8 @@ export async function getAvailableSlots(
 
       // Slot disponível!
       availableSlots.push(timeStr);
-      console.log(`  ✅ ${timeStr}: Disponível`);
-
       currentMinutes += timeInterval;
     }
-
-    console.log(`\n📊 RESULTADO: ${availableSlots.length} horários disponíveis`);
-    console.log(`========================================\n`);
 
     // 9. Formatar mensagem de resposta
     let message: string;
