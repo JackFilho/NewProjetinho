@@ -243,6 +243,7 @@ export const conversations = mysqlTable("conversations", {
   contactName: varchar("contact_name", { length: 255 }),
   lastMessageAt: timestamp("last_message_at").defaultNow(),
   takeoverMode: mysqlEnum("takeover_mode", ["agent", "human"]).default("agent"),
+  courseSentAt: timestamp("course_sent_at"), // Timestamp when course notification was sent (null = never sent)
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });

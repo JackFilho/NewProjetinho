@@ -1408,7 +1408,14 @@ async function getAvailableTimesForService(
 
       if (!daySchedule) {
         const dayNames = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
-        return `❌ ${professional.name} não trabalha às ${dayNames[dayOfWeek]}`;
+        const noWorkMessages = [
+          `😕 ${professional.name} não trabalha às ${dayNames[dayOfWeek]}.\n\nQue tal escolher outro dia? Estou aqui para ajudar!`,
+          `Poxa, ${professional.name} não atende às ${dayNames[dayOfWeek]}.\n\nMe conta outro dia que funcione melhor pra você! 📅`,
+          `${professional.name} folga às ${dayNames[dayOfWeek]}.\n\nVamos tentar outro dia? Qual seria bom pra você?`,
+          `Infelizmente ${professional.name} não trabalha às ${dayNames[dayOfWeek]}.\n\nPode me dizer outra data de sua preferência? 😊`,
+          `${professional.name} não está disponível às ${dayNames[dayOfWeek]}.\n\nQual outro dia seria melhor pra você?`
+        ];
+        return noWorkMessages[Math.floor(Math.random() * noWorkMessages.length)];
       }
 
       workStartTime = daySchedule.startTime;
@@ -1501,7 +1508,14 @@ async function getAvailableTimesForService(
 
     // Formatar resposta - apenas os horários de forma simples
     if (availableTimes.length === 0) {
-      return `Não há horários disponíveis nesta data.`;
+      const noSlotsMessages = [
+        `😕 Não temos horários disponíveis nesta data.\n\nQue tal escolher outro dia? Estou aqui para ajudar!`,
+        `Poxa, esse dia já está todo preenchido!\n\nMe conta outra data que funcione pra você 📅`,
+        `Infelizmente todos os horários já foram preenchidos nesta data.\n\nVamos tentar outro dia? Qual seria bom pra você?`,
+        `Ops! Não há mais horários livres neste dia.\n\nPode me dizer outra data de sua preferência? 😊`,
+        `Este dia está com a agenda cheia!\n\nQual outro dia seria melhor pra você?`
+      ];
+      return noSlotsMessages[Math.floor(Math.random() * noSlotsMessages.length)];
     }
 
     // Retorna apenas os horários agrupados
@@ -6600,8 +6614,19 @@ if (ignoredNumbers !== undefined) {
 
           if (courseKeywordDetected) {
             console.log('🎓 [COURSE-NOTIFICATION] Course keyword was detected');
-            console.log(`⚙️ [COURSE-NOTIFICATION] Pause AI after: ${shouldPauseCourseAI}, timeout=${courseTimeoutValue} minutes`);
 
+            // Check if course notification was already sent to this client
+            if (conversation && conversation.courseSentAt) {
+              console.log('⏭️ [COURSE-NOTIFICATION] Course already sent to this client on:', conversation.courseSentAt);
+              console.log('⏭️ [COURSE-NOTIFICATION] Skipping duplicate notification - letting AI respond normally');
+              // Reset the flag so AI responds normally without course notification logic
+              courseKeywordDetected = false;
+            } else {
+              console.log(`⚙️ [COURSE-NOTIFICATION] Pause AI after: ${shouldPauseCourseAI}, timeout=${courseTimeoutValue} minutes`);
+            }
+          }
+
+          if (courseKeywordDetected) {
             // Get course PDFs to send
             let coursePdfsToSend: string[] = [];
             if (company.coursesPdfs) {
@@ -6758,13 +6783,17 @@ if (ignoredNumbers !== undefined) {
                     console.log('✅ [COURSE-NOTIFICATION] Notification sent');
                   }
 
-                  // Pause AI if configured
-                  if (shouldPauseCourseAI && conversation) {
+                  // Mark course as sent to this client (to avoid duplicate sends)
+                  if (conversation) {
                     await storage.updateConversation(conversation.id, {
-                      takeoverMode: 'human',
+                      courseSentAt: new Date(),
+                      takeoverMode: shouldPauseCourseAI ? 'human' : 'agent',
                       lastMessageAt: new Date(),
                     });
-                    console.log(`✅ [COURSE-NOTIFICATION] AI paused for ${courseTimeoutValue} minutes`);
+                    console.log('✅ [COURSE-NOTIFICATION] Marked courseSentAt to prevent future duplicate sends');
+                    if (shouldPauseCourseAI) {
+                      console.log(`✅ [COURSE-NOTIFICATION] AI paused for ${courseTimeoutValue} minutes`);
+                    }
                   }
                 }
               } catch (error) {
@@ -7507,15 +7536,19 @@ Cliente quer: "Corte de cabelo com Estevão amanhã" (amanhã = 31/01/2026)
 Sua resposta deve ser:
 "Vou verificar os horários disponíveis para amanhã!
 
-[MOSTRAR_HORARIOS_LIVRES:5:65:2026-01-31]
+[MOSTRAR_HORARIOS_LIVRES:5:65:2026-01-31]"
 
-Qual horário você prefere?"
+APÓS o comando ser processado, o sistema vai retornar:
+- Se HOUVER horários: uma lista de horários → aí sim você pergunta "Qual horário você prefere?"
+- Se NÃO houver horários ou profissional não trabalha: uma mensagem COMPLETA já perguntando outro dia → NUNCA adicione "Qual horário você prefere?" pois não faz sentido!
 
 ⚠️ IMPORTANTE:
 • Use o ID do serviço e profissional (veja nas listas acima)
 • A data DEVE estar no formato YYYY-MM-DD (ex: 2026-01-31)
 • NÃO invente horários - o comando retorna apenas horários REAIS
 • Se "amanhã" = 31/01/2026, use 2026-01-31
+
+🚫 REGRA ABSOLUTA: Se a mensagem de horários já contiver uma pergunta como "Qual outro dia seria melhor?" ou "Que tal escolher outro dia?", NUNCA adicione "Qual horário você prefere?" - a pergunta já foi feita!
 
 ═══════════════════════════════════════════════════════════════════
 
@@ -7545,7 +7578,8 @@ ETAPA ${shouldAutoSelect ? '2' : '3'} - DATA:
 ETAPA ${shouldAutoSelect ? '3' : '4'} - HORÁRIO:
    → APÓS ter a data, use o comando para buscar horários:
    → [MOSTRAR_HORARIOS_LIVRES:ID_SERVICO:ID_PROFISSIONAL:DATA_YYYY-MM-DD]
-   → "Vou verificar os horários!\n\n[MOSTRAR_HORARIOS_LIVRES:X:Y:YYYY-MM-DD]\n\nQual horário você prefere?"
+   → Se o resultado mostrar HORÁRIOS (ex: "09:00 | 10:00 | 11:00"): pergunte "Qual horário você prefere?"
+   → Se o resultado mostrar INDISPONIBILIDADE (contém "não trabalha", "não disponível", "não temos horários", "agenda cheia", etc): NÃO ADICIONE NADA - a mensagem já está completa com a pergunta sobre outro dia!
 
 ETAPA ${shouldAutoSelect ? '4' : '5'} - NOME:
    → SOMENTE APÓS o cliente escolher o HORÁRIO, pergunte o nome
@@ -7726,21 +7760,30 @@ REGRAS IMPORTANTES PARA CANCELAMENTO E REAGENDAMENTO:
                     });
                   }
 
-                  // Validar serviço
+                  // Validar serviço - priorizar correspondência exata
                   let service = null;
                   if (details.service) {
                     const normalizedSearch = normalizeString(details.service);
+
+                    // Primeiro: buscar correspondência EXATA
                     service = services.find(s => {
                       const normalizedServiceName = normalizeString(s.name);
-                      return normalizedServiceName === normalizedSearch ||
-                             normalizedServiceName.includes(normalizedSearch) ||
-                             normalizedSearch.includes(normalizedServiceName);
+                      return normalizedServiceName === normalizedSearch;
                     });
+
+                    // Se não encontrou exata, buscar parcial
+                    if (!service) {
+                      service = services.find(s => {
+                        const normalizedServiceName = normalizeString(s.name);
+                        return normalizedServiceName.includes(normalizedSearch) ||
+                               normalizedSearch.includes(normalizedServiceName);
+                      });
+                    }
                   }
 
                   console.log('🔍 Validação:');
                   console.log('  Professional:', professional ? `✅ ${professional.name}` : '❌ NOT FOUND');
-                  console.log('  Service:', service ? `✅ ${service.name}` : '❌ NOT FOUND');
+                  console.log('  Service:', service ? `✅ ${service.name} (${service.duration}min)` : '❌ NOT FOUND');
                   console.log('  Time:', details.time ? `✅ ${details.time}` : '❌ MISSING');
 
                   // Se validação falhar, enviar erro ANTES de chamar IA
@@ -7851,6 +7894,12 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                     const requestedStartMinutes = reqHour * 60 + reqMin;
                     const requestedEndMinutes = requestedStartMinutes + serviceDuration;
 
+                    console.log('🔍 [PRÉ-VALIDAÇÃO] Verificando conflitos:');
+                    console.log(`   📅 Data solicitada: ${appointmentDateStr}`);
+                    console.log(`   ⏰ Horário solicitado: ${appointmentTimeStr}`);
+                    console.log(`   ⏱️ Duração do serviço: ${serviceDuration} min`);
+                    console.log(`   📊 Novo agendamento: início=${requestedStartMinutes}min (${appointmentTimeStr}), fim=${requestedEndMinutes}min (${Math.floor(requestedEndMinutes/60)}:${String(requestedEndMinutes%60).padStart(2,'0')})`);
+
                     // Verificar conflitos
                     let hasConflict = false;
                     let conflictingAppointment: any = null;
@@ -7870,11 +7919,18 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                         const existingStartMinutes = existHour * 60 + existMin;
                         const existingEndMinutes = existingStartMinutes + (apt.duration || 30);
 
+                        console.log(`   📋 Agendamento existente: ${apt.clientName} - ${apt.appointmentTime} (${existingStartMinutes}min) até ${Math.floor(existingEndMinutes/60)}:${String(existingEndMinutes%60).padStart(2,'0')} (${existingEndMinutes}min)`);
+                        console.log(`      🔄 Verificação: novo_inicio(${requestedStartMinutes}) < existente_fim(${existingEndMinutes})? ${requestedStartMinutes < existingEndMinutes}`);
+                        console.log(`      🔄 Verificação: novo_fim(${requestedEndMinutes}) > existente_inicio(${existingStartMinutes})? ${requestedEndMinutes > existingStartMinutes}`);
+
                         // Verificar sobreposição
                         if (requestedStartMinutes < existingEndMinutes && requestedEndMinutes > existingStartMinutes) {
+                          console.log(`      ⚠️ CONFLITO DETECTADO!`);
                           hasConflict = true;
                           conflictingAppointment = apt;
                           break;
+                        } else {
+                          console.log(`      ✅ Sem conflito com este agendamento`);
                         }
                       }
                     }
@@ -9266,14 +9322,21 @@ Por favor, escolha um dos horários disponíveis acima.`;
                     }
                   }
 
-                  // Pause AI if configured
-                  if (courseData.shouldPauseAI && conversation) {
-                    console.log(`⏸️ [COURSE-NOTIFICATION] Pausing AI for ${courseData.timeoutMinutes} minutes`);
-                    await storage.updateConversation(conversation.id, {
-                      takeoverMode: 'human',
+                  // Mark course as sent and pause AI if configured
+                  if (conversation) {
+                    const updateData: any = {
+                      courseSentAt: new Date(),
                       lastMessageAt: new Date(),
-                    });
-                    console.log('✅ [COURSE-NOTIFICATION] AI paused');
+                    };
+                    if (courseData.shouldPauseAI) {
+                      updateData.takeoverMode = 'human';
+                      console.log(`⏸️ [COURSE-NOTIFICATION] Pausing AI for ${courseData.timeoutMinutes} minutes`);
+                    }
+                    await storage.updateConversation(conversation.id, updateData);
+                    console.log('✅ [COURSE-NOTIFICATION] Marked courseSentAt to prevent future duplicate sends');
+                    if (courseData.shouldPauseAI) {
+                      console.log('✅ [COURSE-NOTIFICATION] AI paused');
+                    }
                   }
                 }
 

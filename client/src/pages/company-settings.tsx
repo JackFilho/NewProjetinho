@@ -2732,10 +2732,10 @@ export default function CompanySettings() {
                                 onChange={(e) => field.onChange(parseInt(e.target.value))}
                               >
                                 <option value={0}>Não pausar IA (apenas notificar)</option>
-                                <option value={10}>10 minutos</option>
-                                <option value={20}>20 minutos</option>
                                 <option value={30}>30 minutos</option>
                                 <option value={60}>1 hora</option>
+                                <option value={120}>2 horas</option>
+                                <option value={360}>6 horas</option>
                               </select>
                             </FormControl>
                             <FormMessage />
