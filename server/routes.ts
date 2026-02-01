@@ -7630,9 +7630,11 @@ INSTRUÇÕES ADICIONAIS:
 - REGRA OBRIGATÓRIA DE RESUMO E CONFIRMAÇÃO:
   * Quando tiver TODOS os dados (profissional, serviço, nome, data/hora disponível), NÃO confirme imediatamente
   * PRIMEIRO envie um RESUMO COMPLETO do agendamento: "Perfeito! Vou confirmar seu agendamento:\n\n👤 Nome: [nome]\n🏢 Profissional: [profissional]\n💼 Serviço: [serviço]\n📅 Data: [dia da semana], [data]\n🕐 Horário: [horário]\n\nEstá tudo correto? Responda SIM para confirmar ou me informe se algo precisa ser alterado."
-  * AGUARDE o cliente responder "SIM", "OK" ou confirmação similar
-  * APENAS APÓS a confirmação com "SIM" ou "OK", confirme o agendamento final
-  * Se cliente não confirmar com "SIM/OK", continue coletando correções
+  * AGUARDE o cliente responder "SIM", "OK", "CONFIRMO" ou confirmação similar
+  * APENAS APÓS a confirmação explícita (SIM, OK, CONFIRMO), confirme o agendamento final
+  * Se cliente pedir ALTERAÇÃO (ex: "meu nome está errado", "quero outro horário", "mudar para terça"), processe a alteração normalmente e envie novo resumo
+  * Se cliente responder com algo AMBÍGUO que NÃO seja confirmação NEM pedido de alteração (ex: emoji ❤️👍, "beleza", "show", "perfeito", "ótimo", "legal"), NÃO confirme o agendamento. Responda: "Que bom! 😊 Para finalizar seu agendamento, preciso da sua confirmação. Posso confirmar para [data] às [horário]? Digite SIM para confirmar."
+  * NUNCA diga "Agendamento realizado com sucesso" sem antes receber SIM, OK ou CONFIRMO explícito do cliente
 - NÃO invente serviços - use APENAS os serviços listados acima
 - NÃO confirme horários sem verificar disponibilidade real
 - SEMPRE mostre todos os profissionais/serviços disponíveis antes de pedir para escolher
