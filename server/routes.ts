@@ -7171,6 +7171,19 @@ if (ignoredNumbers !== undefined) {
               console.log(`🔍 Lock key: ${lockKey}`);
               console.log(`🔍 Lock atual: ${processingLocks.get(lockKey) ? 'ATIVO' : 'LIVRE'}`);
 
+              // 🔓 TIMEOUT AUTOMÁTICO DO LOCK: Se o lock estiver ativo há mais de 2 minutos, liberar automaticamente
+              const lockTimeout = 2 * 60 * 1000; // 2 minutos em ms
+              const lastLockTime = lastMessageTime.get(lockKey);
+              if (processingLocks.get(lockKey) && lastLockTime) {
+                const lockAge = Date.now() - lastLockTime;
+                if (lockAge > lockTimeout) {
+                  console.log(`⚠️ LOCK EXPIRADO! Lock ativo há ${Math.round(lockAge / 1000)}s (máximo: ${lockTimeout / 1000}s)`);
+                  console.log(`🔓 Liberando lock expirado automaticamente: ${lockKey}`);
+                  processingLocks.delete(lockKey);
+                  lastMessageTime.delete(lockKey);
+                }
+              }
+
               // Se já está processando, apenas salvar mensagem e retornar
               if (processingLocks.get(lockKey)) {
                 console.log('⏱️  ❌ LOCK ATIVO - Salvando mensagem mas NÃO processando');
@@ -10212,6 +10225,13 @@ Obrigado pela preferência! 🙏`;
                 }
               } catch (sendError) {
                 console.error('❌ Error sending fallback message:', sendError);
+              }
+
+              // 🔓 IMPORTANTE: Liberar o lock após erro da IA para que próximas mensagens sejam processadas
+              const lockKeyAfterError = `${company.id}:${instanceName}:${phoneNumber}`;
+              if (processingLocks.has(lockKeyAfterError)) {
+                processingLocks.delete(lockKeyAfterError);
+                console.log(`🔓 Lock liberado após erro da IA: ${lockKeyAfterError}`);
               }
             }
           }

@@ -1341,12 +1341,12 @@ export default function CompanySettings() {
     mutationFn: async (instanceName: string) => {
       const settingsPayload = {
         rejectCall: false,
-        msgCall: "I do not accept calls",
+        msgCall: "",
         groupsIgnore: true,
-        alwaysOnline: true,
-        readMessages: true,
+        alwaysOnline: false,
+        readMessages: false,
         syncFullHistory: false,
-        readStatus: true
+        readStatus: false
       };
       
       return await apiRequest(`/api/company/whatsapp/instances/${instanceName}/configure`, "POST", settingsPayload);
