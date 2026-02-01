@@ -2772,18 +2772,23 @@ async function createAppointmentFromConversation(conversationId: number, company
       'está correto sim',
       'pode agendar sim'
     ];
-    
+
+    // Normaliza a mensagem removendo pontuação (!, ., ?, etc.) para aceitar "sim!", "sim.", etc.
+    const normalizeForComparison = (text: string) => {
+      return text.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '').trim();
+    };
+
     // Get last user message to check for recent confirmation
     const lastUserMessage = messages.filter(m => m.role === 'user').pop();
-    const hasRecentConfirmation = lastUserMessage && 
-      finalConfirmationPhrases.some(phrase => 
-        lastUserMessage.content.toLowerCase().trim() === phrase.toLowerCase()
+    const hasRecentConfirmation = lastUserMessage &&
+      finalConfirmationPhrases.some(phrase =>
+        normalizeForComparison(lastUserMessage.content) === phrase.toLowerCase()
       );
-    
-    const hasAnyConfirmation = finalConfirmationPhrases.some(phrase => 
+
+    const hasAnyConfirmation = finalConfirmationPhrases.some(phrase =>
       conversationText.toLowerCase().includes(phrase.toLowerCase())
     );
-    
+
     if (!hasRecentConfirmation && !hasAnyConfirmation) {
       console.log('⚠️ Nenhuma confirmação final (sim/ok) encontrada na conversa, pulando criação de agendamento');
       return;
@@ -14040,18 +14045,23 @@ async function createAppointmentFromConversation(conversationId: number, company
       'está correto sim',
       'pode agendar sim'
     ];
-    
+
+    // Normaliza a mensagem removendo pontuação (!, ., ?, etc.) para aceitar "sim!", "sim.", etc.
+    const normalizeForComparison = (text: string) => {
+      return text.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '').trim();
+    };
+
     // Get last user message to check for recent confirmation
     const lastUserMessage = messages.filter(m => m.role === 'user').pop();
-    const hasRecentConfirmation = lastUserMessage && 
-      finalConfirmationPhrases.some(phrase => 
-        lastUserMessage.content.toLowerCase().trim() === phrase.toLowerCase()
+    const hasRecentConfirmation = lastUserMessage &&
+      finalConfirmationPhrases.some(phrase =>
+        normalizeForComparison(lastUserMessage.content) === phrase.toLowerCase()
       );
-    
-    const hasAnyConfirmation = finalConfirmationPhrases.some(phrase => 
+
+    const hasAnyConfirmation = finalConfirmationPhrases.some(phrase =>
       conversationText.toLowerCase().includes(phrase.toLowerCase())
     );
-    
+
     if (!hasRecentConfirmation && !hasAnyConfirmation) {
       console.log('⚠️ Nenhuma confirmação final (sim/ok) encontrada na conversa, pulando criação de agendamento');
       return;
