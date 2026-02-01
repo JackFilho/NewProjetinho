@@ -1478,43 +1478,46 @@ export default function CompanyProfessionals() {
                       )}
 
                       {/* Formulário para adicionar novo horário excepcional */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-                        <div>
-                          <Label className="text-xs sm:text-sm text-gray-600 mb-1 block">Data</Label>
-                          <Input
-                            type="date"
-                            value={newExceptionalSchedule.date}
-                            onChange={(e) => setNewExceptionalSchedule(prev => ({ ...prev, date: e.target.value }))}
-                            className="h-8 sm:h-10"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs sm:text-sm text-gray-600 mb-1 block">Início</Label>
-                          <Input
-                            type="time"
-                            value={newExceptionalSchedule.startTime}
-                            onChange={(e) => setNewExceptionalSchedule(prev => ({ ...prev, startTime: e.target.value }))}
-                            className="h-8 sm:h-10"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs sm:text-sm text-gray-600 mb-1 block">Fim</Label>
-                          <Input
-                            type="time"
-                            value={newExceptionalSchedule.endTime}
-                            onChange={(e) => setNewExceptionalSchedule(prev => ({ ...prev, endTime: e.target.value }))}
-                            className="h-8 sm:h-10"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs sm:text-sm text-gray-600 mb-1 block">Motivo</Label>
-                          <Input
-                            type="text"
-                            placeholder="Opcional..."
-                            value={newExceptionalSchedule.reason}
-                            onChange={(e) => setNewExceptionalSchedule(prev => ({ ...prev, reason: e.target.value }))}
-                            className="h-8 sm:h-10"
-                          />
+                      <div className="grid grid-cols-1 gap-3">
+                        {/* Linha 1: Data e Horários */}
+                        <div className="grid grid-cols-5 gap-2">
+                          <div className="col-span-2">
+                            <Label className="text-xs sm:text-sm text-gray-600 mb-1 block">Data</Label>
+                            <Input
+                              type="date"
+                              value={newExceptionalSchedule.date}
+                              onChange={(e) => setNewExceptionalSchedule(prev => ({ ...prev, date: e.target.value }))}
+                              className="h-10 w-full min-w-[140px]"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs sm:text-sm text-gray-600 mb-1 block">Início</Label>
+                            <Input
+                              type="time"
+                              value={newExceptionalSchedule.startTime}
+                              onChange={(e) => setNewExceptionalSchedule(prev => ({ ...prev, startTime: e.target.value }))}
+                              className="h-10"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs sm:text-sm text-gray-600 mb-1 block">Fim</Label>
+                            <Input
+                              type="time"
+                              value={newExceptionalSchedule.endTime}
+                              onChange={(e) => setNewExceptionalSchedule(prev => ({ ...prev, endTime: e.target.value }))}
+                              className="h-10"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs sm:text-sm text-gray-600 mb-1 block">Motivo</Label>
+                            <Input
+                              type="text"
+                              placeholder="Opcional..."
+                              value={newExceptionalSchedule.reason}
+                              onChange={(e) => setNewExceptionalSchedule(prev => ({ ...prev, reason: e.target.value }))}
+                              className="h-10"
+                            />
+                          </div>
                         </div>
                       </div>
                       <Button
