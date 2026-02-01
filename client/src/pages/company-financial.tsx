@@ -585,92 +585,6 @@ export default function CompanyFinancial() {
             </div>
           ) : (
             <>
-              {/* Gráficos */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-                {/* Gráfico de Barras - Receitas vs Despesas */}
-                <div className="bg-white rounded shadow-sm p-5 border border-gray-100">
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-semibold text-gray-800">Receitas vs Despesas</h3>
-                  </div>
-                  <div className="h-80">
-                    {safeData.monthlyIncome === 0 && safeData.monthlyExpenses === 0 ? (
-                      <div className="h-full flex items-center justify-center">
-                        <span className="text-gray-500">Sem dados para este período</span>
-                      </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={barChartData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                          <XAxis
-                            dataKey="name"
-                            axisLine={false}
-                            tickLine={false}
-                            tick={{ fontSize: 12, fill: '#666' }}
-                          />
-                          <YAxis
-                            axisLine={false}
-                            tickLine={false}
-                            tick={{ fontSize: 12, fill: '#666' }}
-                            tickFormatter={(value) => `R$ ${value.toLocaleString('pt-BR')}`}
-                          />
-                          <Tooltip
-                            formatter={(value: number) => [`R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, '']}
-                            labelStyle={{ color: '#333' }}
-                            contentStyle={{
-                              backgroundColor: '#fff',
-                              border: '1px solid #e5e7eb',
-                              borderRadius: '6px',
-                              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                            }}
-                          />
-                          <Legend />
-                          <Bar dataKey="Receitas" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={80} />
-                          <Bar dataKey="Despesas" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={80} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                </div>
-
-                {/* Gráfico de Pizza - Distribuição */}
-                <div className="bg-white rounded shadow-sm p-5 border border-gray-100">
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-semibold text-gray-800">Distribuição Financeira</h3>
-                  </div>
-                  <div className="h-80">
-                    {safeData.monthlyIncome === 0 && safeData.monthlyExpenses === 0 ? (
-                      <div className="h-full flex items-center justify-center">
-                        <span className="text-gray-500">Sem dados para este período</span>
-                      </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <RechartsPieChart>
-                          <Pie
-                            data={pieChartData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={60}
-                            outerRadius={100}
-                            paddingAngle={5}
-                            dataKey="value"
-                          >
-                            {pieChartData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.color} />
-                            ))}
-                          </Pie>
-                          <Tooltip
-                            formatter={(value: number) => `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-                          />
-                          <Legend
-                            formatter={(value, entry: any) => `${value} (${entry.payload.percentage}%)`}
-                          />
-                        </RechartsPieChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                </div>
-              </div>
-
               {/* Cards de Métricas - Estilo Moderno */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
                 <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-50 hover:shadow-xl transition-all duration-300">
@@ -754,6 +668,92 @@ export default function CompanyFinancial() {
                       <span>Total</span>
                     </div>
                     <span className="text-xs text-gray-500 ml-2">transações do mês</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Gráficos */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                {/* Gráfico de Barras - Receitas vs Despesas */}
+                <div className="bg-white rounded shadow-sm p-5 border border-gray-100">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-semibold text-gray-800">Receitas vs Despesas</h3>
+                  </div>
+                  <div className="h-80">
+                    {safeData.monthlyIncome === 0 && safeData.monthlyExpenses === 0 ? (
+                      <div className="h-full flex items-center justify-center">
+                        <span className="text-gray-500">Sem dados para este período</span>
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={barChartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis
+                            dataKey="name"
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 12, fill: '#666' }}
+                          />
+                          <YAxis
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 12, fill: '#666' }}
+                            tickFormatter={(value) => `R$ ${value.toLocaleString('pt-BR')}`}
+                          />
+                          <Tooltip
+                            formatter={(value: number) => [`R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, '']}
+                            labelStyle={{ color: '#333' }}
+                            contentStyle={{
+                              backgroundColor: '#fff',
+                              border: '1px solid #e5e7eb',
+                              borderRadius: '6px',
+                              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                            }}
+                          />
+                          <Legend />
+                          <Bar dataKey="Receitas" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={80} />
+                          <Bar dataKey="Despesas" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={80} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </div>
+
+                {/* Gráfico de Pizza - Distribuição */}
+                <div className="bg-white rounded shadow-sm p-5 border border-gray-100">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-semibold text-gray-800">Distribuição Financeira</h3>
+                  </div>
+                  <div className="h-80">
+                    {safeData.monthlyIncome === 0 && safeData.monthlyExpenses === 0 ? (
+                      <div className="h-full flex items-center justify-center">
+                        <span className="text-gray-500">Sem dados para este período</span>
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <RechartsPieChart>
+                          <Pie
+                            data={pieChartData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={60}
+                            outerRadius={100}
+                            paddingAngle={5}
+                            dataKey="value"
+                          >
+                            {pieChartData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip
+                            formatter={(value: number) => `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+                          />
+                          <Legend
+                            formatter={(value, entry: any) => `${value} (${entry.payload.percentage}%)`}
+                          />
+                        </RechartsPieChart>
+                      </ResponsiveContainer>
+                    )}
                   </div>
                 </div>
               </div>

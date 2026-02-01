@@ -17517,10 +17517,23 @@ const broadcastEvent = (eventData: any) => {
         .orderBy(desc(financialTransactions.date));
 
       // Formatar datas para YYYY-MM-DD
-      const formattedTransactions = transactions.map((t: any) => ({
-        ...t,
-        date: t.date ? new Date(t.date).toISOString().split('T')[0] : null,
-      }));
+      const formattedTransactions = transactions.map((t: any) => {
+        if (!t.date) return { ...t, date: null };
+
+        // Se já for string YYYY-MM-DD, mantém como está
+        if (typeof t.date === 'string') {
+          // Extrai apenas YYYY-MM-DD se tiver timestamp
+          return { ...t, date: t.date.split('T')[0] };
+        }
+
+        // Se for objeto Date, usa UTC para evitar offset de timezone
+        // O MySQL armazena DATE sem timezone, então devemos usar UTC
+        const d = t.date instanceof Date ? t.date : new Date(t.date);
+        const year = d.getUTCFullYear();
+        const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        return { ...t, date: `${year}-${month}-${day}` };
+      });
 
       res.json(formattedTransactions);
     } catch (error: any) {
@@ -17654,7 +17667,20 @@ const broadcastEvent = (eventData: any) => {
         .where(eq(financialTransactions.companyId, companyId));
 
       const monthlyTransactions = allTransactions.filter((t: any) => {
-        const transDate = new Date(t.date);
+        if (!t.date) return false;
+
+        // Extrai ano e mês diretamente da data (evita problemas de timezone)
+        let transYear: number, transMonth: number;
+        if (typeof t.date === 'string') {
+          const parts = t.date.split('T')[0].split('-');
+          transYear = parseInt(parts[0]);
+          transMonth = parseInt(parts[1]);
+        } else {
+          // Se for objeto Date, usa UTC
+          const d = t.date instanceof Date ? t.date : new Date(t.date);
+          transYear = d.getUTCFullYear();
+          transMonth = d.getUTCMonth() + 1;
+        }
 
         // Se ambos forem "all", retorna todos
         if (year === null && month === null) {
@@ -17663,16 +17689,16 @@ const broadcastEvent = (eventData: any) => {
 
         // Se apenas mês for "all", filtra apenas por ano
         if (month === null && year !== null) {
-          return transDate.getFullYear() === year;
+          return transYear === year;
         }
 
         // Se apenas ano for "all", filtra apenas por mês
         if (year === null && month !== null) {
-          return transDate.getMonth() + 1 === month;
+          return transMonth === month;
         }
 
         // Filtra por mês e ano específicos
-        return transDate.getFullYear() === year && transDate.getMonth() + 1 === month;
+        return transYear === year && transMonth === month;
       });
 
       const transactionIncome = monthlyTransactions
@@ -17718,8 +17744,20 @@ const broadcastEvent = (eventData: any) => {
         });
 
         const prevMonthTransactions = allTransactions.filter((t: any) => {
-          const transDate = new Date(t.date);
-          return transDate.getFullYear() === prevYear && transDate.getMonth() + 1 === prevMonth;
+          if (!t.date) return false;
+
+          // Extrai ano e mês diretamente da data (evita problemas de timezone)
+          let transYear: number, transMonth: number;
+          if (typeof t.date === 'string') {
+            const parts = t.date.split('T')[0].split('-');
+            transYear = parseInt(parts[0]);
+            transMonth = parseInt(parts[1]);
+          } else {
+            const d = t.date instanceof Date ? t.date : new Date(t.date);
+            transYear = d.getUTCFullYear();
+            transMonth = d.getUTCMonth() + 1;
+          }
+          return transYear === prevYear && transMonth === prevMonth;
         });
 
         const prevAppointmentRevenue = prevMonthAppointments
