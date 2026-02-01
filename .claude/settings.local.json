@@ -45,7 +45,10 @@
       "Bash(export PATH=\"/home/gilliard/.nvm/versions/node/v22.21.1/bin:$PATH\")",
       "Bash(export PATH:*)",
       "Bash(rm:*)",
-      "Bash(./node_modules/.bin/tsc:*)"
+      "Bash(./node_modules/.bin/tsc:*)",
+      "WebFetch(domain:doc.evolution-api.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ],
     "deny": [],
     "ask": []

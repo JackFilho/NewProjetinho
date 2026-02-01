@@ -15319,6 +15319,7 @@ const broadcastEvent = (eventData: any) => {
   });
 
   // Get Pairing Code for WhatsApp instance (alternativa ao QR Code)
+  // Evolution API 2.3.7: GET /instance/connect/{instanceName}?number={phoneNumber}
   app.post('/api/company/whatsapp/instances/:instanceName/pairingcode', async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
@@ -15353,11 +15354,32 @@ const broadcastEvent = (eventData: any) => {
         return res.status(500).json({ message: "Configurações da Evolution API não encontradas" });
       }
 
-      // Endpoint para pairing code na Evolution API 2.x
       const baseUrl = globalSettings.evolutionApiUrl.replace(/\/$/, '');
-      const pairingCodeUrl = `${baseUrl}/instance/connect/${instanceName}`;
 
-      const evolutionResponse = await fetch(pairingCodeUrl, {
+      // Step 1: Fazer logout da instância para garantir que está desconectada
+      console.log(`📱 Step 1: Logging out instance ${instanceName} to prepare for pairing code`);
+      try {
+        const logoutUrl = `${baseUrl}/instance/logout/${instanceName}`;
+        await fetch(logoutUrl, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': globalSettings.evolutionApiGlobalKey
+          }
+        });
+        console.log(`✅ Logout request sent`);
+        // Aguardar um pouco para a instância processar o logout
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (logoutError) {
+        console.log(`⚠️ Logout failed (may already be disconnected):`, logoutError);
+      }
+
+      // Step 2: Obter pairing code com o número
+      // Evolution API 2.3.7: passar o número como query param para obter pairing code
+      const pairingUrl = `${baseUrl}/instance/connect/${instanceName}?number=${cleanNumber}`;
+      console.log(`📱 Step 2: Calling Evolution API: GET ${pairingUrl}`);
+
+      const pairingResponse = await fetch(pairingUrl, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -15365,77 +15387,58 @@ const broadcastEvent = (eventData: any) => {
         }
       });
 
-      if (!evolutionResponse.ok) {
-        console.error(`❌ Evolution API connect error: ${evolutionResponse.status}`);
-        const errorText = await evolutionResponse.text();
-        console.error(`❌ Evolution API error details: ${errorText}`);
-        return res.status(evolutionResponse.status).json({
-          message: "Erro ao conectar com Evolution API",
-          details: errorText
+      const responseText = await pairingResponse.text();
+      console.log(`📱 Evolution API response status: ${pairingResponse.status}`);
+      console.log(`📱 Evolution API response: ${responseText}`);
+
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (e) {
+        console.error(`❌ Failed to parse response as JSON`);
+        return res.status(500).json({
+          message: "Resposta inválida da Evolution API",
+          details: responseText
         });
       }
-
-      const connectData = await evolutionResponse.json();
-
-      // Agora solicitar o pairing code com o número
-      const pairingUrl = `${baseUrl}/instance/connect/${instanceName}`;
-      const pairingResponse = await fetch(pairingUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': globalSettings.evolutionApiGlobalKey
-        },
-        body: JSON.stringify({
-          number: cleanNumber
-        })
-      });
 
       if (!pairingResponse.ok) {
-        console.error(`❌ Evolution API pairing code error: ${pairingResponse.status}`);
-        const errorText = await pairingResponse.text();
-        console.error(`❌ Evolution API pairing error details: ${errorText}`);
-
-        // Se a resposta contiver o pairing code no erro, extrair
-        try {
-          const errorJson = JSON.parse(errorText);
-          if (errorJson.pairingCode || errorJson.code) {
-            console.log(`✅ Pairing code found in response: ${errorJson.pairingCode || errorJson.code}`);
-            return res.json({
-              code: errorJson.pairingCode || errorJson.code,
-              status: 'pending'
-            });
-          }
-        } catch (e) {
-          // Ignorar erro de parse
-        }
-
+        console.error(`❌ Evolution API error: ${pairingResponse.status}`);
         return res.status(pairingResponse.status).json({
-          message: "Erro ao gerar código de pareamento",
-          details: errorText
+          message: "Erro ao obter código de pareamento",
+          details: responseData
         });
       }
 
-      const pairingData = await pairingResponse.json();
-      console.log(`✅ Pairing code response:`, pairingData);
+      // Extrair o pairing code da resposta
+      // Na Evolution API 2.3.7, quando passamos o número, ele retorna pairingCode
+      const code = responseData.pairingCode ||
+                   responseData.code ||
+                   responseData.data?.pairingCode ||
+                   responseData.data?.code ||
+                   responseData.instance?.pairingCode;
 
-      // O código de pareamento pode vir em diferentes campos dependendo da versão da Evolution
-      const code = pairingData.pairingCode || pairingData.code || pairingData.data?.pairingCode || pairingData.data?.code;
+      if (code && typeof code === 'string' && code.length >= 6 && code.length <= 10) {
+        console.log(`✅ Pairing code retrieved: ${code}`);
+        return res.json({ code, status: 'pending' });
+      }
 
-      if (code) {
-        console.log(`✅ Pairing code retrieved for instance: ${instanceName}: ${code}`);
-        res.json({
-          code: code,
-          status: 'pending'
-        });
-      } else {
-        // Tentar extrair de outras propriedades
-        console.log(`⚠️ Pairing code not found in response, full response:`, JSON.stringify(pairingData));
-        res.json({
-          code: null,
-          message: "Código de pareamento não encontrado na resposta. Verifique se a instância está em modo de conexão.",
-          rawResponse: pairingData
+      // Se não encontrou pairing code, verificar se retornou base64 (QR code)
+      // Isso significa que a instância já está em modo de conexão mas não gerou pairing code
+      if (responseData.base64 || responseData.qrcode) {
+        console.log(`⚠️ Evolution API returned QR code instead of pairing code`);
+        return res.status(400).json({
+          message: "A Evolution API retornou QR code em vez de código de pareamento. Verifique se o número está correto e se a instância está desconectada.",
+          hint: "Tente desconectar a instância primeiro e depois gerar o código novamente."
         });
       }
+
+      console.log(`⚠️ Pairing code not found in response:`, responseData);
+      return res.json({
+        code: null,
+        message: "Código de pareamento não encontrado na resposta. Verifique se a instância está desconectada.",
+        rawResponse: responseData
+      });
 
     } catch (error: any) {
       console.error("Error getting pairing code:", error);
