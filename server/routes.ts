@@ -7118,7 +7118,17 @@ if (ignoredNumbers !== undefined) {
                 
                 // Special case: if user is sending a simple confirmation, find conversation with AI confirmation
                 const isSimpleConfirmation = /^(sim|ok|confirmo)$/i.test(messageText.toLowerCase().trim());
-                
+
+                // Special case: if user is responding with payment method choice (PIX or CARTÃO)
+                const normalizedPaymentResponse = messageText.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '');
+                const isPaymentMethodChoice = /^(1|2|pix|cartão|cartao|credito|crédito|credit)$/i.test(normalizedPaymentResponse);
+                const chosenPaymentMethod = isPaymentMethodChoice ?
+                  (/^(1|pix)$/i.test(normalizedPaymentResponse) ? 'PIX' : 'CREDIT_CARD') : null;
+
+                if (isPaymentMethodChoice) {
+                  console.log('💳 Detectada resposta de forma de pagamento:', chosenPaymentMethod);
+                }
+
                 if (isSimpleConfirmation && phoneConversations.length > 0) {
                   // Look for conversation with recent AI confirmation message
                   for (const conv of phoneConversations) {
@@ -7472,6 +7482,21 @@ if (ignoredNumbers !== undefined) {
               const exampleProfessional = professionals.find(p => p.active)?.name || 'profissional';
               const rescheduleExample = `15/12/2025 às 14:00, ${exampleService} com ${exampleProfessional}`;
 
+              // Verificar se Asaas está habilitado para esta empresa
+              const companyAsaasConfig = await storage.getCompany(company.id);
+              const isAsaasEnabled = companyAsaasConfig?.asaasEnabled && companyAsaasConfig?.asaasApiKey;
+
+              // Instruções de pagamento (só adicionadas se Asaas estiver habilitado)
+              const asaasPaymentInstructions = isAsaasEnabled ? `
+- REGRA DE PAGAMENTO OBRIGATÓRIA:
+  * APÓS o cliente confirmar com SIM/OK/CONFIRMO, NÃO confirme o agendamento ainda
+  * Pergunte a forma de pagamento: "Ótimo! Como você prefere pagar?\\n\\n1️⃣ PIX (aprovação instantânea)\\n2️⃣ Cartão de Crédito (parcele em até 12x)\\n\\nDigite 1 para PIX ou 2 para Cartão."
+  * AGUARDE o cliente responder com a forma de pagamento (1, 2, pix, cartão, etc.)
+  * NÃO confirme o agendamento até o cliente escolher a forma de pagamento
+  * Após o cliente escolher, responda: "Perfeito! Estou gerando seu [PIX/link de pagamento]. Aguarde um momento..."
+  * O sistema enviará automaticamente o QR Code (para PIX) ou link (para cartão)
+  * NUNCA diga que o agendamento foi confirmado antes do pagamento ser processado` : '';
+
               const systemPrompt = `${company.aiAgentPrompt}
 
 Importante: Você está representando a empresa "${company.fantasyName}" via WhatsApp.
@@ -7629,12 +7654,13 @@ INSTRUÇÕES ADICIONAIS:
 - NÃO peça o telefone do cliente - o sistema usará automaticamente o número do WhatsApp
 - REGRA OBRIGATÓRIA DE RESUMO E CONFIRMAÇÃO:
   * Quando tiver TODOS os dados (profissional, serviço, nome, data/hora disponível), NÃO confirme imediatamente
-  * PRIMEIRO envie um RESUMO COMPLETO do agendamento: "Perfeito! Vou confirmar seu agendamento:\n\n👤 Nome: [nome]\n🏢 Profissional: [profissional]\n💼 Serviço: [serviço]\n📅 Data: [dia da semana], [data]\n🕐 Horário: [horário]\n\nEstá tudo correto? Responda SIM para confirmar ou me informe se algo precisa ser alterado."
+  * PRIMEIRO envie um RESUMO COMPLETO do agendamento: "Perfeito! Vou confirmar seu agendamento:\n\n👤 Nome: [nome]\n🏢 Profissional: [profissional]\n💼 Serviço: [serviço]\n📅 Data: [dia da semana], [data]\n🕐 Horário: [horário]\n💰 Valor: R$ [valor]\n\nEstá tudo correto? Responda SIM para confirmar ou me informe se algo precisa ser alterado."
   * AGUARDE o cliente responder "SIM", "OK", "CONFIRMO" ou confirmação similar
   * APENAS APÓS a confirmação explícita (SIM, OK, CONFIRMO), confirme o agendamento final
   * Se cliente pedir ALTERAÇÃO (ex: "meu nome está errado", "quero outro horário", "mudar para terça"), processe a alteração normalmente e envie novo resumo
   * Se cliente responder com algo AMBÍGUO que NÃO seja confirmação NEM pedido de alteração (ex: emoji ❤️👍, "beleza", "show", "perfeito", "ótimo", "legal"), NÃO confirme o agendamento. Responda: "Que bom! 😊 Para finalizar seu agendamento, preciso da sua confirmação. Posso confirmar para [data] às [horário]? Digite SIM para confirmar."
   * NUNCA diga "Agendamento realizado com sucesso" sem antes receber SIM, OK ou CONFIRMO explícito do cliente
+\${asaasPaymentInstructions}
 - NÃO invente serviços - use APENAS os serviços listados acima
 - NÃO confirme horários sem verificar disponibilidade real
 - SEMPRE mostre todos os profissionais/serviços disponíveis antes de pedir para escolher
@@ -9849,14 +9875,237 @@ Por favor, escolha um dos horários disponíveis acima.`;
                       // ========================================
                       // FLUXO NORMAL - CRIAR AGENDAMENTO
                       // ========================================
-                      // Import the Asaas payment function
-                      const { createAsaasPaymentLink } = await import('./asaas-routes');
+                      // Import the Asaas payment functions
+                      const { createAsaasPaymentLink, createAsaasPixPayment, createAsaasCreditCardPayment, isAsaasEnabled } = await import('./asaas-routes');
 
                       // Check if company has Asaas configured
                       const companyWithAsaas = await storage.getCompany(company.id);
+                      const asaasEnabled = companyWithAsaas?.asaasEnabled && companyWithAsaas?.asaasApiKey;
                     console.log('🏢 Verificando configuração Asaas da empresa:');
                     console.log('   - Asaas habilitado:', companyWithAsaas?.asaasEnabled);
                     console.log('   - Tem API Key:', !!companyWithAsaas?.asaasApiKey);
+
+                    // ========================================
+                    // VERIFICAR SE É RESPOSTA DE FORMA DE PAGAMENTO
+                    // ========================================
+                    // Verificar se a última mensagem do assistente perguntou sobre forma de pagamento
+                    const recentAssistantMsgs = conversationHistory.filter(m => m.role === 'assistant');
+                    const lastAssistantMsg = recentAssistantMsgs.length > 0 ? recentAssistantMsgs[recentAssistantMsgs.length - 1].content : '';
+                    const askedForPaymentMethod = lastAssistantMsg.includes('1️⃣ PIX') ||
+                                                   lastAssistantMsg.includes('Como você prefere pagar') ||
+                                                   lastAssistantMsg.includes('Digite 1 para PIX');
+
+                    // Verificar se a mensagem atual é uma escolha de forma de pagamento
+                    const normalizedPaymentMsg = messageText.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '');
+                    const isPaymentChoice = /^(1|2|pix|cartão|cartao|credito|crédito|credit)$/i.test(normalizedPaymentMsg);
+                    const paymentMethod = isPaymentChoice ?
+                      (/^(1|pix)$/i.test(normalizedPaymentMsg) ? 'PIX' : 'CREDIT_CARD') : null;
+
+                    if (askedForPaymentMethod && isPaymentChoice && paymentMethod) {
+                      console.log('💳 ========================================');
+                      console.log('💳 PROCESSANDO ESCOLHA DE FORMA DE PAGAMENTO');
+                      console.log('💳 Método escolhido:', paymentMethod);
+                      console.log('💳 ========================================');
+
+                      // Extrair dados do resumo do agendamento da conversa
+                      // Buscar a mensagem com o resumo
+                      const summaryMsgForPayment = conversationHistory.find(m =>
+                        m.role === 'assistant' &&
+                        m.content.includes('👤 Nome:') &&
+                        m.content.includes('💼 Serviço:')
+                      );
+
+                      if (summaryMsgForPayment) {
+                        const paymentDetails = extractDetails(summaryMsgForPayment.content);
+                        console.log('📋 Dados extraídos para pagamento:', paymentDetails);
+
+                        // Buscar serviço para obter preço
+                        const servicesForPayment = await storage.getServicesByCompany(company.id);
+                        const serviceForPayment = servicesForPayment.find(s =>
+                          s.name.toLowerCase().includes(paymentDetails.service.toLowerCase()) ||
+                          paymentDetails.service.toLowerCase().includes(s.name.toLowerCase())
+                        );
+
+                        if (serviceForPayment && serviceForPayment.price > 0) {
+                          const externalRef = `appointment_${Date.now()}_${conversation.id}`;
+
+                          // Criar agendamento primeiro (com status pendente)
+                          const appointmentIdForPayment = await createAppointmentFromAIConfirmation(
+                            conversation.id,
+                            company.id,
+                            summaryMsgForPayment.content,
+                            phoneNumber,
+                            'payment_pending',
+                            conversation.contactName || undefined
+                          );
+
+                          if (appointmentIdForPayment) {
+                            let formattedPhoneForPaymentMsg = phoneNumber.replace(/\D/g, '');
+                            if (!formattedPhoneForPaymentMsg.startsWith('55') && formattedPhoneForPaymentMsg.length >= 10) {
+                              formattedPhoneForPaymentMsg = '55' + formattedPhoneForPaymentMsg;
+                            }
+
+                            const correctedApiUrlForPayment = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+
+                            if (paymentMethod === 'PIX') {
+                              // Criar cobrança PIX
+                              console.log('💳 Gerando cobrança PIX...');
+                              const pixPayment = await createAsaasPixPayment(company.id, {
+                                clientName: paymentDetails.name,
+                                clientPhone: phoneNumber,
+                                serviceName: serviceForPayment.name,
+                                servicePrice: serviceForPayment.price,
+                                appointmentId: appointmentIdForPayment,
+                                externalReference: externalRef
+                              });
+
+                              if (pixPayment) {
+                                console.log('✅ PIX criado com sucesso!');
+
+                                // Atualizar agendamento com ID do pagamento
+                                await storage.db
+                                  .update(appointments)
+                                  .set({
+                                    asaasPaymentId: pixPayment.id,
+                                    asaasPaymentStatus: 'pending',
+                                    updatedAt: new Date(),
+                                  })
+                                  .where(eq(appointments.id, appointmentIdForPayment));
+
+                                // Enviar QR Code como imagem
+                                await sendTypingPresence(correctedApiUrlForPayment, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentMsg, 2000);
+
+                                const pixMediaPayload = {
+                                  number: formattedPhoneForPaymentMsg,
+                                  mediatype: 'image',
+                                  media: pixPayment.pixQrCode.encodedImage,
+                                  caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n⏰ Válido por 30 minutos`
+                                };
+
+                                const pixImageResponse = await fetch(`${correctedApiUrlForPayment}/message/sendMedia/${instanceName}`, {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                    'apikey': globalSettings.evolutionApiGlobalKey!
+                                  },
+                                  body: JSON.stringify(pixMediaPayload)
+                                });
+
+                                if (pixImageResponse.ok) {
+                                  console.log('✅ QR Code PIX enviado com sucesso');
+                                }
+
+                                // Enviar código copia e cola
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                const pixCodeMessage = `*Código PIX (copia e cola):*\n\n\`\`\`${pixPayment.pixQrCode.payload}\`\`\`\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+
+                                await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                    'apikey': globalSettings.evolutionApiGlobalKey!
+                                  },
+                                  body: JSON.stringify({
+                                    number: formattedPhoneForPaymentMsg,
+                                    text: pixCodeMessage
+                                  })
+                                });
+
+                                // Salvar mensagens no banco
+                                await storage.createMessage({
+                                  conversationId: conversation.id,
+                                  content: '[QR Code PIX enviado]',
+                                  role: 'assistant',
+                                  messageType: 'image',
+                                  delivered: true,
+                                  timestamp: new Date(),
+                                });
+
+                                await storage.createMessage({
+                                  conversationId: conversation.id,
+                                  content: pixCodeMessage,
+                                  role: 'assistant',
+                                  messageType: 'text',
+                                  delivered: true,
+                                  timestamp: new Date(),
+                                });
+
+                              } else {
+                                console.log('❌ Falha ao criar cobrança PIX');
+                              }
+                            } else {
+                              // Criar cobrança de cartão de crédito
+                              console.log('💳 Gerando link de pagamento com cartão...');
+                              const cardPayment = await createAsaasCreditCardPayment(company.id, {
+                                clientName: paymentDetails.name,
+                                clientPhone: phoneNumber,
+                                serviceName: serviceForPayment.name,
+                                servicePrice: serviceForPayment.price,
+                                appointmentId: appointmentIdForPayment,
+                                externalReference: externalRef
+                              });
+
+                              if (cardPayment) {
+                                console.log('✅ Link de cartão criado:', cardPayment.invoiceUrl);
+
+                                // Atualizar agendamento com ID do pagamento
+                                await storage.db
+                                  .update(appointments)
+                                  .set({
+                                    asaasPaymentId: cardPayment.id,
+                                    asaasPaymentStatus: 'pending',
+                                    updatedAt: new Date(),
+                                  })
+                                  .where(eq(appointments.id, appointmentIdForPayment));
+
+                                // Enviar link de pagamento
+                                await sendTypingPresence(correctedApiUrlForPayment, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentMsg, 2000);
+
+                                const cardMessage = `💳 *Pagamento com Cartão de Crédito*\n\nClique no link abaixo para pagar de forma segura:\n\n🔗 ${cardPayment.invoiceUrl}\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n✅ Parcele em até 12x\n🔒 Ambiente 100% seguro\n\n_Após o pagamento, seu agendamento será confirmado automaticamente!_`;
+
+                                await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                    'apikey': globalSettings.evolutionApiGlobalKey!
+                                  },
+                                  body: JSON.stringify({
+                                    number: formattedPhoneForPaymentMsg,
+                                    text: cardMessage
+                                  })
+                                });
+
+                                // Salvar mensagem no banco
+                                await storage.createMessage({
+                                  conversationId: conversation.id,
+                                  content: cardMessage,
+                                  role: 'assistant',
+                                  messageType: 'text',
+                                  delivered: true,
+                                  timestamp: new Date(),
+                                });
+
+                              } else {
+                                console.log('❌ Falha ao criar link de cartão');
+                              }
+                            }
+
+                            // Limpar cache de disponibilidade
+                            clearAvailabilityCache(company.id);
+
+                            // Retornar sem continuar o fluxo normal
+                            return res.status(200).json({ received: true, processed: true, paymentProcessed: true });
+                          } else {
+                            console.log('❌ Falha ao criar agendamento para pagamento');
+                          }
+                        } else {
+                          console.log('❌ Serviço não encontrado ou sem preço para pagamento');
+                        }
+                      } else {
+                        console.log('❌ Resumo do agendamento não encontrado para processar pagamento');
+                      }
+                    }
+                    // FIM DA VERIFICAÇÃO DE FORMA DE PAGAMENTO
 
                     // Get service price
                     const services = await storage.getServicesByCompany(company.id);
@@ -9885,188 +10134,27 @@ Por favor, escolha um dos horários disponíveis acima.`;
                              normalizedSearchService.includes(normalizedServiceName);
                     });
 
-                    if (service && service.price > 0 && companyWithAsaas?.asaasEnabled && companyWithAsaas?.asaasApiKey) {
+                    if (service && service.price > 0 && asaasEnabled) {
+                      // ========================================
+                      // ASAAS HABILITADO - A IA VAI PERGUNTAR FORMA DE PAGAMENTO
+                      // ========================================
+                      // Não criar agendamento nem pagamento aqui.
+                      // A IA já foi instruída a perguntar a forma de pagamento.
+                      // O processamento real acontece quando o usuário responder "1", "2", "pix" ou "cartão"
                       console.log('💰 Serviço encontrado com preço:', service.name, 'R$', service.price);
-                      console.log('✅ Asaas está configurado, gerando link de pagamento...');
+                      console.log('✅ Asaas está configurado - A IA vai perguntar a forma de pagamento');
+                      console.log('ℹ️  Aguardando resposta do usuário sobre forma de pagamento...');
 
-                      // Generate payment link
-                      const paymentLink = await createAsaasPaymentLink(company.id, {
-                        clientName: details.name,
-                        clientPhone: phoneNumber,
-                        serviceName: service.name,
-                        servicePrice: service.price,
-                        externalReference: `appointment_${Date.now()}_${conversation.id}`
-                      });
+                      // NÃO criar agendamento aqui - será criado quando o usuário escolher a forma de pagamento
+                      // A IA vai responder perguntando: "Como você prefere pagar? 1️⃣ PIX ou 2️⃣ Cartão"
 
-                      if (paymentLink) {
-                        console.log('💳 Link de pagamento criado:', paymentLink.url);
+                      // IMPORTANTE: Deixar a IA processar normalmente para enviar a pergunta de pagamento
+                      // O código antigo de "link de pagamento genérico" foi removido
+                      // O fluxo agora é: SIM → IA pergunta forma → Usuário responde → Sistema processa
 
-                        // Create appointment with pending payment status
-                        const appointmentId = await createAppointmentFromAIConfirmation(
-                          conversation.id,
-                          company.id,
-                          summaryMessage.content,
-                          phoneNumber,
-                          'payment_pending',
-                          conversation.contactName || undefined
-                        );
+                      // A IA vai processar normalmente e perguntar a forma de pagamento
+                      // Não precisamos fazer nada aqui - o fluxo continua naturalmente
 
-                        // Update appointment with payment link ID
-                        if (appointmentId) {
-                          await storage.db
-                            .update(appointments)
-                            .set({
-                              asaasPaymentId: paymentLink.id,
-                              asaasPaymentStatus: 'pending',
-                              updatedAt: new Date(),
-                            })
-                            .where(eq(appointments.id, appointmentId));
-                        } else {
-                          // Appointment creation failed due to conflict
-                          console.log('❌ Agendamento não foi criado devido a conflito. Enviando mensagem de erro ao usuário...');
-
-                          const errorMessage = `❌ *Conflito de Horário Detectado*\n\nDesculpe, mas não foi possível confirmar seu agendamento pois o horário solicitado já está ocupado por outro cliente.\n\nPor favor, escolha outro horário disponível e tente novamente.`;
-
-                          // Enviar webhook de erro para N8N
-                          await sendAppointmentErrorWebhook(company.id, 'CONFLICT', 'Horário já está ocupado por outro cliente', {
-                            conversationId: conversation.id,
-                            phoneNumber,
-                            additionalInfo: 'Conflito detectado ao tentar criar agendamento com pagamento'
-                          });
-
-                          // Send error message via Evolution API
-                          const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-                          let formattedPhoneForError = phoneNumber.replace(/\D/g, '');
-                          if (!formattedPhoneForError.startsWith('55') && formattedPhoneForError.length >= 10) {
-                            formattedPhoneForError = '55' + formattedPhoneForError;
-                          }
-
-                          await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
-                            method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
-                              'apikey': globalSettings.evolutionApiGlobalKey!
-                            },
-                            body: JSON.stringify({
-                              number: formattedPhoneForError,
-                              text: errorMessage
-                            })
-                          });
-
-                          // Save error message to database
-                          await storage.createMessage({
-                            conversationId: conversation.id,
-                            content: errorMessage,
-                            role: 'assistant',
-                            messageType: 'text',
-                            delivered: true,
-                            timestamp: new Date(),
-                          });
-
-                        }
-
-                        // Only send payment link if appointment was created successfully
-                        if (appointmentId) {
-                          // Send payment link via WhatsApp
-                        const paymentMessage = `✅ *Agendamento pré-confirmado!*
-
-Para finalizar e garantir seu horário, realize o pagamento:
-
-💳 *Link de pagamento:*
-${paymentLink.url}
-
-💰 *Valor:* R$ ${service.price.toFixed(2)}
-⏰ *Validade:* 24 horas
-
-Após o pagamento, seu agendamento será confirmado automaticamente e você receberá uma mensagem de confirmação.
-
-_Formas de pagamento disponíveis: Pix, Cartão de Crédito, Boleto_`;
-
-                        // Format phone number for Evolution API - needs country code 55
-                        let formattedPhoneForPayment = phoneNumber.replace(/\D/g, '');
-                        if (!formattedPhoneForPayment.startsWith('55') && formattedPhoneForPayment.length >= 10) {
-                          formattedPhoneForPayment = '55' + formattedPhoneForPayment;
-                        }
-
-                        // Send message via Evolution API
-                        const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
-                        // Send "typing" presence and wait 2 seconds
-                        await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPayment, 2000);
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                        const paymentResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': globalSettings.evolutionApiGlobalKey
-                          },
-                          body: JSON.stringify({
-                            number: formattedPhoneForPayment,
-                            text: paymentMessage
-                          })
-                        });
-
-                        if (paymentResponse.ok) {
-                          console.log('✅ Link de pagamento enviado com sucesso');
-
-                          // Save payment message to conversation
-                          await storage.createMessage({
-                            conversationId: conversation.id,
-                            content: paymentMessage,
-                            role: 'assistant',
-                            messageType: 'text',
-                            delivered: true,
-                            timestamp: new Date(),
-                          });
-                        }
-                        } // Fim do if (appointmentId) - só envia link de pagamento se agendamento foi criado
-                      } else {
-                        console.log('⚠️ Não foi possível criar link de pagamento, criando agendamento direto');
-                        const appointmentId = await createAppointmentFromAIConfirmation(conversation.id, company.id, summaryMessage.content, phoneNumber, 'agendado', conversation.contactName || undefined);
-
-                        // Se retornou null, significa que houve conflito de horário
-                        if (appointmentId === null) {
-                          console.log('❌ Agendamento não foi criado devido a conflito. Enviando mensagem de erro ao usuário...');
-
-                          const errorMessage = `❌ *Conflito de Horário Detectado*\n\nDesculpe, mas não foi possível confirmar seu agendamento pois o horário solicitado já está ocupado por outro cliente.\n\nPor favor, escolha outro horário disponível e tente novamente.`;
-
-                          // Enviar webhook de erro para N8N
-                          await sendAppointmentErrorWebhook(company.id, 'CONFLICT', 'Horário já está ocupado por outro cliente', {
-                            conversationId: conversation.id,
-                            phoneNumber,
-                            additionalInfo: 'Conflito detectado - link de pagamento não criado'
-                          });
-
-                          // Send error message via Evolution API
-                          const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-                          let formattedPhoneForError = phoneNumber.replace(/\D/g, '');
-                          if (!formattedPhoneForError.startsWith('55') && formattedPhoneForError.length >= 10) {
-                            formattedPhoneForError = '55' + formattedPhoneForError;
-                          }
-
-                          await fetch(`${correctedApiUrl}/message/sendText/${activeInstance.instanceName}`, {
-                            method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
-                              'apikey': globalSettings.evolutionApiGlobalKey!
-                            },
-                            body: JSON.stringify({
-                              number: formattedPhoneForError,
-                              text: errorMessage
-                            })
-                          });
-
-                          // Save error message to database
-                          await storage.createMessage({
-                            conversationId: conversation.id,
-                            content: errorMessage,
-                            role: 'assistant',
-                            messageType: 'text',
-                            delivered: true,
-                            timestamp: new Date(),
-                          });
-                        }
-                      }
                     } else {
                       // Log detailed reasons why payment link wasn't created
                       console.log('⚠️ Link de pagamento NÃO será gerado porque:');

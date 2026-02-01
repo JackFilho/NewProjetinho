@@ -17,6 +17,24 @@ interface AsaasPaymentLink {
   expirationDate?: string;
 }
 
+// Interface para cobrança PIX
+interface AsaasPixPayment {
+  id: string;
+  value: number;
+  pixQrCode: {
+    encodedImage: string; // QR Code em base64
+    payload: string; // Código copia e cola
+    expirationDate: string;
+  };
+}
+
+// Interface para cobrança de cartão (link)
+interface AsaasCreditCardPayment {
+  id: string;
+  invoiceUrl: string; // Link para pagamento
+  value: number;
+}
+
 // Função helper para obter a URL base do Asaas
 function getAsaasApiUrl(environment: string = 'production'): string {
   return environment === 'sandbox'
@@ -105,6 +123,301 @@ export async function createAsaasPaymentLink(
   } catch (error) {
     console.error('[Asaas] Erro ao criar link de pagamento:', error);
     return null;
+  }
+}
+
+/**
+ * Cria ou busca cliente no Asaas
+ */
+async function getOrCreateAsaasCustomer(
+  apiKey: string,
+  apiUrl: string,
+  clientData: {
+    name: string;
+    phone: string;
+    cpf?: string;
+    email?: string;
+  }
+): Promise<string | null> {
+  try {
+    // Primeiro, buscar se já existe um cliente com esse telefone
+    const searchResponse = await fetch(`${apiUrl}/customers?mobilePhone=${clientData.phone.replace(/\D/g, '')}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'access_token': apiKey,
+      },
+    });
+
+    if (searchResponse.ok) {
+      const searchResult = await searchResponse.json();
+      if (searchResult.data && searchResult.data.length > 0) {
+        console.log('[Asaas] Cliente já existe:', searchResult.data[0].id);
+        return searchResult.data[0].id;
+      }
+    }
+
+    // Se não existe, criar novo cliente
+    const customerData = {
+      name: clientData.name,
+      mobilePhone: clientData.phone.replace(/\D/g, ''),
+      cpfCnpj: clientData.cpf?.replace(/\D/g, '') || undefined,
+      email: clientData.email || undefined,
+      notificationDisabled: true, // Desabilitar notificações do Asaas (vamos enviar pelo WhatsApp)
+    };
+
+    const createResponse = await fetch(`${apiUrl}/customers`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'access_token': apiKey,
+      },
+      body: JSON.stringify(customerData),
+    });
+
+    if (!createResponse.ok) {
+      const errorData = await createResponse.text();
+      console.error('[Asaas] Erro ao criar cliente:', errorData);
+      return null;
+    }
+
+    const customer = await createResponse.json();
+    console.log('[Asaas] Cliente criado:', customer.id);
+    return customer.id;
+  } catch (error) {
+    console.error('[Asaas] Erro ao buscar/criar cliente:', error);
+    return null;
+  }
+}
+
+/**
+ * Cria cobrança PIX e retorna QR Code
+ */
+export async function createAsaasPixPayment(
+  companyId: number,
+  paymentData: {
+    clientName: string;
+    clientPhone: string;
+    clientCpf?: string;
+    clientEmail?: string;
+    serviceName: string;
+    servicePrice: number;
+    appointmentId?: number;
+    externalReference?: string;
+  }
+): Promise<AsaasPixPayment | null> {
+  try {
+    // Buscar configurações do Asaas da empresa
+    const company = await storage.db
+      .select({
+        name: companies.name,
+        asaasApiKey: companies.asaasApiKey,
+        asaasEnvironment: companies.asaasEnvironment,
+        asaasEnabled: companies.asaasEnabled,
+      })
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .limit(1);
+
+    if (!company[0] || !company[0].asaasApiKey || !company[0].asaasEnabled) {
+      console.error('[Asaas] Empresa não tem Asaas configurado ou habilitado');
+      return null;
+    }
+
+    const apiUrl = getAsaasApiUrl(company[0].asaasEnvironment || 'production');
+    const apiKey = company[0].asaasApiKey;
+
+    // Criar ou buscar cliente
+    const customerId = await getOrCreateAsaasCustomer(apiKey, apiUrl, {
+      name: paymentData.clientName,
+      phone: paymentData.clientPhone,
+      cpf: paymentData.clientCpf,
+      email: paymentData.clientEmail,
+    });
+
+    if (!customerId) {
+      console.error('[Asaas] Não foi possível criar/buscar cliente');
+      return null;
+    }
+
+    // Criar cobrança PIX
+    const dueDate = new Date();
+    dueDate.setMinutes(dueDate.getMinutes() + 30); // Vencimento em 30 minutos
+
+    const paymentPayload = {
+      customer: customerId,
+      billingType: 'PIX',
+      value: paymentData.servicePrice,
+      dueDate: dueDate.toISOString().split('T')[0],
+      description: `${company[0].name} - ${paymentData.serviceName}`,
+      externalReference: paymentData.externalReference || `appointment_${paymentData.appointmentId || Date.now()}`,
+    };
+
+    console.log('[Asaas] Criando cobrança PIX:', paymentPayload);
+
+    const paymentResponse = await fetch(`${apiUrl}/payments`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'access_token': apiKey,
+      },
+      body: JSON.stringify(paymentPayload),
+    });
+
+    if (!paymentResponse.ok) {
+      const errorData = await paymentResponse.text();
+      console.error('[Asaas] Erro ao criar cobrança PIX:', errorData);
+      return null;
+    }
+
+    const payment = await paymentResponse.json();
+    console.log('[Asaas] Cobrança PIX criada:', payment.id);
+
+    // Buscar QR Code PIX
+    const pixResponse = await fetch(`${apiUrl}/payments/${payment.id}/pixQrCode`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'access_token': apiKey,
+      },
+    });
+
+    if (!pixResponse.ok) {
+      const errorData = await pixResponse.text();
+      console.error('[Asaas] Erro ao buscar QR Code PIX:', errorData);
+      return null;
+    }
+
+    const pixData = await pixResponse.json();
+    console.log('[Asaas] QR Code PIX gerado com sucesso');
+
+    return {
+      id: payment.id,
+      value: payment.value,
+      pixQrCode: {
+        encodedImage: pixData.encodedImage,
+        payload: pixData.payload,
+        expirationDate: pixData.expirationDate,
+      },
+    };
+  } catch (error) {
+    console.error('[Asaas] Erro ao criar cobrança PIX:', error);
+    return null;
+  }
+}
+
+/**
+ * Cria cobrança de cartão de crédito e retorna link de pagamento
+ */
+export async function createAsaasCreditCardPayment(
+  companyId: number,
+  paymentData: {
+    clientName: string;
+    clientPhone: string;
+    clientCpf?: string;
+    clientEmail?: string;
+    serviceName: string;
+    servicePrice: number;
+    appointmentId?: number;
+    externalReference?: string;
+  }
+): Promise<AsaasCreditCardPayment | null> {
+  try {
+    // Buscar configurações do Asaas da empresa
+    const company = await storage.db
+      .select({
+        name: companies.name,
+        asaasApiKey: companies.asaasApiKey,
+        asaasEnvironment: companies.asaasEnvironment,
+        asaasEnabled: companies.asaasEnabled,
+      })
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .limit(1);
+
+    if (!company[0] || !company[0].asaasApiKey || !company[0].asaasEnabled) {
+      console.error('[Asaas] Empresa não tem Asaas configurado ou habilitado');
+      return null;
+    }
+
+    const apiUrl = getAsaasApiUrl(company[0].asaasEnvironment || 'production');
+    const apiKey = company[0].asaasApiKey;
+
+    // Criar ou buscar cliente
+    const customerId = await getOrCreateAsaasCustomer(apiKey, apiUrl, {
+      name: paymentData.clientName,
+      phone: paymentData.clientPhone,
+      cpf: paymentData.clientCpf,
+      email: paymentData.clientEmail,
+    });
+
+    if (!customerId) {
+      console.error('[Asaas] Não foi possível criar/buscar cliente');
+      return null;
+    }
+
+    // Criar cobrança de cartão (UNDEFINED para gerar link)
+    const dueDate = new Date();
+    dueDate.setHours(dueDate.getHours() + 24); // Vencimento em 24 horas
+
+    const paymentPayload = {
+      customer: customerId,
+      billingType: 'UNDEFINED', // Gera link onde cliente pode pagar com cartão
+      value: paymentData.servicePrice,
+      dueDate: dueDate.toISOString().split('T')[0],
+      description: `${company[0].name} - ${paymentData.serviceName}`,
+      externalReference: paymentData.externalReference || `appointment_${paymentData.appointmentId || Date.now()}`,
+    };
+
+    console.log('[Asaas] Criando cobrança para cartão:', paymentPayload);
+
+    const paymentResponse = await fetch(`${apiUrl}/payments`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'access_token': apiKey,
+      },
+      body: JSON.stringify(paymentPayload),
+    });
+
+    if (!paymentResponse.ok) {
+      const errorData = await paymentResponse.text();
+      console.error('[Asaas] Erro ao criar cobrança de cartão:', errorData);
+      return null;
+    }
+
+    const payment = await paymentResponse.json();
+    console.log('[Asaas] Cobrança de cartão criada:', payment.id, 'Link:', payment.invoiceUrl);
+
+    return {
+      id: payment.id,
+      invoiceUrl: payment.invoiceUrl,
+      value: payment.value,
+    };
+  } catch (error) {
+    console.error('[Asaas] Erro ao criar cobrança de cartão:', error);
+    return null;
+  }
+}
+
+/**
+ * Verifica se empresa tem Asaas configurado e habilitado
+ */
+export async function isAsaasEnabled(companyId: number): Promise<boolean> {
+  try {
+    const company = await storage.db
+      .select({
+        asaasApiKey: companies.asaasApiKey,
+        asaasEnabled: companies.asaasEnabled,
+      })
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .limit(1);
+
+    return !!(company[0]?.asaasApiKey && company[0]?.asaasEnabled);
+  } catch (error) {
+    console.error('[Asaas] Erro ao verificar configuração:', error);
+    return false;
   }
 }
 
