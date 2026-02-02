@@ -8139,42 +8139,105 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                 const companyProfessionals = await storage.getProfessionalsByCompany(company.id);
 
                 // Resolver ID do serviço (pode ser número ou nome)
+                // PRIORIDADE: 1) Match exato 2) Match único parcial 3) Nome mais curto se múltiplos
                 let serviceId: number | null = null;
                 if (/^\d+$/.test(serviceIdentifier.trim())) {
                   // É um número - usar diretamente
                   serviceId = parseInt(serviceIdentifier.trim());
                 } else {
-                  // É um nome - buscar pelo nome (case-insensitive, parcial)
                   const serviceName = serviceIdentifier.trim().toLowerCase();
-                  const foundService = companyServices.find(s =>
-                    s.name.toLowerCase() === serviceName ||
-                    s.name.toLowerCase().includes(serviceName) ||
-                    serviceName.includes(s.name.toLowerCase())
+                  let foundService = null;
+
+                  // 1. PRIORIDADE MÁXIMA: Match exato (case-insensitive)
+                  foundService = companyServices.find(s =>
+                    s.name.toLowerCase() === serviceName
                   );
+
+                  if (foundService) {
+                    console.log(`   ✅ Serviço encontrado (match exato): "${foundService.name}"`);
+                  } else {
+                    // 2. Buscar serviços que contêm o termo OU são contidos pelo termo
+                    const matchingServices = companyServices.filter(s =>
+                      s.name.toLowerCase().includes(serviceName) ||
+                      serviceName.includes(s.name.toLowerCase())
+                    );
+
+                    if (matchingServices.length === 1) {
+                      // Único match parcial - usar esse
+                      foundService = matchingServices[0];
+                      console.log(`   ✅ Serviço encontrado (match único): "${foundService.name}"`);
+                    } else if (matchingServices.length > 1) {
+                      // MÚLTIPLOS MATCHES - escolher o mais apropriado
+                      console.log(`   🔍 Múltiplos serviços similares: ${matchingServices.map(s => `"${s.name}"`).join(', ')}`);
+
+                      // Priorizar match que começa igual
+                      const startsWithMatch = matchingServices.find(s =>
+                        s.name.toLowerCase().startsWith(serviceName)
+                      );
+
+                      if (startsWithMatch && matchingServices.filter(s => s.name.toLowerCase().startsWith(serviceName)).length === 1) {
+                        // Único que começa com o termo
+                        foundService = startsWithMatch;
+                        console.log(`   ✅ Serviço selecionado (começa com "${serviceName}"): "${foundService.name}"`);
+                      } else {
+                        // Pegar o de nome mais curto (geralmente o mais genérico)
+                        // Ex: "Design" vs "Design com henna" - se buscou "Design", pega "Design"
+                        foundService = matchingServices.sort((a, b) => a.name.length - b.name.length)[0];
+                        console.log(`   ✅ Serviço selecionado (nome mais curto): "${foundService.name}"`);
+                      }
+                    }
+                  }
+
                   if (foundService) {
                     serviceId = foundService.id;
-                    console.log(`   ✅ Serviço encontrado por nome: "${foundService.name}" (ID: ${serviceId})`);
+                    console.log(`   📋 Serviço final: "${foundService.name}" (ID: ${serviceId})`);
                   } else {
                     console.log(`   ⚠️ Serviço "${serviceIdentifier}" não encontrado. Disponíveis:`, companyServices.map(s => s.name).join(', '));
                   }
                 }
 
                 // Resolver ID do profissional (pode ser número ou nome)
+                // PRIORIDADE: 1) Match exato 2) Match único parcial 3) Primeiro nome
                 let professionalId: number | null = null;
                 if (/^\d+$/.test(professionalIdentifier.trim())) {
                   // É um número - usar diretamente
                   professionalId = parseInt(professionalIdentifier.trim());
                 } else {
-                  // É um nome - buscar pelo nome (case-insensitive, parcial)
                   const profName = professionalIdentifier.trim().toLowerCase();
-                  const foundProfessional = companyProfessionals.find(p =>
-                    p.name.toLowerCase() === profName ||
-                    p.name.toLowerCase().includes(profName) ||
-                    profName.includes(p.name.toLowerCase())
+                  let foundProfessional = null;
+
+                  // 1. PRIORIDADE MÁXIMA: Match exato (case-insensitive)
+                  foundProfessional = companyProfessionals.find(p =>
+                    p.name.toLowerCase() === profName
                   );
+
+                  if (foundProfessional) {
+                    console.log(`   ✅ Profissional encontrado (match exato): "${foundProfessional.name}"`);
+                  } else {
+                    // 2. Buscar por primeiro nome ou nome parcial
+                    const matchingProfessionals = companyProfessionals.filter(p =>
+                      p.name.toLowerCase().includes(profName) ||
+                      profName.includes(p.name.toLowerCase()) ||
+                      p.name.toLowerCase().split(' ')[0] === profName // Match por primeiro nome
+                    );
+
+                    if (matchingProfessionals.length === 1) {
+                      foundProfessional = matchingProfessionals[0];
+                      console.log(`   ✅ Profissional encontrado (match único): "${foundProfessional.name}"`);
+                    } else if (matchingProfessionals.length > 1) {
+                      console.log(`   🔍 Múltiplos profissionais similares: ${matchingProfessionals.map(p => `"${p.name}"`).join(', ')}`);
+                      // Pegar o primeiro que começa com o nome buscado
+                      const startsWithMatch = matchingProfessionals.find(p =>
+                        p.name.toLowerCase().startsWith(profName)
+                      );
+                      foundProfessional = startsWithMatch || matchingProfessionals[0];
+                      console.log(`   ✅ Profissional selecionado: "${foundProfessional.name}"`);
+                    }
+                  }
+
                   if (foundProfessional) {
                     professionalId = foundProfessional.id;
-                    console.log(`   ✅ Profissional encontrado por nome: "${foundProfessional.name}" (ID: ${professionalId})`);
+                    console.log(`   📋 Profissional final: "${foundProfessional.name}" (ID: ${professionalId})`);
                   } else {
                     console.log(`   ⚠️ Profissional "${professionalIdentifier}" não encontrado. Disponíveis:`, companyProfessionals.map(p => p.name).join(', '));
                   }
