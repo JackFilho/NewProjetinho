@@ -7598,6 +7598,17 @@ APÓS o comando ser processado, o sistema vai retornar:
 • NÃO invente horários - o comando retorna apenas horários REAIS
 • Se "amanhã" = 31/01/2026, use 2026-01-31
 
+🚨 REGRA CRÍTICA - MUDANÇA DE DATA:
+Quando o cliente perguntar sobre OUTRO DIA (ex: "E sexta?", "E amanhã?", "Tem na segunda?"):
+• SEMPRE use o comando [MOSTRAR_HORARIOS_LIVRES:...] com a NOVA data
+• NUNCA repita os horários do dia anterior
+• Cada dia tem disponibilidade DIFERENTE - você DEVE buscar novamente!
+
+Exemplo:
+- Cliente perguntou quinta → você usou o comando → mostrou horários de quinta
+- Cliente pergunta "E sexta?" → você DEVE usar o comando novamente com a data de sexta!
+- NUNCA copie os horários de quinta para sexta - são dias DIFERENTES!
+
 🚫 REGRA ABSOLUTA: Se a mensagem de horários já contiver uma pergunta como "Qual outro dia seria melhor?" ou "Que tal escolher outro dia?", NUNCA adicione "Qual horário você prefere?" - a pergunta já foi feita!
 
 ═══════════════════════════════════════════════════════════════════
