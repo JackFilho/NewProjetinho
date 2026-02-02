@@ -10148,117 +10148,128 @@ Por favor, escolha um dos horários disponíveis acima.`;
                     }
                     // FIM DA VERIFICAÇÃO DE FORMA DE PAGAMENTO
 
-                    // Get service price
-                    const services = await storage.getServicesByCompany(company.id);
-                    console.log('📋 Serviços encontrados:', services.length);
-                    console.log('🔍 Procurando serviço:', details.service);
-                    console.log('📋 Lista de serviços disponíveis:', services.map(s => `"${s.name}"`).join(', '));
+                    // ========================================
+                    // ABORDAGEM ROBUSTA: CRIAR AGENDAMENTO PRIMEIRO
+                    // Depois verificar se precisa de pagamento Asaas
+                    // ========================================
 
-                    // Normalize strings for comparison (remove extra spaces, accents, special chars)
-                    const normalizeString = (str: string) => {
-                      return str
-                        .toLowerCase()
-                        .normalize('NFD')
-                        .replace(/[\u0300-\u036f]/g, '') // Remove accents
-                        .replace(/\s+/g, ' ') // Replace multiple spaces with single space
-                        .trim();
-                    };
+                    console.log('📝 Criando agendamento usando função robusta...');
+                    const appointmentId = await createAppointmentFromAIConfirmation(
+                      conversation.id,
+                      company.id,
+                      aiResponse, // A função sabe buscar dados na conversa
+                      phoneNumber,
+                      'agendado',
+                      conversation.contactName || undefined
+                    );
 
-                    const normalizedSearchService = normalizeString(details.service);
-                    console.log('🔍 Serviço normalizado para busca:', normalizedSearchService);
+                    if (appointmentId === null) {
+                      // Conflito de horário
+                      console.log('❌ Agendamento não foi criado devido a conflito de horário');
 
-                    const service = services.find(s => {
-                      const normalizedServiceName = normalizeString(s.name);
-                      console.log(`  Comparando "${normalizedSearchService}" com "${normalizedServiceName}"`);
+                      const errorMessage = `❌ *Conflito de Horário Detectado*\n\nDesculpe, mas não foi possível confirmar seu agendamento pois o horário solicitado já está ocupado por outro cliente.\n\nPor favor, escolha outro horário disponível e tente novamente.`;
 
-                      return normalizedServiceName.includes(normalizedSearchService) ||
-                             normalizedSearchService.includes(normalizedServiceName);
-                    });
+                      await sendAppointmentErrorWebhook(company.id, 'CONFLICT', 'Horário já está ocupado', {
+                        conversationId: conversation.id,
+                        phoneNumber,
+                        additionalInfo: 'Conflito detectado'
+                      });
 
-                    if (service && service.price > 0 && asaasEnabled) {
+                      const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+                      let formattedPhoneForError = phoneNumber.replace(/\D/g, '');
+                      if (!formattedPhoneForError.startsWith('55') && formattedPhoneForError.length >= 10) {
+                        formattedPhoneForError = '55' + formattedPhoneForError;
+                      }
+
+                      await fetch(`${correctedApiUrl}/message/sendText/${activeInstance.instanceName}`, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'apikey': globalSettings.evolutionApiGlobalKey!
+                        },
+                        body: JSON.stringify({
+                          number: formattedPhoneForError,
+                          text: errorMessage
+                        })
+                      });
+
+                      await storage.createMessage({
+                        conversationId: conversation.id,
+                        content: errorMessage,
+                        role: 'assistant',
+                        messageType: 'text',
+                        delivered: true,
+                        timestamp: new Date(),
+                      });
+                    } else if (appointmentId && asaasEnabled) {
                       // ========================================
-                      // ASAAS HABILITADO - A IA VAI PERGUNTAR FORMA DE PAGAMENTO
+                      // AGENDAMENTO CRIADO - VERIFICAR SE PRECISA DE PAGAMENTO
                       // ========================================
-                      // Não criar agendamento nem pagamento aqui.
-                      // A IA já foi instruída a perguntar a forma de pagamento.
-                      // O processamento real acontece quando o usuário responder "1", "2", "pix" ou "cartão"
-                      console.log('💰 Serviço encontrado com preço:', service.name, 'R$', service.price);
-                      console.log('✅ Asaas está configurado - A IA vai perguntar a forma de pagamento');
-                      console.log('ℹ️  Aguardando resposta do usuário sobre forma de pagamento...');
+                      console.log('✅ Agendamento criado com ID:', appointmentId);
+                      console.log('🔍 Verificando se precisa de pagamento Asaas...');
 
-                      // NÃO criar agendamento aqui - será criado quando o usuário escolher a forma de pagamento
-                      // A IA vai responder perguntando: "Como você prefere pagar? 1️⃣ PIX ou 2️⃣ Cartão"
+                      // Buscar o agendamento criado para obter os dados REAIS
+                      const createdAppointment = await storage.getAppointment(appointmentId);
 
-                      // IMPORTANTE: Deixar a IA processar normalmente para enviar a pergunta de pagamento
-                      // O código antigo de "link de pagamento genérico" foi removido
-                      // O fluxo agora é: SIM → IA pergunta forma → Usuário responde → Sistema processa
+                      if (createdAppointment && createdAppointment.serviceId) {
+                        const appointmentService = await storage.getService(createdAppointment.serviceId);
+                        console.log('📋 Serviço do agendamento:', appointmentService?.name);
+                        console.log('💰 Preço do serviço:', appointmentService?.price);
 
-                      // A IA vai processar normalmente e perguntar a forma de pagamento
-                      // Não precisamos fazer nada aqui - o fluxo continua naturalmente
+                        if (appointmentService && appointmentService.price && Number(appointmentService.price) > 0) {
+                          // Atualizar status para pagamento pendente
+                          await db.update(appointments)
+                            .set({ status: 'payment_pending', updatedAt: new Date() })
+                            .where(eq(appointments.id, appointmentId));
 
-                    } else {
-                      // Log detailed reasons why payment link wasn't created
-                      console.log('⚠️ Link de pagamento NÃO será gerado porque:');
-                      if (!service) {
-                        console.log('   ❌ Serviço não encontrado na lista de serviços da empresa');
-                        console.log('   📋 Serviços disponíveis:', services.map(s => s.name).join(', '));
-                      } else if (service.price <= 0) {
-                        console.log('   ❌ Serviço encontrado mas sem preço definido');
-                        console.log('   💰 Preço atual:', service.price);
-                      }
-                      if (!companyWithAsaas?.asaasEnabled) {
-                        console.log('   ❌ Asaas não está habilitado para esta empresa');
-                      }
-                      if (!companyWithAsaas?.asaasApiKey) {
-                        console.log('   ❌ Empresa não tem API Key do Asaas configurada');
-                      }
+                          console.log('💳 Agendamento atualizado para payment_pending');
+                          console.log('✅ Asaas habilitado - Enviando pergunta de forma de pagamento');
 
-                      console.log('ℹ️ Criando agendamento direto sem pagamento');
-                      const appointmentId = await createAppointmentFromAIConfirmation(conversation.id, company.id, summaryMessage.content, phoneNumber, 'agendado', conversation.contactName || undefined);
+                          // Enviar mensagem perguntando forma de pagamento
+                          const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+                          let formattedPhone = phoneNumber.replace(/\D/g, '');
+                          if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
+                            formattedPhone = '55' + formattedPhone;
+                          }
 
-                      // Se retornou null, significa que houve conflito de horário
-                      if (appointmentId === null) {
-                        console.log('❌ Agendamento não foi criado devido a conflito. Enviando mensagem de erro ao usuário...');
+                          const paymentQuestion = `💳 *Forma de Pagamento*\n\nPara confirmar seu agendamento, como você prefere pagar?\n\n1️⃣ *PIX* - Pagamento instantâneo\n2️⃣ *Cartão de Crédito* - Parcele em até 12x\n\n💰 Valor: R$ ${Number(appointmentService.price).toFixed(2)}\n\n_Digite 1 para PIX ou 2 para Cartão_`;
 
-                        const errorMessage = `❌ *Conflito de Horário Detectado*\n\nDesculpe, mas não foi possível confirmar seu agendamento pois o horário solicitado já está ocupado por outro cliente.\n\nPor favor, escolha outro horário disponível e tente novamente.`;
+                          await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, activeInstance.instanceName, formattedPhone, 1500);
 
-                        // Enviar webhook de erro para N8N
-                        await sendAppointmentErrorWebhook(company.id, 'CONFLICT', 'Horário já está ocupado por outro cliente', {
-                          conversationId: conversation.id,
-                          phoneNumber,
-                          additionalInfo: 'Conflito detectado - agendamento direto sem pagamento'
-                        });
+                          await fetch(`${correctedApiUrl}/message/sendText/${activeInstance.instanceName}`, {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              'apikey': globalSettings.evolutionApiGlobalKey!
+                            },
+                            body: JSON.stringify({
+                              number: formattedPhone,
+                              text: paymentQuestion
+                            })
+                          });
 
-                        // Send error message via Evolution API
-                        const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-                        let formattedPhoneForError = phoneNumber.replace(/\D/g, '');
-                        if (!formattedPhoneForError.startsWith('55') && formattedPhoneForError.length >= 10) {
-                          formattedPhoneForError = '55' + formattedPhoneForError;
+                          await storage.createMessage({
+                            conversationId: conversation.id,
+                            content: paymentQuestion,
+                            role: 'assistant',
+                            messageType: 'text',
+                            delivered: true,
+                            timestamp: new Date(),
+                          });
+
+                          clearAvailabilityCache(company.id);
+
+                          // Retornar para não deixar a IA enviar outra mensagem
+                          return res.status(200).json({ received: true, processed: true, paymentPending: true });
+                        } else {
+                          console.log('ℹ️ Serviço sem preço definido - agendamento confirmado sem pagamento');
                         }
-
-                        await fetch(`${correctedApiUrl}/message/sendText/${activeInstance.instanceName}`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': globalSettings.evolutionApiGlobalKey!
-                          },
-                          body: JSON.stringify({
-                            number: formattedPhoneForError,
-                            text: errorMessage
-                          })
-                        });
-
-                        // Save error message to database
-                        await storage.createMessage({
-                          conversationId: conversation.id,
-                          content: errorMessage,
-                          role: 'assistant',
-                          messageType: 'text',
-                          delivered: true,
-                          timestamp: new Date(),
-                        });
+                      } else {
+                        console.log('ℹ️ Agendamento sem serviço associado - confirmado sem pagamento');
                       }
-                      }
+                    } else if (appointmentId) {
+                      console.log('✅ Agendamento criado com ID:', appointmentId, '(Asaas não habilitado)');
+                    }
                     } // Fim do else (FLUXO NORMAL - CRIAR AGENDAMENTO)
                   } else {
                     console.log('⚠️ Nenhum resumo de agendamento pendente encontrado nas últimas mensagens');
