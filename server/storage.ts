@@ -416,6 +416,9 @@ export class DatabaseStorage implements IStorage {
       trialExpiresAt: companies.trialExpiresAt,
       trialAlertShown: companies.trialAlertShown,
       subscriptionStatus: companies.subscriptionStatus,
+      asaasApiKey: companies.asaasApiKey,
+      asaasEnvironment: companies.asaasEnvironment,
+      asaasEnabled: companies.asaasEnabled,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).orderBy(desc(companies.createdAt));
@@ -468,6 +471,9 @@ export class DatabaseStorage implements IStorage {
       trialExpiresAt: companies.trialExpiresAt,
       trialAlertShown: companies.trialAlertShown,
       subscriptionStatus: companies.subscriptionStatus,
+      asaasApiKey: companies.asaasApiKey,
+      asaasEnvironment: companies.asaasEnvironment,
+      asaasEnabled: companies.asaasEnabled,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.id, id));
@@ -513,6 +519,9 @@ export class DatabaseStorage implements IStorage {
         trialExpiresAt: companies.trialExpiresAt,
         trialAlertShown: companies.trialAlertShown,
         subscriptionStatus: companies.subscriptionStatus,
+        asaasApiKey: companies.asaasApiKey,
+        asaasEnvironment: companies.asaasEnvironment,
+        asaasEnabled: companies.asaasEnabled,
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
       }).from(companies).where(eq(companies.email, email));
@@ -565,6 +574,9 @@ export class DatabaseStorage implements IStorage {
         trialExpiresAt: companies.trialExpiresAt,
         trialAlertShown: companies.trialAlertShown,
         subscriptionStatus: companies.subscriptionStatus,
+        asaasApiKey: companies.asaasApiKey,
+        asaasEnvironment: companies.asaasEnvironment,
+        asaasEnabled: companies.asaasEnabled,
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
       }).from(companies).where(eq(companies.resetToken, token));
@@ -627,6 +639,9 @@ export class DatabaseStorage implements IStorage {
       trialExpiresAt: companies.trialExpiresAt,
       trialAlertShown: companies.trialAlertShown,
       subscriptionStatus: companies.subscriptionStatus,
+      asaasApiKey: companies.asaasApiKey,
+      asaasEnvironment: companies.asaasEnvironment,
+      asaasEnabled: companies.asaasEnabled,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.email, companyData.email));
@@ -718,10 +733,13 @@ export class DatabaseStorage implements IStorage {
         trialExpiresAt: companies.trialExpiresAt,
         trialAlertShown: companies.trialAlertShown,
         subscriptionStatus: companies.subscriptionStatus,
+        asaasApiKey: companies.asaasApiKey,
+        asaasEnvironment: companies.asaasEnvironment,
+        asaasEnabled: companies.asaasEnabled,
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
       }).from(companies).where(eq(companies.id, id));
-      
+
       if (!company) {
         throw new Error(`Company with ID ${id} not found after update`);
       }
