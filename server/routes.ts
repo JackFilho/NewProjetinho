@@ -1365,7 +1365,9 @@ async function getAvailableTimesForService(
     const service = services.find(s => s.id === serviceId);
 
     if (!service) {
-      return '❌ Serviço não encontrado';
+      console.log(`⚠️ Serviço ID ${serviceId} não encontrado. Serviços disponíveis:`, services.map(s => `${s.id}:${s.name}`));
+      // Retornar mensagem amigável ao invés de erro
+      return `Desculpe, não consegui identificar o serviço. Pode me informar novamente qual serviço você deseja?`;
     }
 
     const serviceDuration = service.duration || 30;
@@ -1375,7 +1377,9 @@ async function getAvailableTimesForService(
     const professional = professionals.find(p => p.id === professionalId);
 
     if (!professional) {
-      return '❌ Profissional não encontrado';
+      console.log(`⚠️ Profissional ID ${professionalId} não encontrado. Profissionais disponíveis:`, professionals.map(p => `${p.id}:${p.name}`));
+      // Retornar mensagem amigável ao invés de erro
+      return `Desculpe, não consegui identificar o profissional. Pode me informar novamente com quem você gostaria de agendar?`;
     }
 
     // Buscar horários de trabalho do profissional
