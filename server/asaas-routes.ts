@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
-import { companies, appointments, evolutionInstances } from "@shared/schema";
+import { companies, appointments, whatsappInstances } from "@shared/schema";
 import storage from "./storage";
 import { z } from "zod";
 
@@ -584,8 +584,8 @@ router.post("/api/webhook/asaas/:companyId", async (req: any, res: any) => {
               const globalSettings = await storage.getGlobalSettings();
               const activeInstance = await storage.db
                 .select()
-                .from(evolutionInstances)
-                .where(eq(evolutionInstances.companyId, pendingData.companyId))
+                .from(whatsappInstances)
+                .where(eq(whatsappInstances.companyId, pendingData.companyId))
                 .limit(1);
 
               if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey && activeInstance[0]) {
