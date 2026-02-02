@@ -10154,21 +10154,31 @@ Por favor, escolha um dos horários disponíveis acima.`;
                     // ========================================
 
                     if (asaasEnabled) {
+                      console.log('💳 ========================================');
+                      console.log('💳 NOVO FLUXO ASAAS - VERSÃO CORRIGIDA');
                       console.log('💳 Asaas habilitado - verificando se serviço tem preço...');
+                      console.log('💳 ========================================');
 
                       // Buscar serviço nas mensagens do usuário
                       const allMsgsForService = await storage.getMessagesByConversation(conversation.id);
                       const servicesForCheck = await storage.getServicesByCompany(company.id);
 
-                      // Buscar serviço mencionado nas mensagens
+                      console.log('📋 Serviços da empresa:', servicesForCheck.map(s => `${s.name} (R$${s.price})`).join(', '));
+
+                      // Buscar serviço mencionado nas mensagens do USUÁRIO (não da IA)
                       const userMsgsText = allMsgsForService
                         .filter(m => m.role === 'user')
                         .map(m => m.content.toLowerCase())
                         .join(' ');
 
-                      const serviceWithPrice = servicesForCheck.find(s =>
-                        userMsgsText.includes(s.name.toLowerCase()) && s.price && Number(s.price) > 0
-                      );
+                      console.log('📝 Texto das mensagens do usuário:', userMsgsText.substring(0, 200) + '...');
+
+                      const serviceWithPrice = servicesForCheck.find(s => {
+                        const serviceLower = s.name.toLowerCase();
+                        const found = userMsgsText.includes(serviceLower);
+                        console.log(`   🔍 Procurando "${serviceLower}" nas mensagens do usuário: ${found ? 'ENCONTRADO' : 'não encontrado'}`);
+                        return found && s.price && Number(s.price) > 0;
+                      });
 
                       if (serviceWithPrice) {
                         console.log('💰 Serviço com preço encontrado:', serviceWithPrice.name, 'R$', serviceWithPrice.price);
