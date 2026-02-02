@@ -9570,8 +9570,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
                     const extractDetails = (text: string) => {
                       // Try structured format first (with labels)
                       let nameMatch = text.match(/(?:Nome|👤):\s*([^\n]*)/i);
-                      let serviceMatch = text.match(/(?:Serviço|✂️):\s*([^\n]*)/i);
-                      let professionalMatch = text.match(/(?:Profissional|👨‍💼):\s*([^\n]*)/i);
+                      let serviceMatch = text.match(/(?:Serviço|✂️|💼):\s*([^\n]*)/i);
+                      let professionalMatch = text.match(/(?:Profissional|👨‍💼|🏢):\s*([^\n]*)/i);
                       let dateMatch = text.match(/(?:Data|📅):\s*([^\n]*)/i);
                       let timeMatch = text.match(/(?:Horário|Hora|🕐):\s*([^\n]*)/i);
 
