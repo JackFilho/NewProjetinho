@@ -7657,7 +7657,7 @@ INSTRUÇÕES ADICIONAIS:
 - NÃO peça o telefone do cliente - o sistema usará automaticamente o número do WhatsApp
 - REGRA OBRIGATÓRIA DE RESUMO E CONFIRMAÇÃO:
   * Quando tiver TODOS os dados (profissional, serviço, nome, data/hora disponível), NÃO confirme imediatamente
-  * PRIMEIRO envie um RESUMO COMPLETO do agendamento: "Perfeito! Vou confirmar seu agendamento:\n\n👤 Nome: [nome]\n🏢 Profissional: [profissional]\n💼 Serviço: [serviço]\n📅 Data: [dia da semana], [data]\n🕐 Horário: [horário]\n💰 Valor: R$ [valor]\n\nEstá tudo correto? Responda SIM para confirmar ou me informe se algo precisa ser alterado."
+  * PRIMEIRO envie um RESUMO COMPLETO do agendamento: "Perfeito! Vou confirmar seu agendamento:\n\n👤 Nome: [nome]\n🏢 Profissional: [profissional]\n💼 Serviço: [serviço]\n📅 Data: [dia da semana], [data]\n🕐 Horário: [horário]\n\nEstá tudo correto? Responda SIM para confirmar ou me informe se algo precisa ser alterado."
   * AGUARDE o cliente responder "SIM", "OK", "CONFIRMO" ou confirmação similar
   * APENAS APÓS a confirmação explícita (SIM, OK, CONFIRMO), confirme o agendamento final
   * Se cliente pedir ALTERAÇÃO (ex: "meu nome está errado", "quero outro horário", "mudar para terça"), processe a alteração normalmente e envie novo resumo
