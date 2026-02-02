@@ -10155,30 +10155,69 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                     if (asaasEnabled) {
                       console.log('💳 ========================================');
-                      console.log('💳 NOVO FLUXO ASAAS - VERSÃO CORRIGIDA');
+                      console.log('💳 NOVO FLUXO ASAAS - VERSÃO CORRIGIDA V2');
                       console.log('💳 Asaas habilitado - verificando se serviço tem preço...');
                       console.log('💳 ========================================');
 
-                      // Buscar serviço nas mensagens do usuário
-                      const allMsgsForService = await storage.getMessagesByConversation(conversation.id);
                       const servicesForCheck = await storage.getServicesByCompany(company.id);
-
                       console.log('📋 Serviços da empresa:', servicesForCheck.map(s => `${s.name} (R$${s.price})`).join(', '));
 
-                      // Buscar serviço mencionado nas mensagens do USUÁRIO (não da IA)
-                      const userMsgsText = allMsgsForService
-                        .filter(m => m.role === 'user')
-                        .map(m => m.content.toLowerCase())
-                        .join(' ');
+                      // USAR A MENSAGEM DE RESUMO DA IA (summaryMessage) como fonte de dados
+                      // O summaryMessage já foi encontrado anteriormente e contém os dados do agendamento
+                      // Buscar a mensagem de resumo que a IA enviou ANTES da confirmação
+                      const allMsgsForService = await storage.getMessagesByConversation(conversation.id);
+                      const aiSummaryMsg = allMsgsForService.find(m =>
+                        m.role === 'assistant' &&
+                        !m.content.includes('Agendamento realizado com sucesso') &&
+                        !m.content.includes('Nos vemos') &&
+                        (m.content.includes('💼') || m.content.includes('Serviço:')) &&
+                        (m.content.includes('📅') || m.content.includes('Data:')) &&
+                        (m.content.includes('Está tudo correto?') || m.content.includes('Responda SIM') || m.content.includes('confirmar'))
+                      );
 
-                      console.log('📝 Texto das mensagens do usuário:', userMsgsText.substring(0, 200) + '...');
+                      console.log('📋 Mensagem de resumo da IA encontrada:', aiSummaryMsg ? 'SIM' : 'NÃO');
+                      if (aiSummaryMsg) {
+                        console.log('📋 Conteúdo:', aiSummaryMsg.content.substring(0, 200) + '...');
+                      }
 
-                      const serviceWithPrice = servicesForCheck.find(s => {
-                        const serviceLower = s.name.toLowerCase();
-                        const found = userMsgsText.includes(serviceLower);
-                        console.log(`   🔍 Procurando "${serviceLower}" nas mensagens do usuário: ${found ? 'ENCONTRADO' : 'não encontrado'}`);
-                        return found && s.price && Number(s.price) > 0;
-                      });
+                      // Extrair serviço da mensagem de resumo da IA
+                      let serviceWithPrice = null;
+                      if (aiSummaryMsg) {
+                        // Extrair nome do serviço da mensagem da IA
+                        const serviceMatch = aiSummaryMsg.content.match(/(?:💼|✂️)\s*(?:Serviço:?)?\s*([^\n]+)/i) ||
+                                            aiSummaryMsg.content.match(/Serviço:\s*([^\n]+)/i);
+                        if (serviceMatch) {
+                          const extractedServiceName = serviceMatch[1].trim();
+                          console.log('🔍 Serviço extraído da mensagem da IA:', extractedServiceName);
+
+                          // Buscar o serviço no banco
+                          serviceWithPrice = servicesForCheck.find(s => {
+                            const match = s.name.toLowerCase() === extractedServiceName.toLowerCase() ||
+                                         extractedServiceName.toLowerCase().includes(s.name.toLowerCase()) ||
+                                         s.name.toLowerCase().includes(extractedServiceName.toLowerCase());
+                            if (match) console.log(`   ✅ Match encontrado: ${s.name}`);
+                            return match && s.price && Number(s.price) > 0;
+                          });
+                        }
+                      }
+
+                      // Fallback: buscar nas últimas mensagens do usuário (só as mais recentes)
+                      if (!serviceWithPrice) {
+                        console.log('🔄 Fallback: buscando serviço nas últimas 3 mensagens do usuário...');
+                        const recentUserMsgs = allMsgsForService
+                          .filter(m => m.role === 'user')
+                          .slice(0, 3) // Apenas as 3 mais recentes
+                          .map(m => m.content.toLowerCase())
+                          .join(' ');
+
+                        console.log('📝 Últimas mensagens do usuário:', recentUserMsgs);
+
+                        serviceWithPrice = servicesForCheck.find(s => {
+                          const found = recentUserMsgs.includes(s.name.toLowerCase());
+                          if (found) console.log(`   🔍 Encontrado nas mensagens do usuário: ${s.name}`);
+                          return found && s.price && Number(s.price) > 0;
+                        });
+                      }
 
                       if (serviceWithPrice) {
                         console.log('💰 Serviço com preço encontrado:', serviceWithPrice.name, 'R$', serviceWithPrice.price);
@@ -10193,9 +10232,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                         const paymentQuestion = `💳 *Forma de Pagamento*\n\nPara confirmar seu agendamento, como você prefere pagar?\n\n1️⃣ *PIX* - Pagamento instantâneo\n2️⃣ *Cartão de Crédito* - Parcele em até 12x\n\n💰 Valor: R$ ${Number(serviceWithPrice.price).toFixed(2)}\n\n_Digite 1 para PIX ou 2 para Cartão_`;
 
-                        await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, activeInstance.instanceName, formattedPhone, 1500);
+                        await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, whatsappInstance.instanceName, formattedPhone, 1500);
 
-                        await fetch(`${correctedApiUrl}/message/sendText/${activeInstance.instanceName}`, {
+                        await fetch(`${correctedApiUrl}/message/sendText/${whatsappInstance.instanceName}`, {
                           method: 'POST',
                           headers: {
                             'Content-Type': 'application/json',
