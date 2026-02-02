@@ -9916,39 +9916,89 @@ Por favor, escolha um dos horários disponíveis acima.`;
                       console.log('💳 Método escolhido:', paymentMethod);
                       console.log('💳 ========================================');
 
-                      // Extrair dados do resumo do agendamento da conversa
-                      // Buscar a mensagem com o resumo
-                      const summaryMsgForPayment = conversationHistory.find(m =>
+                      // ========================================
+                      // NOVO FLUXO: Extrair dados e gerar cobrança
+                      // Agendamento será criado pelo webhook APÓS pagamento confirmado
+                      // ========================================
+
+                      // Buscar todas as mensagens para encontrar dados do agendamento
+                      const allMsgsForPayment = await storage.getMessagesByConversation(conversation.id);
+
+                      // Buscar mensagem com dados do agendamento (mais flexível)
+                      const summaryMsgForPayment = allMsgsForPayment.find(m =>
                         m.role === 'assistant' &&
-                        m.content.includes('👤 Nome:') &&
-                        m.content.includes('💼 Serviço:')
+                        (m.content.includes('👤') || m.content.includes('Nome:')) &&
+                        (m.content.includes('📅') || m.content.match(/\d{2}\/\d{2}\/\d{4}/))
+                      ) || allMsgsForPayment.find(m =>
+                        m.role === 'assistant' &&
+                        (m.content.includes('Nos vemos') || m.content.includes('confirmado')) &&
+                        m.content.match(/\d{2}\/\d{2}\/\d{4}/)
                       );
 
                       if (summaryMsgForPayment) {
-                        const paymentDetails = extractDetails(summaryMsgForPayment.content);
+                        // Função robusta de extração
+                        const extractPaymentData = (text: string) => {
+                          const data: any = {};
+                          const nameMatch = text.match(/(?:👤\s*)?Nome:\s*([^\n]+)/i);
+                          if (nameMatch) data.name = nameMatch[1].trim();
+                          const serviceMatch = text.match(/(?:💼|✂️)\s*(?:Serviço:)?\s*([^\n]+)/i) || text.match(/Serviço:\s*([^\n]+)/i);
+                          if (serviceMatch) data.service = serviceMatch[1].trim();
+                          const profMatch = text.match(/(?:🏢|👨‍💼)\s*(?:Profissional:)?\s*([^\n]+)/i) || text.match(/com\s+(?:a\s+|o\s+)?([A-ZÀÁÉÍÓÚ][a-záéíóúâêôã]+)(?:\.|$|\n)/i);
+                          if (profMatch) data.professional = profMatch[1].trim();
+                          const dateMatch = text.match(/(\d{2}\/\d{2}\/\d{4})/);
+                          if (dateMatch) data.date = dateMatch[1];
+                          const timeMatch = text.match(/(?:🕐\s*)?(?:Horário:)?\s*(\d{2}:\d{2})/i) || text.match(/às\s+(\d{2}:\d{2})/i);
+                          if (timeMatch) data.time = timeMatch[1];
+                          return data;
+                        };
+
+                        const paymentDetails = extractPaymentData(summaryMsgForPayment.content);
                         console.log('📋 Dados extraídos para pagamento:', paymentDetails);
 
-                        // Buscar serviço para obter preço
+                        // Buscar serviço e profissional no banco
                         const servicesForPayment = await storage.getServicesByCompany(company.id);
-                        const serviceForPayment = servicesForPayment.find(s =>
-                          s.name.toLowerCase().includes(paymentDetails.service.toLowerCase()) ||
-                          paymentDetails.service.toLowerCase().includes(s.name.toLowerCase())
+                        const professionalsForPayment = await storage.getProfessionalsByCompany(company.id);
+
+                        // Encontrar serviço (busca mais flexível)
+                        let serviceForPayment = servicesForPayment.find(s =>
+                          s.name.toLowerCase().includes((paymentDetails.service || '').toLowerCase()) ||
+                          (paymentDetails.service || '').toLowerCase().includes(s.name.toLowerCase())
+                        );
+                        // Fallback: buscar nas mensagens do usuário
+                        if (!serviceForPayment) {
+                          const userText = allMsgsForPayment.filter(m => m.role === 'user').map(m => m.content.toLowerCase()).join(' ');
+                          serviceForPayment = servicesForPayment.find(s => userText.includes(s.name.toLowerCase()));
+                        }
+
+                        // Encontrar profissional
+                        const professionalForPayment = professionalsForPayment.find(p =>
+                          p.name.toLowerCase().includes((paymentDetails.professional || '').toLowerCase()) ||
+                          (paymentDetails.professional || '').toLowerCase().includes(p.name.toLowerCase())
                         );
 
                         if (serviceForPayment && serviceForPayment.price > 0) {
-                          const externalRef = `appointment_${Date.now()}_${conversation.id}`;
+                          // Criar dados do agendamento para salvar no externalReference (JSON)
+                          const pendingAppointmentData = {
+                            type: 'pending_appointment',
+                            companyId: company.id,
+                            conversationId: conversation.id,
+                            clientName: paymentDetails.name || conversation.contactName || 'Cliente',
+                            clientPhone: phoneNumber,
+                            professionalId: professionalForPayment?.id || null,
+                            professionalName: professionalForPayment?.name || paymentDetails.professional || '',
+                            serviceId: serviceForPayment.id,
+                            serviceName: serviceForPayment.name,
+                            servicePrice: serviceForPayment.price,
+                            date: paymentDetails.date,
+                            time: paymentDetails.time
+                          };
+                          const externalRef = JSON.stringify(pendingAppointmentData);
+                          console.log('💾 Dados salvos no externalReference para webhook criar agendamento após pagamento');
 
-                          // Criar agendamento primeiro (com status pendente)
-                          const appointmentIdForPayment = await createAppointmentFromAIConfirmation(
-                            conversation.id,
-                            company.id,
-                            summaryMsgForPayment.content,
-                            phoneNumber,
-                            'payment_pending',
-                            conversation.contactName || undefined
-                          );
+                          // NÃO criar agendamento aqui - será criado pelo webhook após pagamento
+                          const canProceed = true; // Removida criação de agendamento
 
-                          if (appointmentIdForPayment) {
+                          if (canProceed) {
                             let formattedPhoneForPaymentMsg = phoneNumber.replace(/\D/g, '');
                             if (!formattedPhoneForPaymentMsg.startsWith('55') && formattedPhoneForPaymentMsg.length >= 10) {
                               formattedPhoneForPaymentMsg = '55' + formattedPhoneForPaymentMsg;
@@ -9960,26 +10010,18 @@ Por favor, escolha um dos horários disponíveis acima.`;
                               // Criar cobrança PIX
                               console.log('💳 Gerando cobrança PIX...');
                               const pixPayment = await createAsaasPixPayment(company.id, {
-                                clientName: paymentDetails.name,
+                                clientName: pendingAppointmentData.clientName,
                                 clientPhone: phoneNumber,
                                 serviceName: serviceForPayment.name,
                                 servicePrice: serviceForPayment.price,
-                                appointmentId: appointmentIdForPayment,
-                                externalReference: externalRef
+                                appointmentId: 0, // Agendamento será criado após pagamento
+                                externalReference: externalRef // JSON com dados do agendamento
                               });
 
                               if (pixPayment) {
                                 console.log('✅ PIX criado com sucesso!');
-
-                                // Atualizar agendamento com ID do pagamento
-                                await storage.db
-                                  .update(appointments)
-                                  .set({
-                                    asaasPaymentId: pixPayment.id,
-                                    asaasPaymentStatus: 'pending',
-                                    updatedAt: new Date(),
-                                  })
-                                  .where(eq(appointments.id, appointmentIdForPayment));
+                                console.log('📋 Payment ID:', pixPayment.id);
+                                // Agendamento será criado pelo webhook após confirmação do pagamento
 
                                 // Enviar QR Code como imagem
                                 await sendTypingPresence(correctedApiUrlForPayment, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentMsg, 2000);
@@ -10046,26 +10088,18 @@ Por favor, escolha um dos horários disponíveis acima.`;
                               // Criar cobrança de cartão de crédito
                               console.log('💳 Gerando link de pagamento com cartão...');
                               const cardPayment = await createAsaasCreditCardPayment(company.id, {
-                                clientName: paymentDetails.name,
+                                clientName: pendingAppointmentData.clientName,
                                 clientPhone: phoneNumber,
                                 serviceName: serviceForPayment.name,
                                 servicePrice: serviceForPayment.price,
-                                appointmentId: appointmentIdForPayment,
-                                externalReference: externalRef
+                                appointmentId: 0, // Agendamento será criado após pagamento
+                                externalReference: externalRef // JSON com dados do agendamento
                               });
 
                               if (cardPayment) {
                                 console.log('✅ Link de cartão criado:', cardPayment.invoiceUrl);
-
-                                // Atualizar agendamento com ID do pagamento
-                                await storage.db
-                                  .update(appointments)
-                                  .set({
-                                    asaasPaymentId: cardPayment.id,
-                                    asaasPaymentStatus: 'pending',
-                                    updatedAt: new Date(),
-                                  })
-                                  .where(eq(appointments.id, appointmentIdForPayment));
+                                console.log('📋 Payment ID:', cardPayment.id);
+                                // Agendamento será criado pelo webhook após confirmação do pagamento
 
                                 // Enviar link de pagamento
                                 await sendTypingPresence(correctedApiUrlForPayment, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentMsg, 2000);
@@ -10103,15 +10137,13 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             clearAvailabilityCache(company.id);
 
                             // Retornar sem continuar o fluxo normal
-                            return res.status(200).json({ received: true, processed: true, paymentProcessed: true });
-                          } else {
-                            console.log('❌ Falha ao criar agendamento para pagamento');
+                            return res.status(200).json({ received: true, processed: true, paymentSent: true });
                           }
                         } else {
                           console.log('❌ Serviço não encontrado ou sem preço para pagamento');
                         }
                       } else {
-                        console.log('❌ Resumo do agendamento não encontrado para processar pagamento');
+                        console.log('❌ Mensagem com dados do agendamento não encontrada');
                       }
                     }
                     // FIM DA VERIFICAÇÃO DE FORMA DE PAGAMENTO

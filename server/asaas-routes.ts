@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
-import { companies, appointments } from "@shared/schema";
+import { companies, appointments, evolutionInstances } from "@shared/schema";
 import storage from "./storage";
 import { z } from "zod";
 
@@ -539,16 +539,106 @@ router.post("/api/webhook/asaas/:companyId", async (req: any, res: any) => {
       case "PAYMENT_RECEIVED":
         console.log(`[Asaas] Pagamento confirmado/recebido: ${event.payment.id}`);
 
-        // Extrair o ID do agendamento da referência externa
         const externalRef = event.payment.externalReference;
-        if (externalRef && externalRef.startsWith('appointment_')) {
-          const appointmentId = parseInt(externalRef.replace('appointment_', ''));
+        console.log(`[Asaas] External Reference:`, externalRef);
 
-          if (!isNaN(appointmentId)) {
-            console.log(`[Asaas] Confirmando agendamento ${appointmentId} após pagamento`);
+        // NOVO FLUXO: Verificar se é JSON com dados do agendamento pendente
+        try {
+          const pendingData = JSON.parse(externalRef);
 
-            // Atualizar status do agendamento para confirmado
+          if (pendingData.type === 'pending_appointment') {
+            console.log(`[Asaas] Criando agendamento após pagamento confirmado...`);
+            console.log(`[Asaas] Dados do agendamento:`, pendingData);
+
+            // Converter data DD/MM/YYYY para YYYY-MM-DD
+            let appointmentDate = '';
+            if (pendingData.date) {
+              const dateParts = pendingData.date.split('/');
+              if (dateParts.length === 3) {
+                appointmentDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+              }
+            }
+
+            // Criar o agendamento
+            const newAppointment = await storage.db
+              .insert(appointments)
+              .values({
+                companyId: pendingData.companyId,
+                professionalId: pendingData.professionalId,
+                serviceId: pendingData.serviceId,
+                clientName: pendingData.clientName,
+                clientPhone: pendingData.clientPhone,
+                date: appointmentDate,
+                time: pendingData.time,
+                status: 'Confirmado',
+                asaasPaymentId: event.payment.id,
+                asaasPaymentStatus: 'confirmed',
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              });
+
+            console.log(`[Asaas] ✅ Agendamento criado com sucesso após pagamento!`);
+
+            // Enviar mensagem de confirmação via WhatsApp
             try {
+              const globalSettings = await storage.getGlobalSettings();
+              const activeInstance = await storage.db
+                .select()
+                .from(evolutionInstances)
+                .where(eq(evolutionInstances.companyId, pendingData.companyId))
+                .limit(1);
+
+              if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey && activeInstance[0]) {
+                let formattedPhone = pendingData.clientPhone.replace(/\D/g, '');
+                if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
+                  formattedPhone = '55' + formattedPhone;
+                }
+
+                const confirmationMessage = `✅ *Pagamento Confirmado!*\n\nSeu agendamento foi confirmado com sucesso!\n\n📋 *Detalhes:*\n👤 Cliente: ${pendingData.clientName}\n💼 Serviço: ${pendingData.serviceName}\n${pendingData.professionalName ? `🏢 Profissional: ${pendingData.professionalName}\n` : ''}📅 Data: ${pendingData.date}\n🕐 Horário: ${pendingData.time}\n\nAguardamos você! 😊`;
+
+                let apiUrl = globalSettings.evolutionApiUrl;
+                if (!apiUrl.includes('/message/')) {
+                  apiUrl = apiUrl.replace(/\/+$/, '');
+                }
+
+                await fetch(`${apiUrl}/message/sendText/${activeInstance[0].instanceName}`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': globalSettings.evolutionApiGlobalKey
+                  },
+                  body: JSON.stringify({
+                    number: formattedPhone,
+                    text: confirmationMessage
+                  })
+                });
+
+                console.log(`[Asaas] ✅ Mensagem de confirmação enviada para ${formattedPhone}`);
+
+                // Salvar mensagem no banco
+                if (pendingData.conversationId) {
+                  await storage.createMessage({
+                    conversationId: pendingData.conversationId,
+                    content: confirmationMessage,
+                    role: 'assistant',
+                    messageType: 'text',
+                    delivered: true,
+                    timestamp: new Date(),
+                  });
+                }
+              }
+            } catch (msgError) {
+              console.error(`[Asaas] Erro ao enviar mensagem de confirmação:`, msgError);
+            }
+          }
+        } catch (parseError) {
+          // Não é JSON - pode ser o formato antigo (appointment_ID)
+          if (externalRef && externalRef.startsWith('appointment_')) {
+            const appointmentId = parseInt(externalRef.split('_')[1]);
+
+            if (!isNaN(appointmentId)) {
+              console.log(`[Asaas] Formato antigo - Confirmando agendamento ${appointmentId}`);
+
               await storage.db
                 .update(appointments)
                 .set({
@@ -560,10 +650,6 @@ router.post("/api/webhook/asaas/:companyId", async (req: any, res: any) => {
                 .where(eq(appointments.id, appointmentId));
 
               console.log(`[Asaas] Agendamento ${appointmentId} confirmado com sucesso`);
-
-              // TODO: Enviar mensagem WhatsApp confirmando o pagamento e agendamento
-            } catch (updateError) {
-              console.error(`[Asaas] Erro ao atualizar agendamento ${appointmentId}:`, updateError);
             }
           }
         }
