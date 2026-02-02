@@ -7750,6 +7750,8 @@ REGRAS IMPORTANTES PARA CANCELAMENTO E REAGENDAMENTO:
                 const summaryMessage = recentAssistantMessages.find(m =>
                   !m.content.includes('Agendamento Confirmado!') &&
                   !m.content.includes('Obrigado por escolher nossos serviços') &&
+                  !m.content.includes('Agendamento realizado com sucesso') &&
+                  !m.content.includes('Nos vemos no dia') &&
                   (
                     ((m.content.includes('Está tudo correto?') ||
                       m.content.includes('Responda SIM para confirmar') ||
@@ -9512,6 +9514,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
                         m.role === 'assistant' &&
                         !m.content.includes('Agendamento Confirmado!') &&
                         !m.content.includes('Obrigado por escolher nossos serviços') &&
+                        !m.content.includes('Agendamento realizado com sucesso') &&
+                        !m.content.includes('Nos vemos no dia') &&
                         (
                           ((m.content.includes('Está tudo correto?') ||
                             m.content.includes('Responda SIM para confirmar') ||
@@ -9526,13 +9530,15 @@ Por favor, escolha um dos horários disponíveis acima.`;
                     }
 
                     // Se não encontrou, buscar mensagem de sucesso nas mensagens anteriores
+                    // IMPORTANTE: Excluir mensagens de confirmação final que não têm dados completos
                     if (!summaryMessage) {
                       summaryMessage = recentMessages.find(m =>
                         m.role === 'assistant' &&
                         !m.content.includes('Agendamento Confirmado!') &&
                         !m.content.includes('Obrigado por escolher nossos serviços') &&
+                        !m.content.includes('Agendamento realizado com sucesso') &&
+                        !m.content.includes('Nos vemos no dia') &&
                         (m.content.includes('agendamento foi confirmado') ||
-                         m.content.includes('Nos vemos') ||
                          m.content.includes('está confirmado')) &&
                         (m.content.match(/\d{2}\/\d{2}\/\d{4}/) || m.content.match(/segunda|terça|quarta|quinta|sexta|sábado|domingo/i)) &&
                         (m.content.match(/\d{1,2}:\d{2}/) || m.content.includes('às'))
