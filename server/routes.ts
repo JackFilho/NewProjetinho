@@ -5029,7 +5029,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Get company info
       const companyResult = await db.execute(sql`
-        SELECT id, fantasy_name, document, address, google_maps_location, courses_description, courses_images, courses_pdfs, phone, zip_code, number, neighborhood, city, state, email, password, plan_id, plan_status, is_active, ai_agent_prompt, agent_inactivity_timeout, auto_select_professional, openai_api_key, openai_model, openai_temperature, openai_max_tokens, human_request_enabled, human_request_contact, human_request_message, human_request_keywords, human_request_timeout, course_notification_enabled, course_notification_contact, course_notification_message, course_notification_keywords, course_notification_timeout, ignored_numbers, birthday_message, reset_token, reset_token_expires, tour_enabled, trial_expires_at, trial_alert_shown, subscription_status, n8n_webhook_url, n8n_webhook_enabled, created_at, updated_at
+        SELECT id, fantasy_name, document, address, google_maps_location, courses_description, courses_images, courses_pdfs, phone, zip_code, number, neighborhood, city, state, email, password, plan_id, plan_status, is_active, ai_agent_prompt, agent_inactivity_timeout, auto_select_professional, openai_api_key, openai_model, openai_temperature, openai_max_tokens, human_request_enabled, human_request_contact, human_request_message, human_request_keywords, human_request_timeout, course_notification_enabled, course_notification_contact, course_notification_message, course_notification_keywords, course_notification_timeout, ignored_numbers, birthday_message, reset_token, reset_token_expires, tour_enabled, trial_expires_at, trial_alert_shown, subscription_status, n8n_webhook_url, n8n_webhook_enabled, asaas_api_key, asaas_environment, asaas_enabled, created_at, updated_at
         FROM companies WHERE id = ${companyId}
       `);
 
@@ -5088,6 +5088,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         subscriptionStatus: company.subscription_status,
         n8nWebhookUrl: company.n8n_webhook_url,
         n8nWebhookEnabled: company.n8n_webhook_enabled,
+        asaasApiKey: company.asaas_api_key,
+        asaasEnvironment: company.asaas_environment,
+        asaasEnabled: company.asaas_enabled === 1,
         createdAt: company.created_at,
         updatedAt: company.updated_at
       };
