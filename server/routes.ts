@@ -7568,32 +7568,32 @@ ${specificDateInfo}
 ═══════════════════════════════════════════════════════════════════
 
 Quando o cliente informar a DATA desejada, você DEVE incluir na sua resposta o comando:
-[MOSTRAR_HORARIOS_LIVRES:ID_SERVICO:ID_PROFISSIONAL:DATA_YYYY-MM-DD]
+[MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
 
 O sistema vai SUBSTITUIR esse comando pelos horários disponíveis automaticamente.
 
 ✅ COMO USAR:
 1. Colete: SERVIÇO + PROFISSIONAL + DATA
-2. Quando tiver a DATA, inclua o comando na resposta
+2. Quando tiver a DATA, inclua o comando na resposta usando os NOMES exatos
 3. O sistema mostrará os horários disponíveis
 
 📋 EXEMPLO:
 Cliente quer: "Corte de cabelo com Estevão amanhã" (amanhã = 31/01/2026)
-→ Serviço: Corte de cabelo (ID: 5)
-→ Profissional: Estevão (ID: 65)
+→ Serviço: Corte de cabelo
+→ Profissional: Estevão
 → Data: 2026-01-31
 
 Sua resposta deve ser:
 "Vou verificar os horários disponíveis para amanhã!
 
-[MOSTRAR_HORARIOS_LIVRES:5:65:2026-01-31]"
+[MOSTRAR_HORARIOS_LIVRES:Corte de cabelo:Estevão:2026-01-31]"
 
 APÓS o comando ser processado, o sistema vai retornar:
 - Se HOUVER horários: uma lista de horários → aí sim você pergunta "Qual horário você prefere?"
 - Se NÃO houver horários ou profissional não trabalha: uma mensagem COMPLETA já perguntando outro dia → NUNCA adicione "Qual horário você prefere?" pois não faz sentido!
 
 ⚠️ IMPORTANTE:
-• Use o ID do serviço e profissional (veja nas listas acima)
+• Use o NOME EXATO do serviço e profissional (como aparecem nas listas acima)
 • A data DEVE estar no formato YYYY-MM-DD (ex: 2026-01-31)
 • NÃO invente horários - o comando retorna apenas horários REAIS
 • Se "amanhã" = 31/01/2026, use 2026-01-31
@@ -7627,7 +7627,7 @@ ETAPA ${shouldAutoSelect ? '2' : '3'} - DATA:
 
 ETAPA ${shouldAutoSelect ? '3' : '4'} - HORÁRIO:
    → APÓS ter a data, use o comando para buscar horários:
-   → [MOSTRAR_HORARIOS_LIVRES:ID_SERVICO:ID_PROFISSIONAL:DATA_YYYY-MM-DD]
+   → [MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
    → Se o resultado mostrar HORÁRIOS (ex: "09:00 | 10:00 | 11:00"): pergunte "Qual horário você prefere?"
    → Se o resultado mostrar INDISPONIBILIDADE (contém "não trabalha", "não disponível", "não temos horários", "agenda cheia", etc): NÃO ADICIONE NADA - a mensagem já está completa com a pergunta sobre outro dia!
 
@@ -8128,19 +8128,79 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
               }
 
               // Process [MOSTRAR_HORARIOS_LIVRES:serviceId:professionalId:date] command
-              const horariosLivresMatch = aiResponse.match(/\[MOSTRAR_HORARIOS_LIVRES:(\d+):(\d+):(\d{4}-\d{2}-\d{2})\]/);
+              // Suporta tanto IDs numéricos quanto NOMES de serviço/profissional
+              const horariosLivresMatch = aiResponse.match(/\[MOSTRAR_HORARIOS_LIVRES:([^:]+):([^:]+):(\d{4}-\d{2}-\d{2})\]/);
               if (horariosLivresMatch) {
-                const [fullMatch, serviceIdStr, professionalIdStr, dateStr] = horariosLivresMatch;
-                console.log(`📅 Mostrando horários livres: Serviço ${serviceIdStr}, Profissional ${professionalIdStr}, Data ${dateStr}`);
+                const [fullMatch, serviceIdentifier, professionalIdentifier, dateStr] = horariosLivresMatch;
+                console.log(`📅 Mostrando horários livres: Serviço "${serviceIdentifier}", Profissional "${professionalIdentifier}", Data ${dateStr}`);
 
-                const horariosLivres = await getAvailableTimesForService(
-                  company.id,
-                  parseInt(serviceIdStr),
-                  parseInt(professionalIdStr),
-                  dateStr
-                );
+                // Buscar serviços e profissionais da empresa
+                const companyServices = await storage.getServicesByCompany(company.id);
+                const companyProfessionals = await storage.getProfessionalsByCompany(company.id);
 
-                aiResponse = aiResponse.replace(fullMatch, horariosLivres);
+                // Resolver ID do serviço (pode ser número ou nome)
+                let serviceId: number | null = null;
+                if (/^\d+$/.test(serviceIdentifier.trim())) {
+                  // É um número - usar diretamente
+                  serviceId = parseInt(serviceIdentifier.trim());
+                } else {
+                  // É um nome - buscar pelo nome (case-insensitive, parcial)
+                  const serviceName = serviceIdentifier.trim().toLowerCase();
+                  const foundService = companyServices.find(s =>
+                    s.name.toLowerCase() === serviceName ||
+                    s.name.toLowerCase().includes(serviceName) ||
+                    serviceName.includes(s.name.toLowerCase())
+                  );
+                  if (foundService) {
+                    serviceId = foundService.id;
+                    console.log(`   ✅ Serviço encontrado por nome: "${foundService.name}" (ID: ${serviceId})`);
+                  } else {
+                    console.log(`   ⚠️ Serviço "${serviceIdentifier}" não encontrado. Disponíveis:`, companyServices.map(s => s.name).join(', '));
+                  }
+                }
+
+                // Resolver ID do profissional (pode ser número ou nome)
+                let professionalId: number | null = null;
+                if (/^\d+$/.test(professionalIdentifier.trim())) {
+                  // É um número - usar diretamente
+                  professionalId = parseInt(professionalIdentifier.trim());
+                } else {
+                  // É um nome - buscar pelo nome (case-insensitive, parcial)
+                  const profName = professionalIdentifier.trim().toLowerCase();
+                  const foundProfessional = companyProfessionals.find(p =>
+                    p.name.toLowerCase() === profName ||
+                    p.name.toLowerCase().includes(profName) ||
+                    profName.includes(p.name.toLowerCase())
+                  );
+                  if (foundProfessional) {
+                    professionalId = foundProfessional.id;
+                    console.log(`   ✅ Profissional encontrado por nome: "${foundProfessional.name}" (ID: ${professionalId})`);
+                  } else {
+                    console.log(`   ⚠️ Profissional "${professionalIdentifier}" não encontrado. Disponíveis:`, companyProfessionals.map(p => p.name).join(', '));
+                  }
+                }
+
+                // Se encontrou ambos, buscar horários
+                if (serviceId && professionalId) {
+                  const horariosLivres = await getAvailableTimesForService(
+                    company.id,
+                    serviceId,
+                    professionalId,
+                    dateStr
+                  );
+                  aiResponse = aiResponse.replace(fullMatch, horariosLivres);
+                } else {
+                  // Não encontrou serviço ou profissional - mensagem amigável
+                  let errorMsg = '';
+                  if (!serviceId && !professionalId) {
+                    errorMsg = `Desculpe, não consegui identificar o serviço "${serviceIdentifier}" nem o profissional "${professionalIdentifier}". Pode me informar novamente?`;
+                  } else if (!serviceId) {
+                    errorMsg = `Desculpe, não consegui identificar o serviço "${serviceIdentifier}". Pode me informar novamente qual serviço você deseja?`;
+                  } else {
+                    errorMsg = `Desculpe, não consegui identificar o profissional "${professionalIdentifier}". Pode me informar novamente com quem você gostaria de agendar?`;
+                  }
+                  aiResponse = aiResponse.replace(fullMatch, errorMsg);
+                }
               }
 
               // ========================================
