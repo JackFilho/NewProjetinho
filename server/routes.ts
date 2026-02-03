@@ -10316,11 +10316,20 @@ Por favor, escolha um dos horários disponíveis acima.`;
                     // VERIFICAR SE É RESPOSTA DE FORMA DE PAGAMENTO
                     // ========================================
                     // Verificar se a última mensagem do assistente perguntou sobre forma de pagamento
-                    const recentAssistantMsgs = conversationHistory.filter(m => m.role === 'assistant');
-                    const lastAssistantMsg = recentAssistantMsgs.length > 0 ? recentAssistantMsgs[recentAssistantMsgs.length - 1].content : '';
-                    const askedForPaymentMethod = lastAssistantMsg.includes('1️⃣ PIX') ||
-                                                   lastAssistantMsg.includes('Como você prefere pagar') ||
-                                                   lastAssistantMsg.includes('Digite 1 para PIX');
+                    // Buscar nas mensagens do banco (mais atualizado que conversationHistory)
+                    const allMsgsForPaymentCheck = await storage.getMessagesByConversation(conversation.id);
+                    const recentAssistantMsgsFromDb = allMsgsForPaymentCheck.filter(m => m.role === 'assistant');
+                    const lastAssistantMsgFromDb = recentAssistantMsgsFromDb.length > 0 ? recentAssistantMsgsFromDb[recentAssistantMsgsFromDb.length - 1].content : '';
+
+                    console.log('💳 DEBUG - Última mensagem do assistente:', lastAssistantMsgFromDb.substring(0, 100) + '...');
+
+                    const askedForPaymentMethod = lastAssistantMsgFromDb.includes('Forma de Pagamento') ||
+                                                   lastAssistantMsgFromDb.includes('como você prefere pagar') ||
+                                                   lastAssistantMsgFromDb.includes('Digite 1 para PIX') ||
+                                                   lastAssistantMsgFromDb.includes('1️⃣') ||
+                                                   lastAssistantMsgFromDb.includes('PIX') && lastAssistantMsgFromDb.includes('Cartão');
+
+                    console.log('💳 DEBUG - askedForPaymentMethod:', askedForPaymentMethod);
 
                     // Verificar se a mensagem atual é uma escolha de forma de pagamento
                     const normalizedPaymentMsg = messageText.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '');
