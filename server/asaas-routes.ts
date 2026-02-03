@@ -134,6 +134,24 @@ async function getOrCreateAsaasCustomer(
     console.log('[Asaas] API Key (primeiros 20 chars):', apiKey ? apiKey.substring(0, 20) + '...' : 'VAZIA');
     console.log('[Asaas] Cliente:', { name: clientData.name, phone: clientData.phone });
 
+    // Primeiro, testar se a API Key está funcionando
+    console.log('[Asaas] Testando autenticação...');
+    const testResponse = await fetch(`${apiUrl}/myAccount`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'access_token': apiKey,
+      },
+    });
+    console.log('[Asaas] Teste de autenticação status:', testResponse.status);
+    if (!testResponse.ok) {
+      const testError = await testResponse.text();
+      console.log('[Asaas] Erro de autenticação:', testError.substring(0, 300));
+    } else {
+      const accountData = await testResponse.json();
+      console.log('[Asaas] Conta autenticada:', accountData.name || accountData.commercialName || 'OK');
+    }
+
     // Formatar telefone - Asaas aceita com ou sem código do país
     let cleanPhone = clientData.phone.replace(/\D/g, '');
     // Garantir que tenha o código do país 55
