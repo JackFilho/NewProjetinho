@@ -19,11 +19,14 @@ interface AsaasPaymentLink {
 interface AsaasPixPayment {
   id: string;
   value: number;
-  pixQrCode: {
+  pixQrCode?: {
     encodedImage: string; // QR Code em base64
     payload: string; // Código copia e cola
     expirationDate: string;
   };
+  // Quando não tem CPF, retorna link de pagamento em vez de QR Code
+  invoiceUrl?: string;
+  usedPaymentLink?: boolean; // Indica se foi usado link de pagamento (sem CPF)
 }
 
 // Interface para cobrança de cartão (link)
@@ -277,20 +280,37 @@ export async function createAsaasPixPayment(
       return null;
     }
 
-    // Criar cobrança PIX
+    // Criar cobrança
     const dueDate = new Date();
     dueDate.setMinutes(dueDate.getMinutes() + 30); // Vencimento em 30 minutos
 
+    // Limitar externalReference a 100 caracteres (limite do Asaas)
+    let externalRef = paymentData.externalReference || `appointment_${paymentData.appointmentId || Date.now()}`;
+    if (externalRef.length > 100) {
+      // Se for muito grande, usar apenas um identificador simples
+      externalRef = `apt_${paymentData.appointmentId || Date.now()}_${Date.now()}`.substring(0, 100);
+      console.log('[Asaas] externalReference truncado para:', externalRef);
+    }
+
+    // Se não tem CPF, usar UNDEFINED para gerar link de pagamento
+    // O cliente informará o CPF na página de pagamento do Asaas
+    const hasCpf = !!paymentData.clientCpf;
+    const billingType = hasCpf ? 'PIX' : 'UNDEFINED';
+
+    if (!hasCpf) {
+      console.log('[Asaas] CPF não informado - usando link de pagamento (cliente informará CPF na página)');
+    }
+
     const paymentPayload = {
       customer: customerId,
-      billingType: 'PIX',
+      billingType: billingType,
       value: paymentData.servicePrice,
       dueDate: dueDate.toISOString().split('T')[0],
       description: `${company.name} - ${paymentData.serviceName}`,
-      externalReference: paymentData.externalReference || `appointment_${paymentData.appointmentId || Date.now()}`,
+      externalReference: externalRef,
     };
 
-    console.log('[Asaas] Criando cobrança PIX:', paymentPayload);
+    console.log('[Asaas] Criando cobrança:', paymentPayload);
 
     const paymentResponse = await fetch(`${apiUrl}/payments`, {
       method: 'POST',
@@ -303,14 +323,25 @@ export async function createAsaasPixPayment(
 
     if (!paymentResponse.ok) {
       const errorData = await paymentResponse.text();
-      console.error('[Asaas] Erro ao criar cobrança PIX:', errorData);
+      console.error('[Asaas] Erro ao criar cobrança:', errorData);
       return null;
     }
 
     const payment = await paymentResponse.json();
-    console.log('[Asaas] Cobrança PIX criada:', payment.id);
+    console.log('[Asaas] Cobrança criada:', payment.id, hasCpf ? '(PIX direto)' : '(Link de pagamento)');
 
-    // Buscar QR Code PIX
+    // Se não tem CPF, retornar link de pagamento
+    if (!hasCpf) {
+      console.log('[Asaas] Retornando link de pagamento:', payment.invoiceUrl);
+      return {
+        id: payment.id,
+        value: payment.value,
+        invoiceUrl: payment.invoiceUrl,
+        usedPaymentLink: true,
+      };
+    }
+
+    // Se tem CPF, buscar QR Code PIX
     const pixResponse = await fetch(`${apiUrl}/payments/${payment.id}/pixQrCode`, {
       method: 'GET',
       headers: {
@@ -336,6 +367,7 @@ export async function createAsaasPixPayment(
         payload: pixData.payload,
         expirationDate: pixData.expirationDate,
       },
+      usedPaymentLink: false,
     };
   } catch (error) {
     console.error('[Asaas] Erro ao criar cobrança PIX:', error);

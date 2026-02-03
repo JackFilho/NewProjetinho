@@ -10502,63 +10502,95 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 console.log('📋 Payment ID:', pixPayment.id);
                                 // Agendamento será criado pelo webhook após confirmação do pagamento
 
-                                // Enviar QR Code como imagem
                                 await sendTypingPresence(correctedApiUrlForPayment, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentMsg, 2000);
 
-                                const pixMediaPayload = {
-                                  number: formattedPhoneForPaymentMsg,
-                                  mediatype: 'image',
-                                  media: pixPayment.pixQrCode.encodedImage,
-                                  caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n⏰ Válido por 30 minutos`
-                                };
+                                // Verificar se é link de pagamento (sem CPF) ou QR Code direto
+                                if (pixPayment.usedPaymentLink && pixPayment.invoiceUrl) {
+                                  // Sem CPF - enviar link de pagamento onde cliente informa o CPF
+                                  console.log('📎 Enviando link de pagamento (cliente informará CPF na página)');
 
-                                const pixImageResponse = await fetch(`${correctedApiUrlForPayment}/message/sendMedia/${instanceName}`, {
-                                  method: 'POST',
-                                  headers: {
-                                    'Content-Type': 'application/json',
-                                    'apikey': globalSettings.evolutionApiGlobalKey!
-                                  },
-                                  body: JSON.stringify(pixMediaPayload)
-                                });
+                                  const linkMessage = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n\nClique no link abaixo para pagar:\n🔗 ${pixPayment.invoiceUrl}\n\n⏰ Válido por 30 minutos\n🔒 Ambiente 100% seguro\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
-                                if (pixImageResponse.ok) {
-                                  console.log('✅ QR Code PIX enviado com sucesso');
-                                }
+                                  await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
+                                    method: 'POST',
+                                    headers: {
+                                      'Content-Type': 'application/json',
+                                      'apikey': globalSettings.evolutionApiGlobalKey!
+                                    },
+                                    body: JSON.stringify({
+                                      number: formattedPhoneForPaymentMsg,
+                                      text: linkMessage
+                                    })
+                                  });
 
-                                // Enviar código copia e cola
-                                await new Promise(resolve => setTimeout(resolve, 1000));
-                                const pixCodeMessage = `*Código PIX (copia e cola):*\n\n\`\`\`${pixPayment.pixQrCode.payload}\`\`\`\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+                                  // Salvar mensagem no banco
+                                  await storage.createMessage({
+                                    conversationId: conversation.id,
+                                    content: linkMessage,
+                                    role: 'assistant',
+                                    messageType: 'text',
+                                    delivered: true,
+                                    timestamp: new Date(),
+                                  });
 
-                                await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
-                                  method: 'POST',
-                                  headers: {
-                                    'Content-Type': 'application/json',
-                                    'apikey': globalSettings.evolutionApiGlobalKey!
-                                  },
-                                  body: JSON.stringify({
+                                  console.log('✅ Link de pagamento PIX enviado com sucesso');
+                                } else if (pixPayment.pixQrCode) {
+                                  // Com CPF - enviar QR Code PIX direto
+                                  const pixMediaPayload = {
                                     number: formattedPhoneForPaymentMsg,
-                                    text: pixCodeMessage
-                                  })
-                                });
+                                    mediatype: 'image',
+                                    media: pixPayment.pixQrCode.encodedImage,
+                                    caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n⏰ Válido por 30 minutos`
+                                  };
 
-                                // Salvar mensagens no banco
-                                await storage.createMessage({
-                                  conversationId: conversation.id,
-                                  content: '[QR Code PIX enviado]',
-                                  role: 'assistant',
-                                  messageType: 'image',
-                                  delivered: true,
-                                  timestamp: new Date(),
-                                });
+                                  const pixImageResponse = await fetch(`${correctedApiUrlForPayment}/message/sendMedia/${instanceName}`, {
+                                    method: 'POST',
+                                    headers: {
+                                      'Content-Type': 'application/json',
+                                      'apikey': globalSettings.evolutionApiGlobalKey!
+                                    },
+                                    body: JSON.stringify(pixMediaPayload)
+                                  });
 
-                                await storage.createMessage({
-                                  conversationId: conversation.id,
-                                  content: pixCodeMessage,
-                                  role: 'assistant',
-                                  messageType: 'text',
-                                  delivered: true,
-                                  timestamp: new Date(),
-                                });
+                                  if (pixImageResponse.ok) {
+                                    console.log('✅ QR Code PIX enviado com sucesso');
+                                  }
+
+                                  // Enviar código copia e cola
+                                  await new Promise(resolve => setTimeout(resolve, 1000));
+                                  const pixCodeMessage = `*Código PIX (copia e cola):*\n\n\`\`\`${pixPayment.pixQrCode.payload}\`\`\`\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+
+                                  await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
+                                    method: 'POST',
+                                    headers: {
+                                      'Content-Type': 'application/json',
+                                      'apikey': globalSettings.evolutionApiGlobalKey!
+                                    },
+                                    body: JSON.stringify({
+                                      number: formattedPhoneForPaymentMsg,
+                                      text: pixCodeMessage
+                                    })
+                                  });
+
+                                  // Salvar mensagens no banco
+                                  await storage.createMessage({
+                                    conversationId: conversation.id,
+                                    content: '[QR Code PIX enviado]',
+                                    role: 'assistant',
+                                    messageType: 'image',
+                                    delivered: true,
+                                    timestamp: new Date(),
+                                  });
+
+                                  await storage.createMessage({
+                                    conversationId: conversation.id,
+                                    content: pixCodeMessage,
+                                    role: 'assistant',
+                                    messageType: 'text',
+                                    delivered: true,
+                                    timestamp: new Date(),
+                                  });
+                                }
 
                               } else {
                                 console.log('❌ Falha ao criar cobrança PIX');
@@ -11021,63 +11053,94 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             console.log('✅ PIX criado com sucesso!');
                             console.log('📋 Payment ID:', pixPaymentResult.id);
 
-                            // Send QR Code as image
                             await sendTypingPresence(correctedApiUrlForPaymentProcess, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentProcess, 2000);
 
-                            const pixMediaPayloadResult = {
-                              number: formattedPhoneForPaymentProcess,
-                              mediatype: 'image',
-                              media: pixPaymentResult.pixQrCode.encodedImage,
-                              caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n⏰ Válido por 30 minutos`
-                            };
+                            // Verificar se é link de pagamento (sem CPF) ou QR Code direto
+                            if (pixPaymentResult.usedPaymentLink && pixPaymentResult.invoiceUrl) {
+                              // Sem CPF - enviar link de pagamento
+                              console.log('📎 Enviando link de pagamento (cliente informará CPF na página)');
 
-                            const pixImageResponseResult = await fetch(`${correctedApiUrlForPaymentProcess}/message/sendMedia/${instanceName}`, {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': globalSettings.evolutionApiGlobalKey!
-                              },
-                              body: JSON.stringify(pixMediaPayloadResult)
-                            });
+                              const linkMessageResult = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n\nClique no link abaixo para pagar:\n🔗 ${pixPaymentResult.invoiceUrl}\n\n⏰ Válido por 30 minutos\n🔒 Ambiente 100% seguro\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
-                            if (pixImageResponseResult.ok) {
-                              console.log('✅ QR Code PIX enviado com sucesso');
-                            }
+                              await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
+                                method: 'POST',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                  'apikey': globalSettings.evolutionApiGlobalKey!
+                                },
+                                body: JSON.stringify({
+                                  number: formattedPhoneForPaymentProcess,
+                                  text: linkMessageResult
+                                })
+                              });
 
-                            // Send copy-paste code
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-                            const pixCodeMessageResult = `*Código PIX (copia e cola):*\n\n\`\`\`${pixPaymentResult.pixQrCode.payload}\`\`\`\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+                              await storage.createMessage({
+                                conversationId: conversation.id,
+                                content: linkMessageResult,
+                                role: 'assistant',
+                                messageType: 'text',
+                                delivered: true,
+                                timestamp: new Date(),
+                              });
 
-                            await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': globalSettings.evolutionApiGlobalKey!
-                              },
-                              body: JSON.stringify({
+                              console.log('✅ Link de pagamento PIX enviado com sucesso');
+                            } else if (pixPaymentResult.pixQrCode) {
+                              // Com CPF - enviar QR Code PIX direto
+                              const pixMediaPayloadResult = {
                                 number: formattedPhoneForPaymentProcess,
-                                text: pixCodeMessageResult
-                              })
-                            });
+                                mediatype: 'image',
+                                media: pixPaymentResult.pixQrCode.encodedImage,
+                                caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n⏰ Válido por 30 minutos`
+                              };
 
-                            // Save messages to database
-                            await storage.createMessage({
-                              conversationId: conversation.id,
-                              content: '[QR Code PIX enviado]',
-                              role: 'assistant',
-                              messageType: 'image',
-                              delivered: true,
-                              timestamp: new Date(),
-                            });
+                              const pixImageResponseResult = await fetch(`${correctedApiUrlForPaymentProcess}/message/sendMedia/${instanceName}`, {
+                                method: 'POST',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                  'apikey': globalSettings.evolutionApiGlobalKey!
+                                },
+                                body: JSON.stringify(pixMediaPayloadResult)
+                              });
 
-                            await storage.createMessage({
-                              conversationId: conversation.id,
-                              content: pixCodeMessageResult,
-                              role: 'assistant',
-                              messageType: 'text',
-                              delivered: true,
-                              timestamp: new Date(),
-                            });
+                              if (pixImageResponseResult.ok) {
+                                console.log('✅ QR Code PIX enviado com sucesso');
+                              }
+
+                              // Send copy-paste code
+                              await new Promise(resolve => setTimeout(resolve, 1000));
+                              const pixCodeMessageResult = `*Código PIX (copia e cola):*\n\n\`\`\`${pixPaymentResult.pixQrCode.payload}\`\`\`\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+
+                              await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
+                                method: 'POST',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                  'apikey': globalSettings.evolutionApiGlobalKey!
+                                },
+                                body: JSON.stringify({
+                                  number: formattedPhoneForPaymentProcess,
+                                  text: pixCodeMessageResult
+                                })
+                              });
+
+                              // Save messages to database
+                              await storage.createMessage({
+                                conversationId: conversation.id,
+                                content: '[QR Code PIX enviado]',
+                                role: 'assistant',
+                                messageType: 'image',
+                                delivered: true,
+                                timestamp: new Date(),
+                              });
+
+                              await storage.createMessage({
+                                conversationId: conversation.id,
+                                content: pixCodeMessageResult,
+                                role: 'assistant',
+                                messageType: 'text',
+                                delivered: true,
+                                timestamp: new Date(),
+                              });
+                            }
 
                             console.log('✅ Pagamento PIX enviado com sucesso!');
                           } else {
