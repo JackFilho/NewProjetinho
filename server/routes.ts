@@ -942,8 +942,8 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
         const reasonText = exc.reason ? ` - ${exc.reason}` : '';
         return `${displayDate}: ${exc.startTime} às ${exc.endTime}${reasonText}`;
       }).join(', ');
-      // Removido: não mencionar horários excepcionais ao cliente (informação interna apenas)
-      // availabilityText += `- HORÁRIOS EXCEPCIONAIS (horário diferente do normal): ${exceptionalInfo}\n`;
+      // IMPORTANTE: Mostrar horários excepcionais para a IA considerar na disponibilidade
+      availabilityText += `- ⚠️ HORÁRIOS ESPECIAIS (diferente do normal): ${exceptionalInfo}\n`;
     }
     availabilityText += '\n';
 
@@ -12730,8 +12730,8 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
         const reasonText = exc.reason ? ` - ${exc.reason}` : '';
         return `${displayDate}: ${exc.startTime} às ${exc.endTime}${reasonText}`;
       }).join(', ');
-      // Removido: não mencionar horários excepcionais ao cliente (informação interna apenas)
-      // availabilityText += `- HORÁRIOS EXCEPCIONAIS (horário diferente do normal): ${exceptionalInfo}\n`;
+      // IMPORTANTE: Mostrar horários excepcionais para a IA considerar na disponibilidade
+      availabilityText += `- ⚠️ HORÁRIOS ESPECIAIS (diferente do normal): ${exceptionalInfo}\n`;
     }
     availabilityText += '\n';
 
