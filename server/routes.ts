@@ -9381,16 +9381,24 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 .filter(m => m.role === 'assistant')
                 .pop();
 
+              console.log('💳 DEBUG PAGAMENTO:');
+              console.log('   - messageText:', messageText);
+              console.log('   - Última msg assistente:', lastAssistantMsgCheck?.content?.substring(0, 100) || 'NENHUMA');
+
               const isRespondingToPaymentQuestion = lastAssistantMsgCheck &&
                 (lastAssistantMsgCheck.content.includes('Forma de Pagamento') ||
                  lastAssistantMsgCheck.content.includes('Digite 1 para PIX'));
 
               const isPaymentChoiceMessage = /^(1|2|pix|cartão|cartao)$/i.test(messageText.trim());
 
+              console.log('   - isRespondingToPaymentQuestion:', isRespondingToPaymentQuestion);
+              console.log('   - isPaymentChoiceMessage:', isPaymentChoiceMessage);
+
               if (isRespondingToPaymentQuestion && isPaymentChoiceMessage) {
-                console.log('💳 Usuário está respondendo à pergunta de pagamento - PULANDO interceptação');
+                console.log('💳 ✅ Usuário está respondendo à pergunta de pagamento - PULANDO interceptação');
                 // Não fazer nada aqui - deixar o código continuar para o processamento de pagamento
               } else {
+                console.log('💳 ❌ Não é resposta de pagamento - verificando interceptação...');
                 // ========================================
                 // 💳 INTERCEPTAR CONFIRMAÇÃO PARA ASAAS
                 // Se Asaas habilitado E resposta é confirmação, enviar pergunta de pagamento
