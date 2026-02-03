@@ -10958,8 +10958,13 @@ Por favor, escolha um dos horários disponíveis acima.`;
                       console.log('👤 Profissional encontrado:', professionalForPaymentProcess?.name || 'NÃO');
 
                       if (serviceForPaymentProcess && serviceForPaymentProcess.price && Number(serviceForPaymentProcess.price) > 0) {
-                        // Get client info
-                        const clientForPayment = await storage.getClientByPhoneAndCompany(phoneNumber, company.id);
+                        // Get client info - find by phone in company's clients
+                        const allClientsForPayment = await storage.getClientsByCompany(company.id);
+                        const normalizedPhoneForSearch = phoneNumber.replace(/\D/g, '');
+                        const clientForPayment = allClientsForPayment.find(c =>
+                          c.phone && c.phone.replace(/\D/g, '').includes(normalizedPhoneForSearch.slice(-9)) ||
+                          normalizedPhoneForSearch.includes((c.phone || '').replace(/\D/g, '').slice(-9))
+                        );
                         const clientNameForPayment = clientForPayment?.name || paymentDetailsExtracted.name || 'Cliente';
 
                         // Parse date
