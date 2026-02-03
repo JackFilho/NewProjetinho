@@ -9372,6 +9372,99 @@ Por favor, escolha um dos horários disponíveis acima.`;
               console.log('   - Pede nome?', aiResponse.toLowerCase().includes('nome'));
               console.log('==================================================');
 
+              // ========================================
+              // 💳 INTERCEPTAR CONFIRMAÇÃO PARA ASAAS
+              // Se Asaas habilitado E resposta é confirmação, enviar pergunta de pagamento
+              // ========================================
+              const isConfirmationResponse = (
+                aiResponse.includes('Agendamento realizado') ||
+                aiResponse.includes('agendamento foi confirmado') ||
+                aiResponse.includes('Nos vemos') ||
+                aiResponse.includes('está confirmado')
+              );
+
+              if (isConfirmationResponse) {
+                console.log('💳 Resposta é confirmação de agendamento - verificando Asaas...');
+
+                // Check if company has Asaas configured
+                const companyForAsaas = await storage.getCompany(company.id);
+                const asaasEnabledForIntercept = companyForAsaas?.asaasEnabled && companyForAsaas?.asaasApiKey;
+
+                if (asaasEnabledForIntercept) {
+                  console.log('💳 Asaas habilitado - interceptando para perguntar forma de pagamento');
+
+                  // Buscar mensagem de resumo com dados do serviço
+                  const msgsForAsaas = await storage.getMessagesByConversation(conversation.id);
+                  const summaryMsgForAsaas = msgsForAsaas.find(m =>
+                    m.role === 'assistant' &&
+                    !m.content.includes('Agendamento realizado') &&
+                    !m.content.includes('Nos vemos') &&
+                    (m.content.includes('💼') || m.content.includes('Serviço:')) &&
+                    (m.content.includes('📅') || m.content.includes('Data:'))
+                  );
+
+                  if (summaryMsgForAsaas) {
+                    // Extrair serviço
+                    const serviceMatchAsaas = summaryMsgForAsaas.content.match(/(?:💼|✂️)\s*(?:Serviço:?)?\s*([^\n]+)/i) ||
+                                              summaryMsgForAsaas.content.match(/Serviço:\s*([^\n]+)/i);
+
+                    if (serviceMatchAsaas) {
+                      const extractedServiceAsaas = serviceMatchAsaas[1].trim();
+                      const servicesAsaas = await storage.getServicesByCompany(company.id);
+
+                      // Match EXATO primeiro
+                      let serviceAsaas = servicesAsaas.find(s =>
+                        s.name.toLowerCase() === extractedServiceAsaas.toLowerCase() &&
+                        s.price && Number(s.price) > 0
+                      );
+
+                      if (serviceAsaas) {
+                        console.log(`💳 Serviço encontrado: ${serviceAsaas.name} - R$ ${serviceAsaas.price}`);
+                        console.log('💳 INTERCEPTANDO - Enviando pergunta de pagamento ao invés da confirmação');
+
+                        // Formatar telefone
+                        let phoneForPayment = phoneNumber.replace(/\D/g, '');
+                        if (!phoneForPayment.startsWith('55') && phoneForPayment.length >= 10) {
+                          phoneForPayment = '55' + phoneForPayment;
+                        }
+
+                        const apiUrlForPayment = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+                        const paymentQuestionMsg = `💳 *Forma de Pagamento*\n\nPara confirmar seu agendamento, como você prefere pagar?\n\n1️⃣ *PIX* - Pagamento instantâneo\n2️⃣ *Cartão de Crédito* - Parcele em até 12x\n\n💰 Valor: R$ ${Number(serviceAsaas.price).toFixed(2)}\n\n_Digite 1 para PIX ou 2 para Cartão_`;
+
+                        await sendTypingPresence(apiUrlForPayment, globalSettings.evolutionApiGlobalKey!, instanceName, phoneForPayment, 1500);
+
+                        await fetch(`${apiUrlForPayment}/message/sendText/${instanceName}`, {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': globalSettings.evolutionApiGlobalKey!
+                          },
+                          body: JSON.stringify({
+                            number: phoneForPayment,
+                            text: paymentQuestionMsg
+                          })
+                        });
+
+                        await storage.createMessage({
+                          conversationId: conversation.id,
+                          content: paymentQuestionMsg,
+                          role: 'assistant',
+                          messageType: 'text',
+                          delivered: true,
+                          timestamp: new Date(),
+                        });
+
+                        console.log('💳 ✅ Pergunta de pagamento enviada - RETORNANDO sem enviar confirmação da IA');
+                        return res.status(200).json({ received: true, processed: true, awaitingPaymentChoice: true });
+                      }
+                    }
+                  }
+                }
+              }
+              // ========================================
+              // FIM DA INTERCEPTAÇÃO ASAAS
+              // ========================================
+
               // Format phone number for Evolution API - needs country code 55
               let formattedPhoneForApi = phoneNumber.replace(/\D/g, '');
               if (!formattedPhoneForApi.startsWith('55') && formattedPhoneForApi.length >= 10) {
@@ -10515,14 +10608,26 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           const extractedServiceName = serviceMatch[1].trim();
                           console.log('🔍 Serviço extraído da mensagem da IA:', extractedServiceName);
 
-                          // Buscar o serviço no banco
-                          serviceWithPrice = servicesForCheck.find(s => {
-                            const match = s.name.toLowerCase() === extractedServiceName.toLowerCase() ||
-                                         extractedServiceName.toLowerCase().includes(s.name.toLowerCase()) ||
-                                         s.name.toLowerCase().includes(extractedServiceName.toLowerCase());
-                            if (match) console.log(`   ✅ Match encontrado: ${s.name}`);
-                            return match && s.price && Number(s.price) > 0;
-                          });
+                          // 1. PRIMEIRO: Buscar match EXATO (case-insensitive)
+                          serviceWithPrice = servicesForCheck.find(s =>
+                            s.name.toLowerCase() === extractedServiceName.toLowerCase() &&
+                            s.price && Number(s.price) > 0
+                          );
+
+                          if (serviceWithPrice) {
+                            console.log(`   ✅ Match EXATO encontrado: ${serviceWithPrice.name}`);
+                          } else {
+                            // 2. SEGUNDO: Buscar match parcial apenas se não houver exato
+                            console.log('   🔄 Nenhum match exato, tentando parcial...');
+                            serviceWithPrice = servicesForCheck.find(s => {
+                              const partialMatch = extractedServiceName.toLowerCase().includes(s.name.toLowerCase()) ||
+                                                  s.name.toLowerCase().includes(extractedServiceName.toLowerCase());
+                              return partialMatch && s.price && Number(s.price) > 0;
+                            });
+                            if (serviceWithPrice) {
+                              console.log(`   ✅ Match PARCIAL encontrado: ${serviceWithPrice.name}`);
+                            }
+                          }
                         }
                       }
 
