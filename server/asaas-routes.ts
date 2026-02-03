@@ -129,8 +129,16 @@ async function getOrCreateAsaasCustomer(
   }
 ): Promise<string | null> {
   try {
+    console.log('[Asaas] getOrCreateAsaasCustomer - Iniciando...');
+    console.log('[Asaas] API URL:', apiUrl);
+    console.log('[Asaas] Cliente:', { name: clientData.name, phone: clientData.phone });
+
+    const cleanPhone = clientData.phone.replace(/\D/g, '');
+    const searchUrl = `${apiUrl}/customers?mobilePhone=${cleanPhone}`;
+    console.log('[Asaas] Search URL:', searchUrl);
+
     // Primeiro, buscar se já existe um cliente com esse telefone
-    const searchResponse = await fetch(`${apiUrl}/customers?mobilePhone=${clientData.phone.replace(/\D/g, '')}`, {
+    const searchResponse = await fetch(searchUrl, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -138,24 +146,34 @@ async function getOrCreateAsaasCustomer(
       },
     });
 
+    console.log('[Asaas] Search response status:', searchResponse.status);
+
     if (searchResponse.ok) {
       const searchResult = await searchResponse.json();
       if (searchResult.data && searchResult.data.length > 0) {
         console.log('[Asaas] Cliente já existe:', searchResult.data[0].id);
         return searchResult.data[0].id;
       }
+      console.log('[Asaas] Cliente não encontrado, criando novo...');
+    } else {
+      const searchError = await searchResponse.text();
+      console.log('[Asaas] Search error:', searchError.substring(0, 200));
     }
 
     // Se não existe, criar novo cliente
     const customerData = {
       name: clientData.name,
-      mobilePhone: clientData.phone.replace(/\D/g, ''),
+      mobilePhone: cleanPhone,
       cpfCnpj: clientData.cpf?.replace(/\D/g, '') || undefined,
       email: clientData.email || undefined,
       notificationDisabled: true, // Desabilitar notificações do Asaas (vamos enviar pelo WhatsApp)
     };
 
-    const createResponse = await fetch(`${apiUrl}/customers`, {
+    const createUrl = `${apiUrl}/customers`;
+    console.log('[Asaas] Create URL:', createUrl);
+    console.log('[Asaas] Customer data:', customerData);
+
+    const createResponse = await fetch(createUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -164,9 +182,11 @@ async function getOrCreateAsaasCustomer(
       body: JSON.stringify(customerData),
     });
 
+    console.log('[Asaas] Create response status:', createResponse.status);
+
     if (!createResponse.ok) {
       const errorData = await createResponse.text();
-      console.error('[Asaas] Erro ao criar cliente:', errorData);
+      console.error('[Asaas] Erro ao criar cliente:', errorData.substring(0, 500));
       return null;
     }
 
