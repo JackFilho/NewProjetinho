@@ -86,7 +86,7 @@ export async function createAsaasPaymentLink(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'access_token': company[0].asaasApiKey,
+        'access_token': company.asaasApiKey,
       },
       body: JSON.stringify(paymentLinkData),
     });
@@ -286,7 +286,7 @@ export async function createAsaasPixPayment(
       billingType: 'PIX',
       value: paymentData.servicePrice,
       dueDate: dueDate.toISOString().split('T')[0],
-      description: `${company[0].name} - ${paymentData.serviceName}`,
+      description: `${company.name} - ${paymentData.serviceName}`,
       externalReference: paymentData.externalReference || `appointment_${paymentData.appointmentId || Date.now()}`,
     };
 
@@ -393,7 +393,7 @@ export async function createAsaasCreditCardPayment(
       billingType: 'UNDEFINED', // Gera link onde cliente pode pagar com cartão
       value: paymentData.servicePrice,
       dueDate: dueDate.toISOString().split('T')[0],
-      description: `${company[0].name} - ${paymentData.serviceName}`,
+      description: `${company.name} - ${paymentData.serviceName}`,
       externalReference: paymentData.externalReference || `appointment_${paymentData.appointmentId || Date.now()}`,
     };
 
