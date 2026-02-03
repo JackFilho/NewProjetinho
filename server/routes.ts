@@ -9455,6 +9455,14 @@ Por favor, escolha um dos horários disponíveis acima.`;
                         });
 
                         console.log('💳 ✅ Pergunta de pagamento enviada - RETORNANDO sem enviar confirmação da IA');
+
+                        // IMPORTANTE: Liberar o lock antes de retornar!
+                        const lockKeyForPayment = `${company.id}:${instanceName}:${phoneNumber}`;
+                        if (processingLocks.has(lockKeyForPayment)) {
+                          processingLocks.delete(lockKeyForPayment);
+                          console.log('🔓 Lock liberado (interceptação Asaas)');
+                        }
+
                         return res.status(200).json({ received: true, processed: true, awaitingPaymentChoice: true });
                       }
                     }
@@ -10563,6 +10571,13 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             // Limpar cache de disponibilidade
                             clearAvailabilityCache(company.id);
 
+                            // IMPORTANTE: Liberar o lock antes de retornar!
+                            const lockKeyPaymentSent = `${company.id}:${instanceName}:${phoneNumber}`;
+                            if (processingLocks.has(lockKeyPaymentSent)) {
+                              processingLocks.delete(lockKeyPaymentSent);
+                              console.log('🔓 Lock liberado (pagamento enviado)');
+                            }
+
                             // Retornar sem continuar o fluxo normal
                             return res.status(200).json({ received: true, processed: true, paymentSent: true });
                           }
@@ -10693,6 +10708,13 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           delivered: true,
                           timestamp: new Date(),
                         });
+
+                        // IMPORTANTE: Liberar o lock antes de retornar!
+                        const lockKeyForPaymentFlow = `${company.id}:${instanceName}:${phoneNumber}`;
+                        if (processingLocks.has(lockKeyForPaymentFlow)) {
+                          processingLocks.delete(lockKeyForPaymentFlow);
+                          console.log('🔓 Lock liberado (fluxo Asaas)');
+                        }
 
                         // Retornar para não deixar a IA enviar outra mensagem
                         return res.status(200).json({ received: true, processed: true, awaitingPaymentChoice: true });
