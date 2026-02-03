@@ -1,7 +1,5 @@
 import { Router } from "express";
-import { eq } from "drizzle-orm";
-import { companies, appointments, whatsappInstances } from "@shared/schema";
-import storage, { db } from "./storage";
+import storage from "./storage";
 import { z } from "zod";
 
 const router = Router();
@@ -57,28 +55,19 @@ export async function createAsaasPaymentLink(
   }
 ): Promise<AsaasPaymentLink | null> {
   try {
-    // Buscar configurações do Asaas da empresa
-    const company = await db
-      .select({
-        name: companies.name,
-        asaasApiKey: companies.asaasApiKey,
-        asaasEnvironment: companies.asaasEnvironment,
-        asaasEnabled: companies.asaasEnabled,
-      })
-      .from(companies)
-      .where(eq(companies.id, companyId))
-      .limit(1);
+    // Buscar configurações do Asaas da empresa usando storage
+    const company = await storage.getCompany(companyId);
 
-    if (!company[0] || !company[0].asaasApiKey || !company[0].asaasEnabled) {
+    if (!company || !company.asaasApiKey || !company.asaasEnabled) {
       console.error('[Asaas] Empresa não tem Asaas configurado ou habilitado');
       return null;
     }
 
-    const apiUrl = getAsaasApiUrl(company[0].asaasEnvironment || 'production');
+    const apiUrl = getAsaasApiUrl(company.asaasEnvironment || 'production');
 
     // Preparar dados do link de pagamento
     const paymentLinkData = {
-      name: `${company[0].name} - ${appointmentData.serviceName}`,
+      name: `${company.name} - ${appointmentData.serviceName}`,
       description: `Pagamento do serviço: ${appointmentData.serviceName}`,
       endDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0], // Expira em 24h
       value: appointmentData.servicePrice,
@@ -207,25 +196,16 @@ export async function createAsaasPixPayment(
   }
 ): Promise<AsaasPixPayment | null> {
   try {
-    // Buscar configurações do Asaas da empresa
-    const company = await db
-      .select({
-        name: companies.name,
-        asaasApiKey: companies.asaasApiKey,
-        asaasEnvironment: companies.asaasEnvironment,
-        asaasEnabled: companies.asaasEnabled,
-      })
-      .from(companies)
-      .where(eq(companies.id, companyId))
-      .limit(1);
+    // Buscar configurações do Asaas da empresa usando storage
+    const company = await storage.getCompany(companyId);
 
-    if (!company[0] || !company[0].asaasApiKey || !company[0].asaasEnabled) {
+    if (!company || !company.asaasApiKey || !company.asaasEnabled) {
       console.error('[Asaas] Empresa não tem Asaas configurado ou habilitado');
       return null;
     }
 
-    const apiUrl = getAsaasApiUrl(company[0].asaasEnvironment || 'production');
-    const apiKey = company[0].asaasApiKey;
+    const apiUrl = getAsaasApiUrl(company.asaasEnvironment || 'production');
+    const apiKey = company.asaasApiKey;
 
     // Criar ou buscar cliente
     const customerId = await getOrCreateAsaasCustomer(apiKey, apiUrl, {
@@ -323,25 +303,16 @@ export async function createAsaasCreditCardPayment(
   }
 ): Promise<AsaasCreditCardPayment | null> {
   try {
-    // Buscar configurações do Asaas da empresa
-    const company = await db
-      .select({
-        name: companies.name,
-        asaasApiKey: companies.asaasApiKey,
-        asaasEnvironment: companies.asaasEnvironment,
-        asaasEnabled: companies.asaasEnabled,
-      })
-      .from(companies)
-      .where(eq(companies.id, companyId))
-      .limit(1);
+    // Buscar configurações do Asaas da empresa usando storage
+    const company = await storage.getCompany(companyId);
 
-    if (!company[0] || !company[0].asaasApiKey || !company[0].asaasEnabled) {
+    if (!company || !company.asaasApiKey || !company.asaasEnabled) {
       console.error('[Asaas] Empresa não tem Asaas configurado ou habilitado');
       return null;
     }
 
-    const apiUrl = getAsaasApiUrl(company[0].asaasEnvironment || 'production');
-    const apiKey = company[0].asaasApiKey;
+    const apiUrl = getAsaasApiUrl(company.asaasEnvironment || 'production');
+    const apiKey = company.asaasApiKey;
 
     // Criar ou buscar cliente
     const customerId = await getOrCreateAsaasCustomer(apiKey, apiUrl, {
@@ -405,16 +376,8 @@ export async function createAsaasCreditCardPayment(
  */
 export async function isAsaasEnabled(companyId: number): Promise<boolean> {
   try {
-    const company = await db
-      .select({
-        asaasApiKey: companies.asaasApiKey,
-        asaasEnabled: companies.asaasEnabled,
-      })
-      .from(companies)
-      .where(eq(companies.id, companyId))
-      .limit(1);
-
-    return !!(company[0]?.asaasApiKey && company[0]?.asaasEnabled);
+    const company = await storage.getCompany(companyId);
+    return !!(company?.asaasApiKey && company?.asaasEnabled);
   } catch (error) {
     console.error('[Asaas] Erro ao verificar configuração:', error);
     return false;
@@ -441,25 +404,18 @@ router.get("/api/company/asaas-config", requireCompanyAuth, async (req: any, res
   try {
     const companyId = req.session.companyId;
 
-    const company = await db
-      .select({
-        asaasApiKey: companies.asaasApiKey,
-        asaasEnvironment: companies.asaasEnvironment,
-        asaasEnabled: companies.asaasEnabled,
-      })
-      .from(companies)
-      .where(eq(companies.id, companyId))
-      .limit(1);
+    const company = await storage.getCompany(companyId);
 
-    if (!company[0]) {
+    if (!company) {
       return res.status(404).json({ error: "Empresa não encontrada" });
     }
 
     // Mascarar a chave da API para segurança
     const config = {
-      ...company[0],
-      asaasApiKey: company[0].asaasApiKey ? `${company[0].asaasApiKey.slice(0, 10)}...` : null,
-      hasApiKey: !!company[0].asaasApiKey,
+      asaasApiKey: company.asaasApiKey ? `${company.asaasApiKey.slice(0, 10)}...` : null,
+      asaasEnvironment: company.asaasEnvironment,
+      asaasEnabled: company.asaasEnabled,
+      hasApiKey: !!company.asaasApiKey,
     };
 
     res.json(config);
@@ -477,15 +433,12 @@ router.put("/api/company/asaas-config", requireCompanyAuth, async (req: any, res
     // Validar dados
     const validatedData = asaasConfigSchema.parse(req.body);
 
-    // Atualizar no banco de dados
-    await db
-      .update(companies)
-      .set({
-        asaasApiKey: validatedData.asaasApiKey,
-        asaasEnvironment: validatedData.asaasEnvironment,
-        asaasEnabled: validatedData.asaasEnabled,
-      })
-      .where(eq(companies.id, companyId));
+    // Atualizar no banco de dados usando storage
+    await storage.updateCompany(companyId, {
+      asaasApiKey: validatedData.asaasApiKey,
+      asaasEnvironment: validatedData.asaasEnvironment,
+      asaasEnabled: validatedData.asaasEnabled,
+    });
 
     res.json({
       success: true,
@@ -514,16 +467,9 @@ router.post("/api/webhook/asaas/:companyId", async (req: any, res: any) => {
     console.log(`[Asaas Webhook] Evento recebido para empresa ${companyId}:`, event.event);
 
     // Verificar se a empresa existe e tem Asaas habilitado
-    const company = await db
-      .select({
-        id: companies.id,
-        asaasEnabled: companies.asaasEnabled,
-      })
-      .from(companies)
-      .where(eq(companies.id, parseInt(companyId)))
-      .limit(1);
+    const company = await storage.getCompany(parseInt(companyId));
 
-    if (!company[0] || !company[0].asaasEnabled) {
+    if (!company || !company.asaasEnabled) {
       console.log(`[Asaas Webhook] Empresa ${companyId} não encontrada ou Asaas desabilitado`);
       return res.status(404).json({ error: "Empresa não encontrada ou integração desabilitada" });
     }
@@ -559,36 +505,27 @@ router.post("/api/webhook/asaas/:companyId", async (req: any, res: any) => {
               }
             }
 
-            // Criar o agendamento
-            const newAppointment = await db
-              .insert(appointments)
-              .values({
-                companyId: pendingData.companyId,
-                professionalId: pendingData.professionalId,
-                serviceId: pendingData.serviceId,
-                clientName: pendingData.clientName,
-                clientPhone: pendingData.clientPhone,
-                date: appointmentDate,
-                time: pendingData.time,
-                status: 'Confirmado',
-                asaasPaymentId: event.payment.id,
-                asaasPaymentStatus: 'confirmed',
-                createdAt: new Date(),
-                updatedAt: new Date(),
-              });
+            // Criar o agendamento usando storage
+            const newAppointment = await storage.createAppointment({
+              companyId: pendingData.companyId,
+              professionalId: pendingData.professionalId,
+              serviceId: pendingData.serviceId,
+              clientName: pendingData.clientName,
+              clientPhone: pendingData.clientPhone,
+              appointmentDate: appointmentDate,
+              appointmentTime: pendingData.time,
+              status: 'Confirmado',
+            });
 
             console.log(`[Asaas] ✅ Agendamento criado com sucesso após pagamento!`);
 
             // Enviar mensagem de confirmação via WhatsApp
             try {
               const globalSettings = await storage.getGlobalSettings();
-              const activeInstance = await db
-                .select()
-                .from(whatsappInstances)
-                .where(eq(whatsappInstances.companyId, pendingData.companyId))
-                .limit(1);
+              const instances = await storage.getWhatsappInstancesByCompany(pendingData.companyId);
+              const activeInstance = instances[0];
 
-              if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey && activeInstance[0]) {
+              if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey && activeInstance) {
                 let formattedPhone = pendingData.clientPhone.replace(/\D/g, '');
                 if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
                   formattedPhone = '55' + formattedPhone;
@@ -601,7 +538,7 @@ router.post("/api/webhook/asaas/:companyId", async (req: any, res: any) => {
                   apiUrl = apiUrl.replace(/\/+$/, '');
                 }
 
-                await fetch(`${apiUrl}/message/sendText/${activeInstance[0].instanceName}`, {
+                await fetch(`${apiUrl}/message/sendText/${activeInstance.instanceName}`, {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
@@ -639,15 +576,9 @@ router.post("/api/webhook/asaas/:companyId", async (req: any, res: any) => {
             if (!isNaN(appointmentId)) {
               console.log(`[Asaas] Formato antigo - Confirmando agendamento ${appointmentId}`);
 
-              await db
-                .update(appointments)
-                .set({
-                  status: 'Confirmado',
-                  asaasPaymentId: event.payment.id,
-                  asaasPaymentStatus: 'confirmed',
-                  updatedAt: new Date(),
-                })
-                .where(eq(appointments.id, appointmentId));
+              await storage.updateAppointment(appointmentId, {
+                status: 'Confirmado',
+              });
 
               console.log(`[Asaas] Agendamento ${appointmentId} confirmado com sucesso`);
             }
