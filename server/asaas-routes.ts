@@ -37,7 +37,7 @@ interface AsaasCreditCardPayment {
 function getAsaasApiUrl(environment: string = 'production'): string {
   return environment === 'sandbox'
     ? 'https://sandbox.asaas.com/api/v3'
-    : 'https://api.asaas.com/api/v3';
+    : 'https://api.asaas.com/v3';
 }
 
 // Função para criar link de pagamento no Asaas
