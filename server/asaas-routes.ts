@@ -131,6 +131,7 @@ async function getOrCreateAsaasCustomer(
   try {
     console.log('[Asaas] getOrCreateAsaasCustomer - Iniciando...');
     console.log('[Asaas] API URL:', apiUrl);
+    console.log('[Asaas] API Key (primeiros 20 chars):', apiKey ? apiKey.substring(0, 20) + '...' : 'VAZIA');
     console.log('[Asaas] Cliente:', { name: clientData.name, phone: clientData.phone });
 
     // Formatar telefone - Asaas aceita com ou sem código do país
@@ -172,13 +173,20 @@ async function getOrCreateAsaasCustomer(
     }
 
     // Criar novo cliente
-    const customerData = {
+    const customerData: any = {
       name: clientData.name,
       mobilePhone: cleanPhone,
-      cpfCnpj: clientData.cpf?.replace(/\D/g, '') || undefined,
-      email: clientData.email || undefined,
-      notificationDisabled: true, // Desabilitar notificações do Asaas (vamos enviar pelo WhatsApp)
+      notificationDisabled: true,
     };
+
+    // Só adicionar cpfCnpj se tiver valor
+    if (clientData.cpf) {
+      customerData.cpfCnpj = clientData.cpf.replace(/\D/g, '');
+    }
+    // Só adicionar email se tiver valor
+    if (clientData.email) {
+      customerData.email = clientData.email;
+    }
 
     const createUrl = `${apiUrl}/customers`;
     console.log('[Asaas] Create URL:', createUrl);
