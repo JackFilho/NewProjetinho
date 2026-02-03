@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { companies, appointments, whatsappInstances } from "@shared/schema";
-import storage from "./storage";
+import storage, { db } from "./storage";
 import { z } from "zod";
 
 const router = Router();
@@ -58,7 +58,7 @@ export async function createAsaasPaymentLink(
 ): Promise<AsaasPaymentLink | null> {
   try {
     // Buscar configurações do Asaas da empresa
-    const company = await storage.db
+    const company = await db
       .select({
         name: companies.name,
         asaasApiKey: companies.asaasApiKey,
@@ -208,7 +208,7 @@ export async function createAsaasPixPayment(
 ): Promise<AsaasPixPayment | null> {
   try {
     // Buscar configurações do Asaas da empresa
-    const company = await storage.db
+    const company = await db
       .select({
         name: companies.name,
         asaasApiKey: companies.asaasApiKey,
@@ -324,7 +324,7 @@ export async function createAsaasCreditCardPayment(
 ): Promise<AsaasCreditCardPayment | null> {
   try {
     // Buscar configurações do Asaas da empresa
-    const company = await storage.db
+    const company = await db
       .select({
         name: companies.name,
         asaasApiKey: companies.asaasApiKey,
@@ -405,7 +405,7 @@ export async function createAsaasCreditCardPayment(
  */
 export async function isAsaasEnabled(companyId: number): Promise<boolean> {
   try {
-    const company = await storage.db
+    const company = await db
       .select({
         asaasApiKey: companies.asaasApiKey,
         asaasEnabled: companies.asaasEnabled,
@@ -441,7 +441,7 @@ router.get("/api/company/asaas-config", requireCompanyAuth, async (req: any, res
   try {
     const companyId = req.session.companyId;
 
-    const company = await storage.db
+    const company = await db
       .select({
         asaasApiKey: companies.asaasApiKey,
         asaasEnvironment: companies.asaasEnvironment,
@@ -478,7 +478,7 @@ router.put("/api/company/asaas-config", requireCompanyAuth, async (req: any, res
     const validatedData = asaasConfigSchema.parse(req.body);
 
     // Atualizar no banco de dados
-    await storage.db
+    await db
       .update(companies)
       .set({
         asaasApiKey: validatedData.asaasApiKey,
@@ -514,7 +514,7 @@ router.post("/api/webhook/asaas/:companyId", async (req: any, res: any) => {
     console.log(`[Asaas Webhook] Evento recebido para empresa ${companyId}:`, event.event);
 
     // Verificar se a empresa existe e tem Asaas habilitado
-    const company = await storage.db
+    const company = await db
       .select({
         id: companies.id,
         asaasEnabled: companies.asaasEnabled,
@@ -560,7 +560,7 @@ router.post("/api/webhook/asaas/:companyId", async (req: any, res: any) => {
             }
 
             // Criar o agendamento
-            const newAppointment = await storage.db
+            const newAppointment = await db
               .insert(appointments)
               .values({
                 companyId: pendingData.companyId,
@@ -582,7 +582,7 @@ router.post("/api/webhook/asaas/:companyId", async (req: any, res: any) => {
             // Enviar mensagem de confirmação via WhatsApp
             try {
               const globalSettings = await storage.getGlobalSettings();
-              const activeInstance = await storage.db
+              const activeInstance = await db
                 .select()
                 .from(whatsappInstances)
                 .where(eq(whatsappInstances.companyId, pendingData.companyId))
@@ -639,7 +639,7 @@ router.post("/api/webhook/asaas/:companyId", async (req: any, res: any) => {
             if (!isNaN(appointmentId)) {
               console.log(`[Asaas] Formato antigo - Confirmando agendamento ${appointmentId}`);
 
-              await storage.db
+              await db
                 .update(appointments)
                 .set({
                   status: 'Confirmado',
