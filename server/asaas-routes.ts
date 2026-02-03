@@ -133,34 +133,45 @@ async function getOrCreateAsaasCustomer(
     console.log('[Asaas] API URL:', apiUrl);
     console.log('[Asaas] Cliente:', { name: clientData.name, phone: clientData.phone });
 
-    const cleanPhone = clientData.phone.replace(/\D/g, '');
-    const searchUrl = `${apiUrl}/customers?mobilePhone=${cleanPhone}`;
-    console.log('[Asaas] Search URL:', searchUrl);
+    // Formatar telefone - Asaas aceita com ou sem código do país
+    let cleanPhone = clientData.phone.replace(/\D/g, '');
+    // Garantir que tenha o código do país 55
+    if (!cleanPhone.startsWith('55') && cleanPhone.length >= 10) {
+      cleanPhone = '55' + cleanPhone;
+    }
+    console.log('[Asaas] Telefone formatado:', cleanPhone);
 
-    // Primeiro, buscar se já existe um cliente com esse telefone
-    const searchResponse = await fetch(searchUrl, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'access_token': apiKey,
-      },
-    });
+    // Tentar buscar cliente existente
+    try {
+      const searchUrl = `${apiUrl}/customers?mobilePhone=${cleanPhone}`;
+      console.log('[Asaas] Search URL:', searchUrl);
 
-    console.log('[Asaas] Search response status:', searchResponse.status);
+      const searchResponse = await fetch(searchUrl, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'access_token': apiKey,
+        },
+      });
 
-    if (searchResponse.ok) {
-      const searchResult = await searchResponse.json();
-      if (searchResult.data && searchResult.data.length > 0) {
-        console.log('[Asaas] Cliente já existe:', searchResult.data[0].id);
-        return searchResult.data[0].id;
+      console.log('[Asaas] Search response status:', searchResponse.status);
+
+      if (searchResponse.ok) {
+        const searchResult = await searchResponse.json();
+        if (searchResult.data && searchResult.data.length > 0) {
+          console.log('[Asaas] Cliente já existe:', searchResult.data[0].id);
+          return searchResult.data[0].id;
+        }
+        console.log('[Asaas] Cliente não encontrado, criando novo...');
+      } else {
+        const searchError = await searchResponse.text();
+        console.log('[Asaas] Search error (ignorando e tentando criar):', searchError.substring(0, 200));
       }
-      console.log('[Asaas] Cliente não encontrado, criando novo...');
-    } else {
-      const searchError = await searchResponse.text();
-      console.log('[Asaas] Search error:', searchError.substring(0, 200));
+    } catch (searchErr) {
+      console.log('[Asaas] Erro na busca (ignorando e tentando criar):', searchErr);
     }
 
-    // Se não existe, criar novo cliente
+    // Criar novo cliente
     const customerData = {
       name: clientData.name,
       mobilePhone: cleanPhone,
