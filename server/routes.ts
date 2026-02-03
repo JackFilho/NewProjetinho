@@ -9373,15 +9373,34 @@ Por favor, escolha um dos horários disponíveis acima.`;
               console.log('==================================================');
 
               // ========================================
-              // 💳 INTERCEPTAR CONFIRMAÇÃO PARA ASAAS
-              // Se Asaas habilitado E resposta é confirmação, enviar pergunta de pagamento
+              // 💳 VERIFICAR SE É RESPOSTA À PERGUNTA DE PAGAMENTO
+              // Se sim, NÃO interceptar - deixar o fluxo de pagamento processar
               // ========================================
-              const isConfirmationResponse = (
-                aiResponse.includes('Agendamento realizado') ||
-                aiResponse.includes('agendamento foi confirmado') ||
-                aiResponse.includes('Nos vemos') ||
-                aiResponse.includes('está confirmado')
-              );
+              const msgsForPaymentCheck = await storage.getMessagesByConversation(conversation.id);
+              const lastAssistantMsgCheck = msgsForPaymentCheck
+                .filter(m => m.role === 'assistant')
+                .pop();
+
+              const isRespondingToPaymentQuestion = lastAssistantMsgCheck &&
+                (lastAssistantMsgCheck.content.includes('Forma de Pagamento') ||
+                 lastAssistantMsgCheck.content.includes('Digite 1 para PIX'));
+
+              const isPaymentChoiceMessage = /^(1|2|pix|cartão|cartao)$/i.test(messageText.trim());
+
+              if (isRespondingToPaymentQuestion && isPaymentChoiceMessage) {
+                console.log('💳 Usuário está respondendo à pergunta de pagamento - PULANDO interceptação');
+                // Não fazer nada aqui - deixar o código continuar para o processamento de pagamento
+              } else {
+                // ========================================
+                // 💳 INTERCEPTAR CONFIRMAÇÃO PARA ASAAS
+                // Se Asaas habilitado E resposta é confirmação, enviar pergunta de pagamento
+                // ========================================
+                const isConfirmationResponse = (
+                  aiResponse.includes('Agendamento realizado') ||
+                  aiResponse.includes('agendamento foi confirmado') ||
+                  aiResponse.includes('Nos vemos') ||
+                  aiResponse.includes('está confirmado')
+                );
 
               if (isConfirmationResponse) {
                 console.log('💳 Resposta é confirmação de agendamento - verificando Asaas...');
@@ -9469,6 +9488,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                   }
                 }
               }
+              } // Fim do else (não é resposta à pergunta de pagamento)
               // ========================================
               // FIM DA INTERCEPTAÇÃO ASAAS
               // ========================================
