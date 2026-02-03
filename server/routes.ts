@@ -9377,13 +9377,17 @@ Por favor, escolha um dos horários disponíveis acima.`;
               // Se sim, NÃO interceptar - deixar o fluxo de pagamento processar
               // ========================================
               const msgsForPaymentCheck = await storage.getMessagesByConversation(conversation.id);
-              const lastAssistantMsgCheck = msgsForPaymentCheck
+
+              // Ordenar por ID decrescente para pegar a mais recente primeiro
+              const sortedAssistantMsgs = msgsForPaymentCheck
                 .filter(m => m.role === 'assistant')
-                .pop();
+                .sort((a, b) => (b.id || 0) - (a.id || 0)); // ID maior = mais recente
+
+              const lastAssistantMsgCheck = sortedAssistantMsgs[0]; // Primeira = mais recente
 
               console.log('💳 DEBUG PAGAMENTO:');
               console.log('   - messageText:', messageText);
-              console.log('   - Última msg assistente:', lastAssistantMsgCheck?.content?.substring(0, 100) || 'NENHUMA');
+              console.log('   - Última msg assistente (ID ' + (lastAssistantMsgCheck?.id || 'N/A') + '):', lastAssistantMsgCheck?.content?.substring(0, 100) || 'NENHUMA');
 
               const isRespondingToPaymentQuestion = lastAssistantMsgCheck &&
                 (lastAssistantMsgCheck.content.includes('Forma de Pagamento') ||
