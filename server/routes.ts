@@ -9505,32 +9505,44 @@ Por favor, escolha um dos horários disponíveis acima.`;
               // FIM DA INTERCEPTAÇÃO ASAAS
               // ========================================
 
-              // Format phone number for Evolution API - needs country code 55
-              let formattedPhoneForApi = phoneNumber.replace(/\D/g, '');
-              if (!formattedPhoneForApi.startsWith('55') && formattedPhoneForApi.length >= 10) {
-                formattedPhoneForApi = '55' + formattedPhoneForApi;
+              // Flag para controlar se deve enviar resposta da IA
+              const shouldSkipAIResponse = isRespondingToPaymentQuestion && isPaymentChoiceMessage;
+
+              if (shouldSkipAIResponse) {
+                console.log('💳 ========================================');
+                console.log('💳 PULANDO ENVIO DE RESPOSTA DA IA');
+                console.log('💳 Motivo: Usuário está escolhendo forma de pagamento');
+                console.log('💳 ========================================');
+                // Não enviar resposta da IA - ir direto para processamento de pagamento
               }
-              console.log('📞 Formatted phone for Evolution API:', formattedPhoneForApi);
 
-              const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+              if (!shouldSkipAIResponse) {
+                // Format phone number for Evolution API - needs country code 55
+                let formattedPhoneForApi = phoneNumber.replace(/\D/g, '');
+                if (!formattedPhoneForApi.startsWith('55') && formattedPhoneForApi.length >= 10) {
+                  formattedPhoneForApi = '55' + formattedPhoneForApi;
+                }
+                console.log('📞 Formatted phone for Evolution API:', formattedPhoneForApi);
 
-              // Send "typing" presence and wait 2 seconds
-              await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForApi, 2000);
-              console.log('⏳ Aguardando 2 segundos (mostrando digitando...)');
-              await new Promise(resolve => setTimeout(resolve, 2000));
-              console.log('✅ Delay concluído, enviando mensagem agora');
+                const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
 
-              const evolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'apikey': globalSettings.evolutionApiGlobalKey!
-                },
-                body: JSON.stringify({
-                  number: formattedPhoneForApi,
-                  text: aiResponse
-                })
-              });
+                // Send "typing" presence and wait 2 seconds
+                await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForApi, 2000);
+                console.log('⏳ Aguardando 2 segundos (mostrando digitando...)');
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                console.log('✅ Delay concluído, enviando mensagem agora');
+
+                const evolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': globalSettings.evolutionApiGlobalKey!
+                  },
+                  body: JSON.stringify({
+                    number: formattedPhoneForApi,
+                    text: aiResponse
+                  })
+                });
 
               if (evolutionResponse.ok) {
                 console.log(`✅ AI response sent to ${phoneNumber}: ${aiResponse}`);
@@ -10838,6 +10850,305 @@ Por favor, escolha um dos horários disponíveis acima.`;
                   delivered: false,
                   timestamp: new Date(),
                 });
+              }
+              } else {
+                // shouldSkipAIResponse is true - user is selecting payment method
+                // Process the payment choice here!
+                console.log('💳 ========================================');
+                console.log('💳 PROCESSANDO ESCOLHA DE FORMA DE PAGAMENTO');
+                console.log('💳 Mensagem do usuário:', messageText);
+                console.log('💳 ========================================');
+
+                try {
+                  // Determine payment method from user message
+                  const normalizedPaymentMsg = messageText.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '');
+                  const paymentMethod = /^(1|pix)$/i.test(normalizedPaymentMsg) ? 'PIX' : 'CREDIT_CARD';
+                  console.log('💳 Método de pagamento:', paymentMethod);
+
+                  // Import Asaas functions
+                  const { createAsaasPixPayment, createAsaasCreditCardPayment } = await import('./asaas-routes');
+
+                  // Check if company has Asaas configured
+                  const companyWithAsaas = await storage.getCompany(company.id);
+                  const asaasEnabled = companyWithAsaas?.asaasEnabled && companyWithAsaas?.asaasApiKey;
+
+                  if (!asaasEnabled) {
+                    console.log('❌ Asaas não está habilitado para esta empresa');
+                    // Release lock and return
+                    const lockKeyForSkip = `${company.id}:${instanceName}:${phoneNumber}`;
+                    if (processingLocks.has(lockKeyForSkip)) {
+                      processingLocks.delete(lockKeyForSkip);
+                      console.log('🔓 Lock liberado');
+                    }
+                  } else {
+                    // Get all messages to find appointment data
+                    const allMsgsForPaymentProcess = await storage.getMessagesByConversation(conversation.id);
+
+                    // Find message with appointment summary
+                    const summaryMsgForPaymentProcess = allMsgsForPaymentProcess.find(m =>
+                      m.role === 'assistant' &&
+                      (m.content.includes('👤') || m.content.includes('Nome:')) &&
+                      (m.content.includes('📅') || m.content.match(/\d{2}\/\d{2}\/\d{4}/))
+                    ) || allMsgsForPaymentProcess.find(m =>
+                      m.role === 'assistant' &&
+                      (m.content.includes('Nos vemos') || m.content.includes('confirmado')) &&
+                      m.content.match(/\d{2}\/\d{2}\/\d{4}/)
+                    );
+
+                    console.log('📋 Mensagem de resumo encontrada:', summaryMsgForPaymentProcess ? 'SIM' : 'NÃO');
+
+                    if (summaryMsgForPaymentProcess) {
+                      // Extract appointment data
+                      const extractPaymentDataFromMsg = (text: string) => {
+                        const data: any = {};
+                        const nameMatch = text.match(/(?:👤\s*)?Nome:\s*([^\n]+)/i);
+                        if (nameMatch) data.name = nameMatch[1].trim();
+                        const serviceMatch = text.match(/(?:💼|✂️)\s*(?:Serviço:)?\s*([^\n]+)/i) || text.match(/Serviço:\s*([^\n]+)/i);
+                        if (serviceMatch) data.service = serviceMatch[1].trim();
+                        const profMatch = text.match(/(?:🏢|👨‍💼)\s*(?:Profissional:)?\s*([^\n]+)/i) || text.match(/com\s+(?:a\s+|o\s+)?([A-ZÀÁÉÍÓÚ][a-záéíóúâêôã]+)(?:\.|$|\n)/i);
+                        if (profMatch) data.professional = profMatch[1].trim();
+                        const dateMatch = text.match(/(\d{2}\/\d{2}\/\d{4})/);
+                        if (dateMatch) data.date = dateMatch[1];
+                        const timeMatch = text.match(/(?:🕐\s*)?(?:Horário:)?\s*(\d{2}:\d{2})/i) || text.match(/às\s+(\d{2}:\d{2})/i);
+                        if (timeMatch) data.time = timeMatch[1];
+                        return data;
+                      };
+
+                      const paymentDetailsExtracted = extractPaymentDataFromMsg(summaryMsgForPaymentProcess.content);
+                      console.log('📋 Dados extraídos:', paymentDetailsExtracted);
+
+                      // Find service and professional
+                      const servicesForPaymentProcess = await storage.getServicesByCompany(company.id);
+                      const professionalsForPaymentProcess = await storage.getProfessionalsByCompany(company.id);
+
+                      // Find service with exact match first
+                      let serviceForPaymentProcess = servicesForPaymentProcess.find(s =>
+                        s.name.toLowerCase() === (paymentDetailsExtracted.service || '').toLowerCase() &&
+                        s.price && Number(s.price) > 0
+                      );
+
+                      // Fallback to partial match
+                      if (!serviceForPaymentProcess) {
+                        serviceForPaymentProcess = servicesForPaymentProcess.find(s =>
+                          s.name.toLowerCase().includes((paymentDetailsExtracted.service || '').toLowerCase()) ||
+                          (paymentDetailsExtracted.service || '').toLowerCase().includes(s.name.toLowerCase())
+                        );
+                      }
+
+                      // Fallback: search in user messages
+                      if (!serviceForPaymentProcess) {
+                        const userTextForPayment = allMsgsForPaymentProcess.filter(m => m.role === 'user').map(m => m.content.toLowerCase()).join(' ');
+                        serviceForPaymentProcess = servicesForPaymentProcess.find(s =>
+                          s.price && Number(s.price) > 0 && userTextForPayment.includes(s.name.toLowerCase())
+                        );
+                      }
+
+                      // Find professional
+                      let professionalForPaymentProcess = professionalsForPaymentProcess.find(p =>
+                        p.name.toLowerCase().includes((paymentDetailsExtracted.professional || '').toLowerCase()) ||
+                        (paymentDetailsExtracted.professional || '').toLowerCase().includes(p.name.toLowerCase())
+                      );
+
+                      // Fallback: first active professional
+                      if (!professionalForPaymentProcess && professionalsForPaymentProcess.length > 0) {
+                        professionalForPaymentProcess = professionalsForPaymentProcess[0];
+                      }
+
+                      console.log('💼 Serviço encontrado:', serviceForPaymentProcess?.name || 'NÃO');
+                      console.log('👤 Profissional encontrado:', professionalForPaymentProcess?.name || 'NÃO');
+
+                      if (serviceForPaymentProcess && serviceForPaymentProcess.price && Number(serviceForPaymentProcess.price) > 0) {
+                        // Get client info
+                        const clientForPayment = await storage.getClientByPhoneAndCompany(phoneNumber, company.id);
+                        const clientNameForPayment = clientForPayment?.name || paymentDetailsExtracted.name || 'Cliente';
+
+                        // Parse date
+                        let parsedDateForPayment = '';
+                        if (paymentDetailsExtracted.date) {
+                          const dateMatchParsed = paymentDetailsExtracted.date.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+                          if (dateMatchParsed) {
+                            parsedDateForPayment = `${dateMatchParsed[3]}-${dateMatchParsed[2]}-${dateMatchParsed[1]}`;
+                          }
+                        }
+
+                        // Build appointment data for externalReference
+                        const pendingAppointmentDataForPayment = {
+                          companyId: company.id,
+                          clientId: clientForPayment?.id,
+                          clientName: clientNameForPayment,
+                          clientPhone: phoneNumber,
+                          serviceId: serviceForPaymentProcess.id,
+                          serviceName: serviceForPaymentProcess.name,
+                          professionalId: professionalForPaymentProcess?.id,
+                          professionalName: professionalForPaymentProcess?.name || '',
+                          appointmentDate: parsedDateForPayment,
+                          appointmentTime: paymentDetailsExtracted.time || '',
+                          conversationId: conversation.id,
+                          instanceName: instanceName
+                        };
+
+                        console.log('📋 Dados do agendamento pendente:', pendingAppointmentDataForPayment);
+
+                        // Create externalReference JSON
+                        const externalRefForPayment = JSON.stringify(pendingAppointmentDataForPayment);
+
+                        // Format phone for API
+                        let formattedPhoneForPaymentProcess = phoneNumber.replace(/\D/g, '');
+                        if (!formattedPhoneForPaymentProcess.startsWith('55') && formattedPhoneForPaymentProcess.length >= 10) {
+                          formattedPhoneForPaymentProcess = '55' + formattedPhoneForPaymentProcess;
+                        }
+
+                        const correctedApiUrlForPaymentProcess = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+
+                        if (paymentMethod === 'PIX') {
+                          // Create PIX payment
+                          console.log('💳 Gerando cobrança PIX...');
+                          const pixPaymentResult = await createAsaasPixPayment(company.id, {
+                            clientName: clientNameForPayment,
+                            clientPhone: phoneNumber,
+                            serviceName: serviceForPaymentProcess.name,
+                            servicePrice: serviceForPaymentProcess.price,
+                            appointmentId: 0,
+                            externalReference: externalRefForPayment
+                          });
+
+                          if (pixPaymentResult) {
+                            console.log('✅ PIX criado com sucesso!');
+                            console.log('📋 Payment ID:', pixPaymentResult.id);
+
+                            // Send QR Code as image
+                            await sendTypingPresence(correctedApiUrlForPaymentProcess, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentProcess, 2000);
+
+                            const pixMediaPayloadResult = {
+                              number: formattedPhoneForPaymentProcess,
+                              mediatype: 'image',
+                              media: pixPaymentResult.pixQrCode.encodedImage,
+                              caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n⏰ Válido por 30 minutos`
+                            };
+
+                            const pixImageResponseResult = await fetch(`${correctedApiUrlForPaymentProcess}/message/sendMedia/${instanceName}`, {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'apikey': globalSettings.evolutionApiGlobalKey!
+                              },
+                              body: JSON.stringify(pixMediaPayloadResult)
+                            });
+
+                            if (pixImageResponseResult.ok) {
+                              console.log('✅ QR Code PIX enviado com sucesso');
+                            }
+
+                            // Send copy-paste code
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            const pixCodeMessageResult = `*Código PIX (copia e cola):*\n\n\`\`\`${pixPaymentResult.pixQrCode.payload}\`\`\`\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+
+                            await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'apikey': globalSettings.evolutionApiGlobalKey!
+                              },
+                              body: JSON.stringify({
+                                number: formattedPhoneForPaymentProcess,
+                                text: pixCodeMessageResult
+                              })
+                            });
+
+                            // Save messages to database
+                            await storage.createMessage({
+                              conversationId: conversation.id,
+                              content: '[QR Code PIX enviado]',
+                              role: 'assistant',
+                              messageType: 'image',
+                              delivered: true,
+                              timestamp: new Date(),
+                            });
+
+                            await storage.createMessage({
+                              conversationId: conversation.id,
+                              content: pixCodeMessageResult,
+                              role: 'assistant',
+                              messageType: 'text',
+                              delivered: true,
+                              timestamp: new Date(),
+                            });
+
+                            console.log('✅ Pagamento PIX enviado com sucesso!');
+                          } else {
+                            console.log('❌ Falha ao criar cobrança PIX');
+                          }
+                        } else {
+                          // Create credit card payment
+                          console.log('💳 Gerando link de pagamento com cartão...');
+                          const cardPaymentResult = await createAsaasCreditCardPayment(company.id, {
+                            clientName: clientNameForPayment,
+                            clientPhone: phoneNumber,
+                            serviceName: serviceForPaymentProcess.name,
+                            servicePrice: serviceForPaymentProcess.price,
+                            appointmentId: 0,
+                            externalReference: externalRefForPayment
+                          });
+
+                          if (cardPaymentResult) {
+                            console.log('✅ Link de cartão criado:', cardPaymentResult.invoiceUrl);
+                            console.log('📋 Payment ID:', cardPaymentResult.id);
+
+                            // Send payment link
+                            await sendTypingPresence(correctedApiUrlForPaymentProcess, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentProcess, 2000);
+
+                            const cardMessageResult = `💳 *Pagamento com Cartão de Crédito*\n\nClique no link abaixo para pagar de forma segura:\n\n🔗 ${cardPaymentResult.invoiceUrl}\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n✅ Parcele em até 12x\n🔒 Ambiente 100% seguro\n\n_Após o pagamento, seu agendamento será confirmado automaticamente!_`;
+
+                            await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'apikey': globalSettings.evolutionApiGlobalKey!
+                              },
+                              body: JSON.stringify({
+                                number: formattedPhoneForPaymentProcess,
+                                text: cardMessageResult
+                              })
+                            });
+
+                            // Save message to database
+                            await storage.createMessage({
+                              conversationId: conversation.id,
+                              content: cardMessageResult,
+                              role: 'assistant',
+                              messageType: 'text',
+                              delivered: true,
+                              timestamp: new Date(),
+                            });
+
+                            console.log('✅ Link de cartão enviado com sucesso!');
+                          } else {
+                            console.log('❌ Falha ao criar link de cartão');
+                          }
+                        }
+                      } else {
+                        console.log('❌ Serviço não encontrado ou sem preço para processar pagamento');
+                      }
+                    } else {
+                      console.log('❌ Nenhuma mensagem com dados do agendamento encontrada');
+                    }
+
+                    // Release lock
+                    const lockKeyForSkip = `${company.id}:${instanceName}:${phoneNumber}`;
+                    if (processingLocks.has(lockKeyForSkip)) {
+                      processingLocks.delete(lockKeyForSkip);
+                      console.log('🔓 Lock liberado (payment choice processed)');
+                    }
+                  }
+                } catch (paymentProcessError) {
+                  console.error('❌ Erro ao processar escolha de pagamento:', paymentProcessError);
+                  // Release lock even on error
+                  const lockKeyForError = `${company.id}:${instanceName}:${phoneNumber}`;
+                  if (processingLocks.has(lockKeyForError)) {
+                    processingLocks.delete(lockKeyForError);
+                    console.log('🔓 Lock liberado (erro no processamento de pagamento)');
+                  }
+                }
               }
 
             } catch (aiError: any) {
