@@ -1396,7 +1396,7 @@ async function checkSpecificTimeAvailability(
     const professionalSchedules = await storage.getProfessionalSchedules(professionalId);
     const professionalDaysOff = await storage.getProfessionalDaysOffByDateRange(professionalId, startDate, endDate);
     const professionalExceptionalSchedules = await storage.getProfessionalExceptionalSchedulesByDateRange(professionalId, startDate, endDate);
-    const existingAppointments = await storage.getAppointmentsByCompanyAndDateRange(companyId, startDate, endDate);
+    const existingAppointments = await storage.getAppointmentsByCompanyInRange(companyId, startDate, endDate);
 
     // Normalizar horário buscado
     const [targetHour, targetMin] = targetTime.split(':').map(Number);
