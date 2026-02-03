@@ -1350,6 +1350,136 @@ async function checkSpecificDateAvailability(
 // ==================== FIM DA VERIFICAÇÃO DE DISPONIBILIDADE PARA DATAS ESPECÍFICAS ====================
 
 /**
+ * Verifica se um horário específico está disponível em algum dia da semana
+ * Retorna os dias que têm esse horário disponível
+ */
+async function checkSpecificTimeAvailability(
+  companyId: number,
+  professionalId: number,
+  targetTime: string, // formato HH:MM
+  daysToCheck: number = 7
+): Promise<string> {
+  try {
+    const professionals = await storage.getProfessionalsByCompany(companyId);
+    const professional = professionals.find(p => p.id === professionalId);
+
+    if (!professional) {
+      return `Desculpe, não consegui identificar o profissional.`;
+    }
+
+    // Gerar próximos dias (usando timezone Brasil)
+    const nextDays: { date: string; dayName: string; formatted: string; dayOfWeek: number }[] = [];
+    const dayNames = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+
+    for (let i = 1; i <= daysToCheck; i++) {
+      const date = new Date();
+      date.setDate(date.getDate() + i);
+      // Usar UTC para evitar problemas de timezone
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const dateStr = `${year}-${month}-${day}`;
+      const dayOfWeek = date.getDay();
+
+      nextDays.push({
+        date: dateStr,
+        dayName: dayNames[dayOfWeek],
+        formatted: `${day}/${month}`,
+        dayOfWeek
+      });
+    }
+
+    const startDate = nextDays[0].date;
+    const endDate = nextDays[nextDays.length - 1].date;
+
+    // Buscar schedules, folgas e horários excepcionais
+    const professionalSchedules = await storage.getProfessionalSchedules(professionalId);
+    const professionalDaysOff = await storage.getProfessionalDaysOffByDateRange(professionalId, startDate, endDate);
+    const professionalExceptionalSchedules = await storage.getProfessionalExceptionalSchedulesByDateRange(professionalId, startDate, endDate);
+    const existingAppointments = await storage.getAppointmentsByCompanyAndDateRange(companyId, startDate, endDate);
+
+    // Normalizar horário buscado
+    const [targetHour, targetMin] = targetTime.split(':').map(Number);
+    const targetMinutes = targetHour * 60 + targetMin;
+
+    const availableDays: string[] = [];
+
+    for (const day of nextDays) {
+      // Verificar se é dia de folga
+      const isDayOff = professionalDaysOff.some(d => {
+        const dateObj = new Date(d.dateOff);
+        const dayOffDate = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
+        return dayOffDate === day.date;
+      });
+
+      if (isDayOff) continue;
+
+      // Verificar horário excepcional
+      const exceptionalSchedule = professionalExceptionalSchedules.find(exc => {
+        const dateObj = new Date(exc.exceptionDate);
+        const excDate = `${dateObj.getUTCFullYear()}-${String(dateObj.getUTCMonth() + 1).padStart(2, '0')}-${String(dateObj.getUTCDate()).padStart(2, '0')}`;
+        return excDate === day.date;
+      });
+
+      let workStart: string;
+      let workEnd: string;
+
+      if (exceptionalSchedule) {
+        workStart = exceptionalSchedule.startTime;
+        workEnd = exceptionalSchedule.endTime;
+      } else {
+        const daySchedule = professionalSchedules.find(s => s.dayOfWeek === day.dayOfWeek && s.isEnabled);
+        if (!daySchedule) continue;
+        workStart = daySchedule.startTime;
+        workEnd = daySchedule.endTime;
+      }
+
+      // Converter horários para minutos
+      const [startH, startM] = workStart.split(':').map(Number);
+      const [endH, endM] = workEnd.split(':').map(Number);
+      const workStartMinutes = startH * 60 + startM;
+      const workEndMinutes = endH * 60 + endM;
+
+      // Verificar se o horário buscado está dentro do expediente
+      if (targetMinutes < workStartMinutes || targetMinutes >= workEndMinutes) continue;
+
+      // Verificar se já tem agendamento nesse horário
+      const dayAppointments = existingAppointments.filter(apt =>
+        apt.professionalId === professionalId &&
+        apt.appointmentDate === day.date &&
+        apt.status !== 'cancelado' &&
+        apt.status !== 'Cancelado'
+      );
+
+      const isOccupied = dayAppointments.some(apt => {
+        const [aptH, aptM] = apt.appointmentTime.split(':').map(Number);
+        const aptMinutes = aptH * 60 + aptM;
+        // Considerando duração padrão de 40 minutos
+        return targetMinutes >= aptMinutes && targetMinutes < aptMinutes + 40;
+      });
+
+      if (!isOccupied) {
+        availableDays.push(`${day.dayName} (${day.formatted})`);
+      }
+    }
+
+    if (availableDays.length === 0) {
+      return `Infelizmente não temos o horário das ${targetTime} disponível nos próximos ${daysToCheck} dias. Gostaria de verificar outro horário?`;
+    }
+
+    if (availableDays.length === 1) {
+      return `Temos o horário das ${targetTime} disponível na ${availableDays[0]} com ${professional.name}. Gostaria de agendar?`;
+    }
+
+    return `Temos o horário das ${targetTime} disponível nos seguintes dias com ${professional.name}:\n${availableDays.map(d => `• ${d}`).join('\n')}\n\nQual dia você prefere?`;
+
+  } catch (error) {
+    console.error('Erro ao verificar disponibilidade de horário:', error);
+    return `Desculpe, ocorreu um erro ao verificar a disponibilidade. Pode tentar novamente?`;
+  }
+}
+
+/**
  * Calcula e retorna horários disponíveis para um serviço específico em uma data
  * Considera a duração do serviço para evitar conflitos
  */
@@ -7612,6 +7742,29 @@ Exemplo:
 🚫 REGRA ABSOLUTA: Se a mensagem de horários já contiver uma pergunta como "Qual outro dia seria melhor?" ou "Que tal escolher outro dia?", NUNCA adicione "Qual horário você prefere?" - a pergunta já foi feita!
 
 ═══════════════════════════════════════════════════════════════════
+🕐 COMANDO ESPECIAL - VERIFICAR HORÁRIO NA SEMANA
+═══════════════════════════════════════════════════════════════════
+
+Quando o cliente perguntar se tem um HORÁRIO ESPECÍFICO disponível na semana (ex: "Tem 18:30?", "Quando tem às 17h?", "Algum dia tem 19:00?"):
+
+Use o comando: [VERIFICAR_HORARIO_SEMANA:NOME_PROFISSIONAL:HH:MM]
+
+📋 EXEMPLOS:
+- Cliente: "Tem algum dia com horário às 18:30?"
+  → Resposta: "Vou verificar! [VERIFICAR_HORARIO_SEMANA:Erica Alves:18:30]"
+
+- Cliente: "Quando tem horário às 17h?"
+  → Resposta: "Deixa eu verificar para você! [VERIFICAR_HORARIO_SEMANA:Estevão:17:00]"
+
+O sistema vai retornar quais dias da semana têm esse horário disponível, considerando:
+✅ Horários regulares de trabalho
+✅ Horários EXCEPCIONAIS (dias com expediente diferente)
+✅ Agendamentos já existentes
+✅ Dias de folga
+
+⚠️ Use este comando SEMPRE que o cliente perguntar sobre um horário específico sem mencionar um dia!
+
+═══════════════════════════════════════════════════════════════════
 
 🚨🚨🚨 ORDEM OBRIGATÓRIA DE COLETA DE DADOS - SIGA EXATAMENTE ESTA SEQUÊNCIA 🚨🚨🚨
 
@@ -8136,6 +8289,40 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                 console.log('📋 Listing client appointments...');
                 const appointmentsList = await listClientAppointments(phoneNumber, company.id);
                 aiResponse = aiResponse.replace('[LISTAR_AGENDAMENTOS]', appointmentsList);
+              }
+
+              // Process [VERIFICAR_HORARIO_SEMANA:professionalName:time] command
+              // Verifica se um horário específico está disponível em algum dia da semana
+              const verificarHorarioMatch = aiResponse.match(/\[VERIFICAR_HORARIO_SEMANA:([^:]+):(\d{1,2}:\d{2})\]/);
+              if (verificarHorarioMatch) {
+                const [fullMatch, professionalIdentifier, targetTime] = verificarHorarioMatch;
+                console.log(`🕐 Verificando horário ${targetTime} na semana para profissional "${professionalIdentifier}"`);
+
+                // Buscar profissional
+                const companyProfessionals = await storage.getProfessionalsByCompany(company.id);
+                const profName = professionalIdentifier.trim().toLowerCase();
+
+                // Buscar por nome (exato ou parcial)
+                let foundProfessional = companyProfessionals.find(p =>
+                  p.name.toLowerCase() === profName
+                ) || companyProfessionals.find(p =>
+                  p.name.toLowerCase().includes(profName) ||
+                  p.name.toLowerCase().split(' ')[0] === profName
+                );
+
+                if (foundProfessional) {
+                  console.log(`   ✅ Profissional encontrado: "${foundProfessional.name}" (ID: ${foundProfessional.id})`);
+                  const resultado = await checkSpecificTimeAvailability(
+                    company.id,
+                    foundProfessional.id,
+                    targetTime,
+                    7 // verificar próximos 7 dias
+                  );
+                  aiResponse = aiResponse.replace(fullMatch, resultado);
+                } else {
+                  console.log(`   ⚠️ Profissional "${professionalIdentifier}" não encontrado`);
+                  aiResponse = aiResponse.replace(fullMatch, `Desculpe, não consegui identificar o profissional "${professionalIdentifier}".`);
+                }
               }
 
               // Process [MOSTRAR_HORARIOS_LIVRES:serviceId:professionalId:date] command
