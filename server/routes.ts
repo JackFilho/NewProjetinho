@@ -9395,12 +9395,26 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
               const isPaymentChoiceMessage = /^(1|2|pix|cartão|cartao)$/i.test(messageText.trim());
 
+              // Verificar se está aguardando CPF para PIX
+              const isAwaitingCpf = lastAssistantMsgCheck &&
+                (lastAssistantMsgCheck.content.includes('informe seu CPF') ||
+                 lastAssistantMsgCheck.content.includes('AGUARDANDO_CPF_PIX'));
+
+              // Verificar se a mensagem é um CPF válido (11 dígitos)
+              const cleanedCpfCheck = messageText.replace(/\D/g, '');
+              const isCpfMessage = cleanedCpfCheck.length === 11;
+
               console.log('   - isRespondingToPaymentQuestion:', isRespondingToPaymentQuestion);
               console.log('   - isPaymentChoiceMessage:', isPaymentChoiceMessage);
+              console.log('   - isAwaitingCpf:', isAwaitingCpf);
+              console.log('   - isCpfMessage:', isCpfMessage);
 
               if (isRespondingToPaymentQuestion && isPaymentChoiceMessage) {
                 console.log('💳 ✅ Usuário está respondendo à pergunta de pagamento - PULANDO interceptação');
                 // Não fazer nada aqui - deixar o código continuar para o processamento de pagamento
+              } else if (isAwaitingCpf && isCpfMessage) {
+                console.log('💳 ✅ Usuário está informando CPF para PIX - PULANDO interceptação');
+                // Não fazer nada aqui - deixar o código continuar para o processamento de CPF
               } else {
                 console.log('💳 ❌ Não é resposta de pagamento - verificando interceptação...');
                 // ========================================
