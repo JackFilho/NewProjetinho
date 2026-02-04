@@ -51,12 +51,50 @@ export async function createPixPayment(
 
     const accessToken = company.asaasApiKey;
 
-    // Limitar externalReference a 256 caracteres
+    // Limitar externalReference a 256 caracteres (limite do Mercado Pago)
     let externalRef = paymentData.externalReference || `appointment_${paymentData.appointmentId || Date.now()}`;
     if (externalRef.length > 256) {
-      externalRef = `apt_${paymentData.appointmentId || Date.now()}_${Date.now()}`.substring(0, 256);
-      console.log('[MercadoPago] externalReference truncado');
+      // Tentar compactar o JSON mantendo apenas campos essenciais para o webhook
+      try {
+        const parsed = JSON.parse(externalRef);
+        if (parsed.type === 'pending_appointment') {
+          const compact: any = {
+            type: 'pending_appointment',
+            companyId: parsed.companyId,
+            clientName: (parsed.clientName || '').substring(0, 30),
+            clientPhone: parsed.clientPhone,
+            serviceId: parsed.serviceId,
+            professionalId: parsed.professionalId,
+            date: parsed.date || parsed.appointmentDate || '',
+            time: parsed.time || parsed.appointmentTime || '',
+          };
+          // Adicionar campos opcionais se couber
+          const base = JSON.stringify(compact);
+          if (base.length <= 256) {
+            if (parsed.serviceName) compact.serviceName = parsed.serviceName.substring(0, 30);
+            if (parsed.professionalName) compact.professionalName = parsed.professionalName.substring(0, 30);
+            if (parsed.conversationId) compact.conversationId = parsed.conversationId;
+            if (parsed.instanceName) compact.instanceName = parsed.instanceName;
+            // Verificar se ainda cabe
+            let result = JSON.stringify(compact);
+            while (result.length > 256 && Object.keys(compact).length > 8) {
+              // Remover último campo opcional adicionado
+              const keys = Object.keys(compact);
+              delete compact[keys[keys.length - 1]];
+              result = JSON.stringify(compact);
+            }
+            externalRef = result;
+          } else {
+            externalRef = base.substring(0, 256);
+          }
+          console.log(`[MercadoPago] externalReference compactado: ${externalRef.length} chars`);
+        }
+      } catch (e) {
+        externalRef = externalRef.substring(0, 256);
+        console.log('[MercadoPago] externalReference truncado para 256 chars');
+      }
     }
+    console.log(`[MercadoPago] externalReference (${externalRef.length} chars):`, externalRef);
 
     // Buscar URL do sistema para webhook
     const globalSettings = await storage.getGlobalSettings();
@@ -152,10 +190,43 @@ export async function createCardPayment(
 
     const accessToken = company.asaasApiKey;
 
-    // Limitar externalReference
+    // Limitar externalReference a 256 caracteres
     let externalRef = paymentData.externalReference || `appointment_${paymentData.appointmentId || Date.now()}`;
     if (externalRef.length > 256) {
-      externalRef = `apt_${paymentData.appointmentId || Date.now()}_${Date.now()}`.substring(0, 256);
+      try {
+        const parsed = JSON.parse(externalRef);
+        if (parsed.type === 'pending_appointment') {
+          const compact: any = {
+            type: 'pending_appointment',
+            companyId: parsed.companyId,
+            clientName: (parsed.clientName || '').substring(0, 30),
+            clientPhone: parsed.clientPhone,
+            serviceId: parsed.serviceId,
+            professionalId: parsed.professionalId,
+            date: parsed.date || parsed.appointmentDate || '',
+            time: parsed.time || parsed.appointmentTime || '',
+          };
+          const base = JSON.stringify(compact);
+          if (base.length <= 256) {
+            if (parsed.serviceName) compact.serviceName = parsed.serviceName.substring(0, 30);
+            if (parsed.professionalName) compact.professionalName = parsed.professionalName.substring(0, 30);
+            if (parsed.conversationId) compact.conversationId = parsed.conversationId;
+            if (parsed.instanceName) compact.instanceName = parsed.instanceName;
+            let result = JSON.stringify(compact);
+            while (result.length > 256 && Object.keys(compact).length > 8) {
+              const keys = Object.keys(compact);
+              delete compact[keys[keys.length - 1]];
+              result = JSON.stringify(compact);
+            }
+            externalRef = result;
+          } else {
+            externalRef = base.substring(0, 256);
+          }
+          console.log(`[MercadoPago] externalReference compactado: ${externalRef.length} chars`);
+        }
+      } catch (e) {
+        externalRef = externalRef.substring(0, 256);
+      }
     }
 
     // Buscar URL do sistema para webhook
