@@ -70,7 +70,7 @@ export async function createAsaasPaymentLink(
 
     // Preparar dados do link de pagamento
     const paymentLinkData = {
-      name: `${company.name} - ${appointmentData.serviceName}`,
+      name: `${company.fantasyName} - ${appointmentData.serviceName}`,
       description: `Pagamento do serviço: ${appointmentData.serviceName}`,
       endDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0], // Expira em 24h
       value: appointmentData.servicePrice,
@@ -181,8 +181,38 @@ async function getOrCreateAsaasCustomer(
       if (searchResponse.ok) {
         const searchResult = await searchResponse.json();
         if (searchResult.data && searchResult.data.length > 0) {
-          console.log('[Asaas] Cliente já existe:', searchResult.data[0].id);
-          return searchResult.data[0].id;
+          const existingCustomerId = searchResult.data[0].id;
+          console.log('[Asaas] Cliente já existe:', existingCustomerId);
+
+          // Se temos CPF e o cliente não tem, atualizar o cliente com o CPF
+          if (clientData.cpf) {
+            const existingCpf = searchResult.data[0].cpfCnpj;
+            if (!existingCpf) {
+              console.log('[Asaas] Atualizando cliente com CPF...');
+              try {
+                const updateResponse = await fetch(`${apiUrl}/customers/${existingCustomerId}`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'access_token': apiKey,
+                  },
+                  body: JSON.stringify({ cpfCnpj: clientData.cpf.replace(/\D/g, '') }),
+                });
+                if (updateResponse.ok) {
+                  console.log('[Asaas] Cliente atualizado com CPF com sucesso');
+                } else {
+                  const updateError = await updateResponse.text();
+                  console.log('[Asaas] Erro ao atualizar CPF do cliente:', updateError.substring(0, 200));
+                }
+              } catch (updateErr) {
+                console.log('[Asaas] Erro ao atualizar CPF:', updateErr);
+              }
+            } else {
+              console.log('[Asaas] Cliente já tem CPF cadastrado:', existingCpf);
+            }
+          }
+
+          return existingCustomerId;
         }
         console.log('[Asaas] Cliente não encontrado, criando novo...');
       } else {
@@ -306,7 +336,7 @@ export async function createAsaasPixPayment(
       billingType: billingType,
       value: paymentData.servicePrice,
       dueDate: dueDate.toISOString().split('T')[0],
-      description: `${company.name} - ${paymentData.serviceName}`,
+      description: `${company.fantasyName} - ${paymentData.serviceName}`,
       externalReference: externalRef,
     };
 
@@ -425,7 +455,7 @@ export async function createAsaasCreditCardPayment(
       billingType: 'UNDEFINED', // Gera link onde cliente pode pagar com cartão
       value: paymentData.servicePrice,
       dueDate: dueDate.toISOString().split('T')[0],
-      description: `${company.name} - ${paymentData.serviceName}`,
+      description: `${company.fantasyName} - ${paymentData.serviceName}`,
       externalReference: paymentData.externalReference || `appointment_${paymentData.appointmentId || Date.now()}`,
     };
 
