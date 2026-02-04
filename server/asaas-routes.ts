@@ -58,6 +58,10 @@ export async function createPixPayment(
       console.log('[MercadoPago] externalReference truncado');
     }
 
+    // Buscar URL do sistema para webhook
+    const globalSettings = await storage.getGlobalSettings();
+    const systemUrl = globalSettings?.systemUrl || '';
+
     // Montar payload - Mercado Pago PIX não precisa de CPF!
     const paymentPayload: any = {
       transaction_amount: paymentData.servicePrice,
@@ -70,6 +74,12 @@ export async function createPixPayment(
       },
       external_reference: externalRef,
     };
+
+    // Adicionar URL de notificação se systemUrl estiver configurada
+    if (systemUrl) {
+      paymentPayload.notification_url = `${systemUrl}/api/webhook/mercadopago/${companyId}`;
+      console.log('[MercadoPago] Webhook URL:', paymentPayload.notification_url);
+    }
 
     console.log('[MercadoPago] Criando cobrança PIX:', JSON.stringify(paymentPayload, null, 2));
 
@@ -148,6 +158,10 @@ export async function createCardPayment(
       externalRef = `apt_${paymentData.appointmentId || Date.now()}_${Date.now()}`.substring(0, 256);
     }
 
+    // Buscar URL do sistema para webhook
+    const globalSettings = await storage.getGlobalSettings();
+    const systemUrl = globalSettings?.systemUrl || '';
+
     // Criar preferência de checkout (Checkout Pro)
     const preferencePayload: any = {
       items: [{
@@ -170,6 +184,12 @@ export async function createCardPayment(
       expiration_date_from: new Date().toISOString(),
       expiration_date_to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     };
+
+    // Adicionar URL de notificação se systemUrl estiver configurada
+    if (systemUrl) {
+      preferencePayload.notification_url = `${systemUrl}/api/webhook/mercadopago/${companyId}`;
+      console.log('[MercadoPago] Webhook URL:', preferencePayload.notification_url);
+    }
 
     console.log('[MercadoPago] Criando preferência de checkout:', JSON.stringify(preferencePayload, null, 2));
 
@@ -290,17 +310,32 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
     const { companyId } = req.params;
     const notification = req.body;
 
-    console.log(`[MP Webhook] Notificação recebida para empresa ${companyId}:`, notification.type || notification.action);
+    console.log(`[MP Webhook] ========================================`);
+    console.log(`[MP Webhook] Notificação recebida para empresa ${companyId}`);
+    console.log(`[MP Webhook] Body:`, JSON.stringify(notification, null, 2));
+    console.log(`[MP Webhook] Query:`, JSON.stringify(req.query, null, 2));
+    console.log(`[MP Webhook] ========================================`);
 
     // Mercado Pago envia diferentes formatos de notificação
     let paymentId: string | null = null;
 
+    // Formato IPN v2: { action: "payment.updated", data: { id: "123" } }
     if (notification.data?.id) {
       paymentId = String(notification.data.id);
-    } else if (notification.resource) {
-      // Formato antigo: resource é uma URL com o ID no final
+    }
+    // Formato IPN v1: { topic: "payment", resource: "https://...payments/123" }
+    else if (notification.resource) {
       const parts = notification.resource.split('/');
       paymentId = parts[parts.length - 1];
+    }
+    // Formato query string: ?id=123&topic=payment
+    else if (req.query?.id && req.query?.topic === 'payment') {
+      paymentId = String(req.query.id);
+    }
+    // Formato merchant_order - precisa buscar os pagamentos
+    else if (req.query?.topic === 'merchant_order' || notification.topic === 'merchant_order') {
+      console.log('[MP Webhook] Notificação merchant_order - ignorando (processamos apenas payment)');
+      return res.status(200).json({ received: true });
     }
 
     if (!paymentId) {

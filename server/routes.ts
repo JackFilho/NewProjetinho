@@ -10640,7 +10640,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                                 // Enviar código copia e cola
                                 await new Promise(resolve => setTimeout(resolve, 1000));
-                                const pixCodeMessage = `*Código PIX (copia e cola):*\n\n\`\`\`${pixPayment.pixQrCode.payload}\`\`\`\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+                                const pixCodeMessage = `*Código PIX (copia e cola):*\n\n${pixPayment.pixQrCode.payload}\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
                                 await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
                                   method: 'POST',
@@ -11148,7 +11148,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             });
 
                             await new Promise(resolve => setTimeout(resolve, 1000));
-                            const pixCodeMsg2 = `*Código PIX (copia e cola):*\n\n\`\`\`${pixPaymentResult.pixQrCode.payload}\`\`\`\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+                            const pixCodeMsg2 = `*Código PIX (copia e cola):*\n\n${pixPaymentResult.pixQrCode.payload}\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
                             await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
                               method: 'POST',

@@ -3588,10 +3588,10 @@ export default function CompanySettings() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <DollarSign className="w-5 h-5" />
-                Configurações do Asaas
+                Configurações do Mercado Pago
               </CardTitle>
               <CardDescription>
-                Configure a integração com o gateway de pagamento Asaas
+                Configure a integração com o Mercado Pago para receber pagamentos
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -3602,18 +3602,19 @@ export default function CompanySettings() {
                     name="asaasApiKey"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Chave da API</FormLabel>
+                        <FormLabel>Access Token</FormLabel>
                         <FormControl>
                           <Input
                             type="password"
-                            placeholder="Digite sua chave de API do Asaas"
+                            placeholder="Digite seu Access Token do Mercado Pago"
                             {...field}
                           />
                         </FormControl>
                         <FormMessage />
                         <div className="text-sm text-gray-500">
-                          <p>• Obtenha sua chave de API no painel do Asaas</p>
-                          <p>• Acesse: Minha Conta → Integrações → API</p>
+                          <p>• Obtenha seu Access Token no painel do Mercado Pago</p>
+                          <p>• Acesse: Seu negócio → Configurações → Gestão e Administração → Credenciais</p>
+                          <p>• Tokens de teste começam com TEST-, produção com APP_USR-</p>
                         </div>
                       </FormItem>
                     )}
@@ -3666,7 +3667,7 @@ export default function CompanySettings() {
                         <div className="space-y-0.5">
                           <FormLabel className="text-base">Ativar Integração</FormLabel>
                           <div className="text-sm text-muted-foreground">
-                            Habilita o recebimento de pagamentos via Asaas
+                            Habilita o recebimento de pagamentos via Mercado Pago
                           </div>
                         </div>
                         <FormControl>
@@ -3681,20 +3682,20 @@ export default function CompanySettings() {
 
                   <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
                     <h4 className="font-semibold text-blue-900 mb-2">URL do Webhook</h4>
-                    <p className="text-sm text-blue-800 mb-2">Configure esta URL no painel do Asaas:</p>
+                    <p className="text-sm text-blue-800 mb-2">O webhook é configurado automaticamente ao criar pagamentos. Caso precise configurar manualmente:</p>
                     <div className="bg-white p-3 rounded border border-blue-300">
                       <code className="text-xs break-all">
-                        {globalSettings?.systemUrl || window.location.origin}/api/webhook/asaas/{company?.id}
+                        {globalSettings?.systemUrl || window.location.origin}/api/webhook/mercadopago/{company?.id}
                       </code>
                     </div>
                     <div className="mt-3 text-sm text-blue-700">
-                      <p className="font-medium mb-1">Para configurar o webhook:</p>
+                      <p className="font-medium mb-1">Para configurar manualmente (opcional):</p>
                       <ol className="list-decimal list-inside space-y-1">
-                        <li>Acesse o painel do Asaas</li>
-                        <li>Vá em Integrações → Webhooks</li>
-                        <li>Clique em "Novo Webhook"</li>
+                        <li>Acesse o painel do Mercado Pago</li>
+                        <li>Vá em Seu negócio → Configurações → Webhooks</li>
+                        <li>Clique em "Configurar notificações"</li>
                         <li>Cole a URL acima</li>
-                        <li>Selecione os eventos desejados</li>
+                        <li>Selecione o evento "Pagamentos"</li>
                         <li>Salve as configurações</li>
                       </ol>
                     </div>
