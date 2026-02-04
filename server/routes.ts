@@ -9395,165 +9395,12 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
               const isPaymentChoiceMessage = /^(1|2|pix|cartão|cartao)$/i.test(messageText.trim());
 
-              // Verificar se está aguardando CPF para PIX
-              const isAwaitingCpf = lastAssistantMsgCheck &&
-                (lastAssistantMsgCheck.content.includes('informe seu CPF') ||
-                 lastAssistantMsgCheck.content.includes('AGUARDANDO_CPF_PIX'));
-
-              // Verificar se a mensagem é um CPF válido (11 dígitos)
-              const cleanedCpfCheck = messageText.replace(/\D/g, '');
-              const isCpfMessage = cleanedCpfCheck.length === 11;
-
               console.log('   - isRespondingToPaymentQuestion:', isRespondingToPaymentQuestion);
               console.log('   - isPaymentChoiceMessage:', isPaymentChoiceMessage);
-              console.log('   - isAwaitingCpf:', isAwaitingCpf);
-              console.log('   - isCpfMessage:', isCpfMessage);
 
               if (isRespondingToPaymentQuestion && isPaymentChoiceMessage) {
                 console.log('💳 ✅ Usuário está respondendo à pergunta de pagamento - PULANDO interceptação');
                 // Não fazer nada aqui - deixar o código continuar para o processamento de pagamento
-              } else if (isAwaitingCpf && isCpfMessage) {
-                console.log('💳 ✅ Usuário informou CPF para PIX - processando...');
-                console.log('💳 CPF:', cleanedCpfCheck);
-
-                // Buscar dados pendentes do PIX na mensagem que contém AGUARDANDO_CPF_PIX
-                const allMsgsForCpf = await storage.getMessagesByConversation(conversation.id);
-                const pendingPixMsg = allMsgsForCpf.find(m =>
-                  m.role === 'assistant' && m.content.includes('AGUARDANDO_CPF_PIX:')
-                );
-
-                if (pendingPixMsg) {
-                  const jsonMatchCpf = pendingPixMsg.content.match(/AGUARDANDO_CPF_PIX:(\{.*\})/);
-                  if (jsonMatchCpf) {
-                    try {
-                      const pendingPixInfo = JSON.parse(jsonMatchCpf[1]);
-                      console.log('📋 Dados pendentes recuperados:', pendingPixInfo);
-
-                      // Salvar mensagem do usuário no banco
-                      await storage.createMessage({
-                        conversationId: conversation.id,
-                        content: messageText,
-                        role: 'user',
-                        messageType: 'text',
-                        delivered: true,
-                        timestamp: new Date(),
-                      });
-
-                      // Importar função Asaas
-                      const { createAsaasPixPayment } = await import('./asaas-routes');
-
-                      // Criar cobrança PIX COM o CPF
-                      console.log('💳 Gerando cobrança PIX com CPF...');
-                      const pixPaymentCpf = await createAsaasPixPayment(company.id, {
-                        clientName: pendingPixInfo.clientName,
-                        clientPhone: phoneNumber,
-                        clientCpf: cleanedCpfCheck,
-                        serviceName: pendingPixInfo.serviceName,
-                        servicePrice: pendingPixInfo.servicePrice,
-                        appointmentId: 0,
-                        externalReference: pendingPixInfo.externalReference
-                      });
-
-                      let formattedPhoneCpf = phoneNumber.replace(/\D/g, '');
-                      if (!formattedPhoneCpf.startsWith('55') && formattedPhoneCpf.length >= 10) {
-                        formattedPhoneCpf = '55' + formattedPhoneCpf;
-                      }
-                      const correctedApiUrlCpf = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
-                      if (pixPaymentCpf && pixPaymentCpf.pixQrCode) {
-                        console.log('✅ PIX criado com sucesso! Enviando QR Code...');
-
-                        await sendTypingPresence(correctedApiUrlCpf, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneCpf, 2000);
-
-                        // Enviar QR Code como imagem
-                        const pixMediaCpf = {
-                          number: formattedPhoneCpf,
-                          mediatype: 'image',
-                          media: pixPaymentCpf.pixQrCode.encodedImage,
-                          caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(pendingPixInfo.servicePrice).toFixed(2)}\n⏰ Válido por 30 minutos`
-                        };
-
-                        await fetch(`${correctedApiUrlCpf}/message/sendMedia/${instanceName}`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': globalSettings.evolutionApiGlobalKey!
-                          },
-                          body: JSON.stringify(pixMediaCpf)
-                        });
-
-                        // Enviar código copia e cola
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                        const pixCodeCpf = `*Código PIX (copia e cola):*\n\n\`\`\`${pixPaymentCpf.pixQrCode.payload}\`\`\`\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
-
-                        await fetch(`${correctedApiUrlCpf}/message/sendText/${instanceName}`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': globalSettings.evolutionApiGlobalKey!
-                          },
-                          body: JSON.stringify({
-                            number: formattedPhoneCpf,
-                            text: pixCodeCpf
-                          })
-                        });
-
-                        // Salvar mensagens no banco
-                        await storage.createMessage({
-                          conversationId: conversation.id,
-                          content: '[QR Code PIX enviado]',
-                          role: 'assistant',
-                          messageType: 'image',
-                          delivered: true,
-                          timestamp: new Date(),
-                        });
-
-                        await storage.createMessage({
-                          conversationId: conversation.id,
-                          content: pixCodeCpf,
-                          role: 'assistant',
-                          messageType: 'text',
-                          delivered: true,
-                          timestamp: new Date(),
-                        });
-
-                        console.log('✅ QR Code PIX enviado com sucesso após CPF!');
-                      } else {
-                        console.log('❌ Falha ao criar cobrança PIX com CPF');
-                        const errorMsgCpf = '❌ Não foi possível gerar o QR Code PIX. Por favor, verifique o CPF informado e tente novamente.';
-                        await fetch(`${correctedApiUrlCpf}/message/sendText/${instanceName}`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': globalSettings.evolutionApiGlobalKey!
-                          },
-                          body: JSON.stringify({
-                            number: formattedPhoneCpf,
-                            text: errorMsgCpf
-                          })
-                        });
-                        await storage.createMessage({
-                          conversationId: conversation.id,
-                          content: errorMsgCpf,
-                          role: 'assistant',
-                          messageType: 'text',
-                          delivered: true,
-                          timestamp: new Date(),
-                        });
-                      }
-
-                      // Liberar lock
-                      const lockKeyCpf = `${company.id}:${instanceName}:${phoneNumber}`;
-                      if (processingLocks.has(lockKeyCpf)) {
-                        processingLocks.delete(lockKeyCpf);
-                      }
-
-                      return res.status(200).json({ received: true, processed: true, cpfProcessed: true });
-                    } catch (cpfError) {
-                      console.error('❌ Erro ao processar CPF para PIX:', cpfError);
-                    }
-                  }
-                }
               } else {
                 console.log('💳 ❌ Não é resposta de pagamento - verificando interceptação...');
                 // ========================================
@@ -10507,8 +10354,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
                       // ========================================
                       // FLUXO NORMAL - CRIAR AGENDAMENTO
                       // ========================================
-                      // Import the Asaas payment functions
-                      const { createAsaasPaymentLink, createAsaasPixPayment, createAsaasCreditCardPayment, isAsaasEnabled } = await import('./asaas-routes');
+                      // Import payment functions (Mercado Pago)
+                      const { createPixPayment, createCardPayment, isPaymentEnabled } = await import('./asaas-routes');
 
                       // Check if company has Asaas configured
                       const companyWithAsaas = await storage.getCompany(company.id);
@@ -10536,19 +10383,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                     console.log('💳 DEBUG - askedForPaymentMethod:', askedForPaymentMethod);
 
-                    // ========================================
-                    // VERIFICAR SE ESTÁ AGUARDANDO CPF PARA PIX
-                    // ========================================
-                    const askedForCpf = lastAssistantMsgFromDb.includes('informe seu CPF') ||
-                                        lastAssistantMsgFromDb.includes('digite seu CPF') ||
-                                        lastAssistantMsgFromDb.includes('CPF para gerar') ||
-                                        lastAssistantMsgFromDb.includes('AGUARDANDO_CPF_PIX');
-
-                    // Validar se a mensagem é um CPF (11 dígitos, com ou sem formatação)
-                    const cleanedCpfInput = messageText.replace(/\D/g, '');
-                    const isCpfResponse = askedForCpf && cleanedCpfInput.length === 11;
-
-                    if (isCpfResponse) {
+                    if (false) { // CPF flow removed - Mercado Pago não precisa de CPF
                       console.log('💳 ========================================');
                       console.log('💳 CPF RECEBIDO - GERANDO QR CODE PIX');
                       console.log('💳 CPF:', cleanedCpfInput);
@@ -10771,51 +10606,77 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             const correctedApiUrlForPayment = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
 
                             if (paymentMethod === 'PIX') {
-                              // PIX: Primeiro pedir o CPF, depois gerar QR Code
-                              console.log('💳 PIX escolhido - Pedindo CPF ao cliente...');
+                              // Criar cobrança PIX via Mercado Pago (sem CPF!)
+                              console.log('💳 Gerando cobrança PIX via Mercado Pago...');
 
-                              await sendTypingPresence(correctedApiUrlForPayment, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentMsg, 2000);
-
-                              // Salvar dados pendentes para usar quando o CPF for informado
-                              const pendingPixDataForCpf = {
+                              const pixPayment = await createPixPayment(company.id, {
                                 clientName: pendingAppointmentData.clientName,
+                                clientPhone: phoneNumber,
                                 serviceName: serviceForPayment.name,
                                 servicePrice: serviceForPayment.price,
+                                appointmentId: 0,
                                 externalReference: externalRef
-                              };
-
-                              // Mensagem pedindo CPF (com marcador oculto para identificar depois)
-                              const cpfRequestMessage = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n\nPara gerar o QR Code do PIX, por favor *informe seu CPF* (apenas números).\n\n_Exemplo: 12345678900_`;
-
-                              await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
-                                method: 'POST',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                  'apikey': globalSettings.evolutionApiGlobalKey!
-                                },
-                                body: JSON.stringify({
-                                  number: formattedPhoneForPaymentMsg,
-                                  text: cpfRequestMessage
-                                })
                               });
 
-                              // Salvar mensagem no banco COM os dados pendentes (marcador oculto)
-                              await storage.createMessage({
-                                conversationId: conversation.id,
-                                content: cpfRequestMessage + `\n\n<!-- AGUARDANDO_CPF_PIX:${JSON.stringify(pendingPixDataForCpf)} -->`,
-                                role: 'assistant',
-                                messageType: 'text',
-                                delivered: true,
-                                timestamp: new Date(),
-                              });
+                              if (pixPayment && pixPayment.pixQrCode) {
+                                console.log('✅ PIX criado com sucesso!');
 
-                              console.log('✅ Solicitação de CPF enviada - aguardando resposta do cliente');
+                                await sendTypingPresence(correctedApiUrlForPayment, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentMsg, 2000);
 
-                              return res.status(200).json({ received: true, processed: true, awaitingCpf: true });
+                                // Enviar QR Code como imagem
+                                await fetch(`${correctedApiUrlForPayment}/message/sendMedia/${instanceName}`, {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                    'apikey': globalSettings.evolutionApiGlobalKey!
+                                  },
+                                  body: JSON.stringify({
+                                    number: formattedPhoneForPaymentMsg,
+                                    mediatype: 'image',
+                                    media: pixPayment.pixQrCode.encodedImage,
+                                    caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n⏰ Válido por 30 minutos`
+                                  })
+                                });
+
+                                // Enviar código copia e cola
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                const pixCodeMessage = `*Código PIX (copia e cola):*\n\n\`\`\`${pixPayment.pixQrCode.payload}\`\`\`\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+
+                                await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                    'apikey': globalSettings.evolutionApiGlobalKey!
+                                  },
+                                  body: JSON.stringify({
+                                    number: formattedPhoneForPaymentMsg,
+                                    text: pixCodeMessage
+                                  })
+                                });
+
+                                await storage.createMessage({
+                                  conversationId: conversation.id,
+                                  content: '[QR Code PIX enviado]',
+                                  role: 'assistant',
+                                  messageType: 'image',
+                                  delivered: true,
+                                  timestamp: new Date(),
+                                });
+                                await storage.createMessage({
+                                  conversationId: conversation.id,
+                                  content: pixCodeMessage,
+                                  role: 'assistant',
+                                  messageType: 'text',
+                                  delivered: true,
+                                  timestamp: new Date(),
+                                });
+                              } else {
+                                console.log('❌ Falha ao criar cobrança PIX');
+                              }
                             } else {
                               // Criar cobrança de cartão de crédito
                               console.log('💳 Gerando link de pagamento com cartão...');
-                              const cardPayment = await createAsaasCreditCardPayment(company.id, {
+                              const cardPayment = await createCardPayment(company.id, {
                                 clientName: pendingAppointmentData.clientName,
                                 clientPhone: phoneNumber,
                                 serviceName: serviceForPayment.name,
@@ -11114,8 +10975,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
                   const paymentMethod = /^(1|pix)$/i.test(normalizedPaymentMsg) ? 'PIX' : 'CREDIT_CARD';
                   console.log('💳 Método de pagamento:', paymentMethod);
 
-                  // Import Asaas functions
-                  const { createAsaasPixPayment, createAsaasCreditCardPayment } = await import('./asaas-routes');
+                  // Import payment functions (Mercado Pago)
+                  const { createPixPayment, createCardPayment } = await import('./asaas-routes');
 
                   // Check if company has Asaas configured
                   const companyWithAsaas = await storage.getCompany(company.id);
@@ -11255,49 +11116,75 @@ Por favor, escolha um dos horários disponíveis acima.`;
                         const correctedApiUrlForPaymentProcess = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
 
                         if (paymentMethod === 'PIX') {
-                          // PIX: Primeiro pedir o CPF, depois gerar QR Code
-                          console.log('💳 PIX escolhido - Pedindo CPF ao cliente...');
+                          // Criar cobrança PIX via Mercado Pago (sem CPF!)
+                          console.log('💳 Gerando cobrança PIX via Mercado Pago...');
 
-                          await sendTypingPresence(correctedApiUrlForPaymentProcess, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentProcess, 2000);
-
-                          // Salvar dados pendentes para usar quando o CPF for informado
-                          const pendingPixDataForCpf2 = {
+                          const pixPaymentResult = await createPixPayment(company.id, {
                             clientName: clientNameForPayment,
+                            clientPhone: phoneNumber,
                             serviceName: serviceForPaymentProcess.name,
                             servicePrice: Number(serviceForPaymentProcess.price),
+                            appointmentId: 0,
                             externalReference: externalRefForPayment
-                          };
-
-                          // Mensagem pedindo CPF
-                          const cpfRequestMessage2 = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n\nPara gerar o QR Code do PIX, por favor *informe seu CPF* (apenas números).\n\n_Exemplo: 12345678900_`;
-
-                          await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
-                            method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
-                              'apikey': globalSettings.evolutionApiGlobalKey!
-                            },
-                            body: JSON.stringify({
-                              number: formattedPhoneForPaymentProcess,
-                              text: cpfRequestMessage2
-                            })
                           });
 
-                          // Salvar mensagem no banco COM os dados pendentes (marcador oculto)
-                          await storage.createMessage({
-                            conversationId: conversation.id,
-                            content: cpfRequestMessage2 + `\n\n<!-- AGUARDANDO_CPF_PIX:${JSON.stringify(pendingPixDataForCpf2)} -->`,
-                            role: 'assistant',
-                            messageType: 'text',
-                            delivered: true,
-                            timestamp: new Date(),
-                          });
+                          if (pixPaymentResult && pixPaymentResult.pixQrCode) {
+                            console.log('✅ PIX criado com sucesso!');
 
-                          console.log('✅ Solicitação de CPF enviada - aguardando resposta do cliente');
+                            await sendTypingPresence(correctedApiUrlForPaymentProcess, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentProcess, 2000);
+
+                            await fetch(`${correctedApiUrlForPaymentProcess}/message/sendMedia/${instanceName}`, {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'apikey': globalSettings.evolutionApiGlobalKey!
+                              },
+                              body: JSON.stringify({
+                                number: formattedPhoneForPaymentProcess,
+                                mediatype: 'image',
+                                media: pixPaymentResult.pixQrCode.encodedImage,
+                                caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n⏰ Válido por 30 minutos`
+                              })
+                            });
+
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            const pixCodeMsg2 = `*Código PIX (copia e cola):*\n\n\`\`\`${pixPaymentResult.pixQrCode.payload}\`\`\`\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+
+                            await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'apikey': globalSettings.evolutionApiGlobalKey!
+                              },
+                              body: JSON.stringify({
+                                number: formattedPhoneForPaymentProcess,
+                                text: pixCodeMsg2
+                              })
+                            });
+
+                            await storage.createMessage({
+                              conversationId: conversation.id,
+                              content: '[QR Code PIX enviado]',
+                              role: 'assistant',
+                              messageType: 'image',
+                              delivered: true,
+                              timestamp: new Date(),
+                            });
+                            await storage.createMessage({
+                              conversationId: conversation.id,
+                              content: pixCodeMsg2,
+                              role: 'assistant',
+                              messageType: 'text',
+                              delivered: true,
+                              timestamp: new Date(),
+                            });
+                          } else {
+                            console.log('❌ Falha ao criar cobrança PIX');
+                          }
                         } else {
                           // Create credit card payment
                           console.log('💳 Gerando link de pagamento com cartão...');
-                          const cardPaymentResult = await createAsaasCreditCardPayment(company.id, {
+                          const cardPaymentResult = await createCardPayment(company.id, {
                             clientName: clientNameForPayment,
                             clientPhone: phoneNumber,
                             serviceName: serviceForPaymentProcess.name,
