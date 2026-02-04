@@ -11088,16 +11088,16 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                         // Build appointment data for externalReference
                         const pendingAppointmentDataForPayment = {
+                          type: 'pending_appointment',
                           companyId: company.id,
-                          clientId: clientForPayment?.id,
                           clientName: clientNameForPayment,
                           clientPhone: phoneNumber,
                           serviceId: serviceForPaymentProcess.id,
                           serviceName: serviceForPaymentProcess.name,
                           professionalId: professionalForPaymentProcess?.id,
                           professionalName: professionalForPaymentProcess?.name || '',
-                          appointmentDate: parsedDateForPayment,
-                          appointmentTime: paymentDetailsExtracted.time || '',
+                          date: paymentDetailsExtracted.date || '',
+                          time: paymentDetailsExtracted.time || '',
                           conversationId: conversation.id,
                           instanceName: instanceName
                         };

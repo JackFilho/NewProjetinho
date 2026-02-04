@@ -377,18 +377,28 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
       // Tentar parsear como JSON (dados do agendamento pendente)
       try {
         const pendingData = JSON.parse(externalRef);
+        console.log(`[MP Webhook] Dados parseados:`, JSON.stringify(pendingData, null, 2));
 
         if (pendingData.type === 'pending_appointment') {
-          console.log(`[MP Webhook] Criando agendamento após pagamento confirmado...`);
+          console.log(`[MP Webhook] Tipo pending_appointment detectado - criando agendamento...`);
 
-          // Converter data DD/MM/YYYY para YYYY-MM-DD
+          // Converter data - pode vir como DD/MM/YYYY ou YYYY-MM-DD
           let appointmentDate = '';
-          if (pendingData.date) {
-            const dateParts = pendingData.date.split('/');
-            if (dateParts.length === 3) {
-              appointmentDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+          const dateValue = pendingData.date || pendingData.appointmentDate || '';
+          if (dateValue) {
+            if (dateValue.includes('/')) {
+              // Formato DD/MM/YYYY → YYYY-MM-DD
+              const dateParts = dateValue.split('/');
+              if (dateParts.length === 3) {
+                appointmentDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+              }
+            } else {
+              // Já está em YYYY-MM-DD
+              appointmentDate = dateValue;
             }
           }
+          const appointmentTime = pendingData.time || pendingData.appointmentTime || '';
+          console.log(`[MP Webhook] Data: ${appointmentDate}, Hora: ${appointmentTime}`);
 
           // Criar o agendamento
           await storage.createAppointment({
@@ -398,11 +408,11 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
             clientName: pendingData.clientName,
             clientPhone: pendingData.clientPhone,
             appointmentDate: appointmentDate,
-            appointmentTime: pendingData.time,
+            appointmentTime: appointmentTime,
             status: 'Confirmado',
           });
 
-          console.log(`[MP Webhook] Agendamento criado com sucesso!`);
+          console.log(`[MP Webhook] ✅ Agendamento criado com sucesso!`);
 
           // Enviar mensagem de confirmação via WhatsApp
           try {
@@ -450,7 +460,8 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
             console.error(`[MP Webhook] Erro ao enviar mensagem de confirmação:`, msgError);
           }
         }
-      } catch (parseError) {
+      } catch (parseError: any) {
+        console.log(`[MP Webhook] external_reference não é JSON válido:`, parseError.message);
         // Formato simples: appointment_ID
         if (externalRef && externalRef.startsWith('appointment_')) {
           const appointmentId = parseInt(externalRef.split('_')[1]);
