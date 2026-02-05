@@ -7,6 +7,9 @@ const router = Router();
 // URL da API do Mercado Pago (mesma para sandbox e produção, o token diferencia)
 const MP_API_URL = 'https://api.mercadopago.com';
 
+// Lock em memória para evitar processamento duplicado de webhooks (race condition)
+const processingPayments = new Set<string>();
+
 // Interface para cobrança PIX
 interface PixPayment {
   id: string;
@@ -521,11 +524,20 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
     if (payment.status === 'approved') {
       console.log(`[MP Webhook] Pagamento APROVADO: ${paymentId}`);
 
-      // === PROTEÇÃO CONTRA DUPLICAÇÃO ===
-      // Verificar se já existe agendamento com este paymentId
+      // === PROTEÇÃO CONTRA DUPLICAÇÃO (LOCK + DB) ===
+      // 1. Lock em memória: impede race condition quando 2 webhooks chegam ao mesmo tempo
+      if (processingPayments.has(paymentId)) {
+        console.log(`[MP Webhook] ⚠️ Pagamento ${paymentId} já está sendo processado (lock ativo). Ignorando.`);
+        return res.status(200).json({ received: true, duplicate: true });
+      }
+      processingPayments.add(paymentId);
+
+      try {
+      // 2. Verificação no banco: impede duplicação se o servidor reiniciou entre os webhooks
       const existingAppointments = await storage.getAppointmentsByPaymentId(paymentId);
       if (existingAppointments && existingAppointments.length > 0) {
         console.log(`[MP Webhook] ⚠️ Pagamento ${paymentId} já processado - agendamento ID ${existingAppointments[0].id} já existe. Ignorando duplicata.`);
+        processingPayments.delete(paymentId);
         return res.status(200).json({ received: true, duplicate: true });
       }
 

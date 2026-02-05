@@ -7258,9 +7258,10 @@ if (ignoredNumbers !== undefined) {
 
                 // Special case: if user is responding with payment method choice (PIX or CARTÃO)
                 const normalizedPaymentResponse = messageText.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '');
-                const isPaymentMethodChoice = /^(1|2|pix|cartão|cartao|credito|crédito|credit)$/i.test(normalizedPaymentResponse);
+                const isPaymentMethodChoice = /^(1|2|pix|cartão|cartao|credito|crédito|credit|cart[aã]o\s*(de\s*cr[eé]dito)?|quero\s*(o\s*)?(pix|cart[aã]o)|pagar\s*(com|no|via)\s*(pix|cart[aã]o)|no\s*(pix|cart[aã]o)|via\s*(pix|cart[aã]o))$/i.test(normalizedPaymentResponse);
+                const isPix = /\b(1|pix)\b/i.test(normalizedPaymentResponse) && !/cart[aã]o|credito|crédito|credit/i.test(normalizedPaymentResponse);
                 const chosenPaymentMethod = isPaymentMethodChoice ?
-                  (/^(1|pix)$/i.test(normalizedPaymentResponse) ? 'PIX' : 'CREDIT_CARD') : null;
+                  (isPix ? 'PIX' : 'CREDIT_CARD') : null;
 
                 if (isPaymentMethodChoice) {
                   console.log('💳 Detectada resposta de forma de pagamento:', chosenPaymentMethod);
@@ -9393,7 +9394,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 (lastAssistantMsgCheck.content.includes('Forma de Pagamento') ||
                  lastAssistantMsgCheck.content.includes('Digite 1 para PIX'));
 
-              const isPaymentChoiceMessage = /^(1|2|pix|cartão|cartao)$/i.test(messageText.trim());
+              const isPaymentChoiceMessage = /\b(1|2|pix|cart[aã]o|credito|crédito|credit)\b/i.test(messageText.trim());
 
               console.log('   - isRespondingToPaymentQuestion:', isRespondingToPaymentQuestion);
               console.log('   - isPaymentChoiceMessage:', isPaymentChoiceMessage);
@@ -10538,9 +10539,10 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                     // Verificar se a mensagem atual é uma escolha de forma de pagamento
                     const normalizedPaymentMsg = messageText.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '');
-                    const isPaymentChoice = /^(1|2|pix|cartão|cartao|credito|crédito|credit)$/i.test(normalizedPaymentMsg);
+                    const isPaymentChoice = /\b(1|2|pix|cart[aã]o|credito|crédito|credit)\b/i.test(normalizedPaymentMsg);
+                    const isPixMethod = /\b(1|pix)\b/i.test(normalizedPaymentMsg) && !/cart[aã]o|credito|crédito|credit/i.test(normalizedPaymentMsg);
                     const paymentMethod = isPaymentChoice ?
-                      (/^(1|pix)$/i.test(normalizedPaymentMsg) ? 'PIX' : 'CREDIT_CARD') : null;
+                      (isPixMethod ? 'PIX' : 'CREDIT_CARD') : null;
 
                     if (askedForPaymentMethod && isPaymentChoice && paymentMethod) {
                       console.log('💳 ========================================');
@@ -11037,7 +11039,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 try {
                   // Determine payment method from user message
                   const normalizedPaymentMsg = messageText.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '');
-                  const paymentMethod = /^(1|pix)$/i.test(normalizedPaymentMsg) ? 'PIX' : 'CREDIT_CARD';
+                  const isPixChoice = /\b(1|pix)\b/i.test(normalizedPaymentMsg) && !/cart[aã]o|credito|crédito|credit/i.test(normalizedPaymentMsg);
+                  const paymentMethod = isPixChoice ? 'PIX' : 'CREDIT_CARD';
                   console.log('💳 Método de pagamento:', paymentMethod);
 
                   // Import payment functions (Mercado Pago)
