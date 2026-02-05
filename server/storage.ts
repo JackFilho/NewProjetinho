@@ -263,6 +263,7 @@ export interface IStorage {
   getAppointmentsByClient(clientId: number, companyId: number): Promise<any[]>;
   getAppointmentsByProfessional(professionalId: number, companyId: number): Promise<any[]>;
   getAppointment(id: number): Promise<Appointment | undefined>;
+  getAppointmentsByPaymentId(paymentId: string): Promise<Appointment[]>;
   createAppointment(appointment: InsertAppointment): Promise<Appointment>;
   updateAppointment(id: number, appointment: Partial<InsertAppointment>): Promise<Appointment>;
   deleteAppointment(id: number): Promise<void>;
@@ -1984,6 +1985,17 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
+  async getAppointmentsByPaymentId(paymentId: string): Promise<Appointment[]> {
+    try {
+      const result = await db.select().from(appointments)
+        .where(eq(appointments.asaasPaymentId, paymentId));
+      return result;
+    } catch (error: any) {
+      console.error("Error getting appointments by payment ID:", error);
+      return [];
+    }
+  }
+
   async getAppointmentById(id: number, companyId: number): Promise<any | undefined> {
     try {
       const [appointment] = await db.select({
@@ -2034,8 +2046,9 @@ export class DatabaseStorage implements IStorage {
       const [insertResult] = await pool.execute(
         `INSERT INTO appointments (
           company_id, professional_id, service_id, client_name, client_phone, client_email,
-          appointment_date, appointment_time, status, duration, total_price, expense, notes, reminder_sent
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          appointment_date, appointment_time, status, duration, total_price, expense, notes, reminder_sent,
+          asaas_payment_id, asaas_payment_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           appointmentData.companyId,
           appointmentData.professionalId ?? null,
@@ -2050,7 +2063,9 @@ export class DatabaseStorage implements IStorage {
           appointmentData.totalPrice ?? '0.00',
           (appointmentData as any).expense || '0.00',
           appointmentData.notes || null,
-          appointmentData.reminderSent || 0
+          appointmentData.reminderSent || 0,
+          appointmentData.asaasPaymentId || null,
+          appointmentData.asaasPaymentStatus || null
         ]
       );
       

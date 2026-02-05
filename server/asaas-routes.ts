@@ -103,7 +103,7 @@ export async function createPixPayment(
 
     // Montar payload - Mercado Pago PIX não precisa de CPF!
     const paymentPayload: any = {
-      transaction_amount: paymentData.servicePrice,
+      transaction_amount: Number(paymentData.servicePrice),
       description: `${company.fantasyName || 'Pagamento'} - ${paymentData.serviceName}`,
       payment_method_id: 'pix',
       payer: {
@@ -240,7 +240,7 @@ export async function createCardPayment(
       items: [{
         title: `${company.fantasyName || 'Pagamento'} - ${paymentData.serviceName}`,
         quantity: 1,
-        unit_price: paymentData.servicePrice,
+        unit_price: Number(paymentData.servicePrice),
         currency_id: 'BRL',
       }],
       payer: {
@@ -444,6 +444,14 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
     if (payment.status === 'approved') {
       console.log(`[MP Webhook] Pagamento APROVADO: ${paymentId}`);
 
+      // === PROTEÇÃO CONTRA DUPLICAÇÃO ===
+      // Verificar se já existe agendamento com este paymentId
+      const existingAppointments = await storage.getAppointmentsByPaymentId(paymentId);
+      if (existingAppointments && existingAppointments.length > 0) {
+        console.log(`[MP Webhook] ⚠️ Pagamento ${paymentId} já processado - agendamento ID ${existingAppointments[0].id} já existe. Ignorando duplicata.`);
+        return res.status(200).json({ received: true, duplicate: true });
+      }
+
       const externalRef = payment.external_reference;
       console.log(`[MP Webhook] External Reference:`, externalRef);
 
@@ -473,22 +481,25 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
           const appointmentTime = pendingData.time || pendingData.appointmentTime || '';
           console.log(`[MP Webhook] Data: ${appointmentDate}, Hora: ${appointmentTime}`);
 
-          // Buscar dados do serviço para obter duration e price reais
+          // === BUSCAR DADOS REAIS DO SERVIÇO (duration + price) ===
           let serviceDuration = 30; // default 30 minutos
-          let servicePrice = pendingData.servicePrice ? String(pendingData.servicePrice) : '0.00';
+          let servicePrice = '0.00';
           if (pendingData.serviceId) {
             try {
               const serviceData = await storage.getService(pendingData.serviceId);
               if (serviceData) {
                 serviceDuration = serviceData.duration || 30;
-                servicePrice = serviceData.price ? String(serviceData.price) : servicePrice;
+                servicePrice = serviceData.price ? String(serviceData.price) : '0.00';
+                console.log(`[MP Webhook] Serviço encontrado: duration=${serviceDuration}, price=${servicePrice}`);
+              } else {
+                console.log(`[MP Webhook] Serviço ${pendingData.serviceId} não encontrado, usando defaults`);
               }
             } catch (e) {
-              console.log(`[MP Webhook] Não foi possível buscar serviço ${pendingData.serviceId}, usando defaults`);
+              console.log(`[MP Webhook] Erro ao buscar serviço ${pendingData.serviceId}, usando defaults`);
             }
           }
 
-          // Criar o agendamento
+          // Criar o agendamento com paymentId para controle de idempotência
           await storage.createAppointment({
             companyId: pendingData.companyId,
             professionalId: pendingData.professionalId || null,
@@ -500,9 +511,11 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
             status: 'Confirmado',
             duration: serviceDuration,
             totalPrice: servicePrice,
+            asaasPaymentId: paymentId,
+            asaasPaymentStatus: 'approved',
           });
 
-          console.log(`[MP Webhook] ✅ Agendamento criado com sucesso!`);
+          console.log(`[MP Webhook] ✅ Agendamento criado com sucesso! (paymentId: ${paymentId})`);
 
           // Enviar mensagem de confirmação via WhatsApp
           try {
@@ -516,7 +529,12 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
                 formattedPhone = '55' + formattedPhone;
               }
 
-              const confirmationMessage = `*Pagamento Confirmado!*\n\nSeu agendamento foi confirmado com sucesso!\n\n*Detalhes:*\nCliente: ${pendingData.clientName}\nServico: ${pendingData.serviceName}\n${pendingData.professionalName ? `Profissional: ${pendingData.professionalName}\n` : ''}Data: ${pendingData.date}\nHorario: ${pendingData.time}\n\nAguardamos voce!`;
+              // Usar dados reais do serviço na mensagem
+              const serviceData = pendingData.serviceId ? await storage.getService(pendingData.serviceId) : null;
+              const displayServiceName = serviceData?.name || pendingData.serviceName || 'Serviço';
+              const displayPrice = servicePrice !== '0.00' ? `\nValor: R$ ${parseFloat(servicePrice).toFixed(2).replace('.', ',')}` : '';
+
+              const confirmationMessage = `*Pagamento Confirmado!*\n\nSeu agendamento foi confirmado com sucesso!\n\n*Detalhes:*\nCliente: ${pendingData.clientName}\nServiço: ${displayServiceName}${displayPrice}\n${pendingData.professionalName ? `Profissional: ${pendingData.professionalName}\n` : ''}Data: ${pendingData.date || appointmentDate}\nHorário: ${pendingData.time || appointmentTime}\nDuração: ${serviceDuration} minutos\n\nAguardamos você!`;
 
               let apiUrl = globalSettings.evolutionApiUrl;
               apiUrl = apiUrl.replace(/\/+$/, '');

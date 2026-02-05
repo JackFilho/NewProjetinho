@@ -10443,9 +10443,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 body: JSON.stringify(pixMediaPayloadCpf)
                               });
 
-                              // Enviar código copia e cola
+                              // Enviar código PIX sozinho para facilitar cópia
                               await new Promise(resolve => setTimeout(resolve, 1000));
-                              const pixCodeMsgCpf = `*Código PIX (copia e cola):*\n\n\`\`\`${pixPaymentWithCpf.pixQrCode.payload}\`\`\`\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+                              const pixCodeOnlyCpf = pixPaymentWithCpf.pixQrCode.payload;
 
                               await fetch(`${correctedApiUrlForCpf}/message/sendText/${instanceName}`, {
                                 method: 'POST',
@@ -10455,7 +10455,23 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 },
                                 body: JSON.stringify({
                                   number: formattedPhoneForCpf,
-                                  text: pixCodeMsgCpf
+                                  text: pixCodeOnlyCpf
+                                })
+                              });
+
+                              // Enviar orientações em mensagem separada
+                              await new Promise(resolve => setTimeout(resolve, 500));
+                              const pixInstructionsCpf = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+
+                              await fetch(`${correctedApiUrlForCpf}/message/sendText/${instanceName}`, {
+                                method: 'POST',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                  'apikey': globalSettings.evolutionApiGlobalKey!
+                                },
+                                body: JSON.stringify({
+                                  number: formattedPhoneForCpf,
+                                  text: pixInstructionsCpf
                                 })
                               });
 
@@ -10471,7 +10487,16 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                               await storage.createMessage({
                                 conversationId: conversation.id,
-                                content: pixCodeMsgCpf,
+                                content: pixCodeOnlyCpf,
+                                role: 'assistant',
+                                messageType: 'text',
+                                delivered: true,
+                                timestamp: new Date(),
+                              });
+
+                              await storage.createMessage({
+                                conversationId: conversation.id,
+                                content: pixInstructionsCpf,
                                 role: 'assistant',
                                 messageType: 'text',
                                 delivered: true,
@@ -10613,7 +10638,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 clientName: pendingAppointmentData.clientName,
                                 clientPhone: phoneNumber,
                                 serviceName: serviceForPayment.name,
-                                servicePrice: serviceForPayment.price,
+                                servicePrice: Number(serviceForPayment.price),
                                 appointmentId: 0,
                                 externalReference: externalRef
                               });
@@ -10638,9 +10663,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                   })
                                 });
 
-                                // Enviar código copia e cola
+                                // Enviar código PIX sozinho para facilitar cópia
                                 await new Promise(resolve => setTimeout(resolve, 1000));
-                                const pixCodeMessage = `*Código PIX (copia e cola):*\n\n${pixPayment.pixQrCode.payload}\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+                                const pixCodeOnly = pixPayment.pixQrCode.payload;
 
                                 await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
                                   method: 'POST',
@@ -10650,7 +10675,23 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                   },
                                   body: JSON.stringify({
                                     number: formattedPhoneForPaymentMsg,
-                                    text: pixCodeMessage
+                                    text: pixCodeOnly
+                                  })
+                                });
+
+                                // Enviar orientações em mensagem separada
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                                const pixInstructions = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+
+                                await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                    'apikey': globalSettings.evolutionApiGlobalKey!
+                                  },
+                                  body: JSON.stringify({
+                                    number: formattedPhoneForPaymentMsg,
+                                    text: pixInstructions
                                   })
                                 });
 
@@ -10664,7 +10705,15 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 });
                                 await storage.createMessage({
                                   conversationId: conversation.id,
-                                  content: pixCodeMessage,
+                                  content: pixCodeOnly,
+                                  role: 'assistant',
+                                  messageType: 'text',
+                                  delivered: true,
+                                  timestamp: new Date(),
+                                });
+                                await storage.createMessage({
+                                  conversationId: conversation.id,
+                                  content: pixInstructions,
                                   role: 'assistant',
                                   messageType: 'text',
                                   delivered: true,
@@ -10680,7 +10729,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 clientName: pendingAppointmentData.clientName,
                                 clientPhone: phoneNumber,
                                 serviceName: serviceForPayment.name,
-                                servicePrice: serviceForPayment.price,
+                                servicePrice: Number(serviceForPayment.price),
                                 appointmentId: 0, // Agendamento será criado após pagamento
                                 externalReference: externalRef // JSON com dados do agendamento
                               });
@@ -11148,8 +11197,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
                               })
                             });
 
+                            // Enviar código PIX sozinho para facilitar cópia
                             await new Promise(resolve => setTimeout(resolve, 1000));
-                            const pixCodeMsg2 = `*Código PIX (copia e cola):*\n\n${pixPaymentResult.pixQrCode.payload}\n\n_Copie o código acima e cole no seu app de banco._\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+                            const pixCodeOnly2 = pixPaymentResult.pixQrCode.payload;
 
                             await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
                               method: 'POST',
@@ -11159,7 +11209,23 @@ Por favor, escolha um dos horários disponíveis acima.`;
                               },
                               body: JSON.stringify({
                                 number: formattedPhoneForPaymentProcess,
-                                text: pixCodeMsg2
+                                text: pixCodeOnly2
+                              })
+                            });
+
+                            // Enviar orientações em mensagem separada
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            const pixInstructions2 = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
+
+                            await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'apikey': globalSettings.evolutionApiGlobalKey!
+                              },
+                              body: JSON.stringify({
+                                number: formattedPhoneForPaymentProcess,
+                                text: pixInstructions2
                               })
                             });
 
@@ -11173,7 +11239,15 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             });
                             await storage.createMessage({
                               conversationId: conversation.id,
-                              content: pixCodeMsg2,
+                              content: pixCodeOnly2,
+                              role: 'assistant',
+                              messageType: 'text',
+                              delivered: true,
+                              timestamp: new Date(),
+                            });
+                            await storage.createMessage({
+                              conversationId: conversation.id,
+                              content: pixInstructions2,
                               role: 'assistant',
                               messageType: 'text',
                               delivered: true,
@@ -11189,7 +11263,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             clientName: clientNameForPayment,
                             clientPhone: phoneNumber,
                             serviceName: serviceForPaymentProcess.name,
-                            servicePrice: serviceForPaymentProcess.price,
+                            servicePrice: Number(serviceForPaymentProcess.price),
                             appointmentId: 0,
                             externalReference: externalRefForPayment
                           });
