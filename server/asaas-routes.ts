@@ -473,6 +473,21 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
           const appointmentTime = pendingData.time || pendingData.appointmentTime || '';
           console.log(`[MP Webhook] Data: ${appointmentDate}, Hora: ${appointmentTime}`);
 
+          // Buscar dados do serviço para obter duration e price reais
+          let serviceDuration = 30; // default 30 minutos
+          let servicePrice = pendingData.servicePrice ? String(pendingData.servicePrice) : '0.00';
+          if (pendingData.serviceId) {
+            try {
+              const serviceData = await storage.getService(pendingData.serviceId);
+              if (serviceData) {
+                serviceDuration = serviceData.duration || 30;
+                servicePrice = serviceData.price ? String(serviceData.price) : servicePrice;
+              }
+            } catch (e) {
+              console.log(`[MP Webhook] Não foi possível buscar serviço ${pendingData.serviceId}, usando defaults`);
+            }
+          }
+
           // Criar o agendamento
           await storage.createAppointment({
             companyId: pendingData.companyId,
@@ -483,8 +498,8 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
             appointmentDate: appointmentDate,
             appointmentTime: appointmentTime,
             status: 'Confirmado',
-            duration: null,
-            totalPrice: pendingData.servicePrice ? String(pendingData.servicePrice) : null,
+            duration: serviceDuration,
+            totalPrice: servicePrice,
           });
 
           console.log(`[MP Webhook] ✅ Agendamento criado com sucesso!`);

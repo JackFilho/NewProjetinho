@@ -2046,8 +2046,8 @@ export class DatabaseStorage implements IStorage {
           appointmentData.appointmentDate,
           appointmentData.appointmentTime,
           appointmentData.status,
-          appointmentData.duration ?? null,
-          appointmentData.totalPrice ?? null,
+          appointmentData.duration ?? 30,
+          appointmentData.totalPrice ?? '0.00',
           (appointmentData as any).expense || '0.00',
           appointmentData.notes || null,
           appointmentData.reminderSent || 0
