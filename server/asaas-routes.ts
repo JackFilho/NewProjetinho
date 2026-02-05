@@ -64,6 +64,7 @@ export async function createPixPayment(
             clientName: (parsed.clientName || '').substring(0, 30),
             clientPhone: parsed.clientPhone,
             serviceId: parsed.serviceId,
+            servicePrice: parsed.servicePrice,
             professionalId: parsed.professionalId,
             date: parsed.date || parsed.appointmentDate || '',
             time: parsed.time || parsed.appointmentTime || '',
@@ -202,6 +203,7 @@ export async function createCardPayment(
             clientName: (parsed.clientName || '').substring(0, 30),
             clientPhone: parsed.clientPhone,
             serviceId: parsed.serviceId,
+            servicePrice: parsed.servicePrice,
             professionalId: parsed.professionalId,
             date: parsed.date || parsed.appointmentDate || '',
             time: parsed.time || parsed.appointmentTime || '',
@@ -474,13 +476,15 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
           // Criar o agendamento
           await storage.createAppointment({
             companyId: pendingData.companyId,
-            professionalId: pendingData.professionalId,
+            professionalId: pendingData.professionalId || null,
             serviceId: pendingData.serviceId,
             clientName: pendingData.clientName,
             clientPhone: pendingData.clientPhone,
             appointmentDate: appointmentDate,
             appointmentTime: appointmentTime,
             status: 'Confirmado',
+            duration: null,
+            totalPrice: pendingData.servicePrice ? String(pendingData.servicePrice) : null,
           });
 
           console.log(`[MP Webhook] ✅ Agendamento criado com sucesso!`);

@@ -2038,7 +2038,7 @@ export class DatabaseStorage implements IStorage {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           appointmentData.companyId,
-          appointmentData.professionalId,
+          appointmentData.professionalId ?? null,
           appointmentData.serviceId,
           appointmentData.clientName,
           appointmentData.clientPhone || null,
@@ -2046,8 +2046,8 @@ export class DatabaseStorage implements IStorage {
           appointmentData.appointmentDate,
           appointmentData.appointmentTime,
           appointmentData.status,
-          appointmentData.duration,
-          appointmentData.totalPrice,
+          appointmentData.duration ?? null,
+          appointmentData.totalPrice ?? null,
           (appointmentData as any).expense || '0.00',
           appointmentData.notes || null,
           appointmentData.reminderSent || 0

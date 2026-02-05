@@ -11094,6 +11094,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           clientPhone: phoneNumber,
                           serviceId: serviceForPaymentProcess.id,
                           serviceName: serviceForPaymentProcess.name,
+                          servicePrice: serviceForPaymentProcess.price,
                           professionalId: professionalForPaymentProcess?.id,
                           professionalName: professionalForPaymentProcess?.name || '',
                           date: paymentDetailsExtracted.date || '',

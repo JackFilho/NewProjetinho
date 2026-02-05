@@ -1,4 +1,8 @@
 {
+  "env": {
+    "ANTHROPIC_CUSTOM_HEADERS": "anthropic-beta: interleaved-thinking-2025-05-14",
+    "MAX_THINKING_TOKENS": "30000"
+  },
   "permissions": {
     "allow": [
       "Bash(grep:*)",
@@ -48,7 +52,11 @@
       "Bash(./node_modules/.bin/tsc:*)",
       "WebFetch(domain:doc.evolution-api.com)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(git fetch:*)",
+      "Bash(git checkout:*)",
+      "Bash(ls:*)",
+      "Bash(node_modules/.bin/tsc:*)"
     ],
     "deny": [],
     "ask": []
