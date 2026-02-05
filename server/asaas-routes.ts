@@ -26,6 +26,80 @@ interface CardPayment {
 }
 
 /**
+ * Agenda verificação de expiração do PIX após 10 minutos.
+ * Se o pagamento não foi confirmado, envia mensagem ao cliente.
+ */
+export function schedulePixExpirationCheck(
+  paymentId: string,
+  companyId: number,
+  clientPhone: string,
+  conversationId?: number,
+) {
+  const EXPIRATION_MS = 10 * 60 * 1000 + 30 * 1000; // 10min30s (margem de 30s)
+
+  setTimeout(async () => {
+    try {
+      console.log(`[PIX Expiration] Verificando pagamento ${paymentId}...`);
+
+      // Verificar se já foi criado agendamento para este pagamento
+      const existingAppointments = await storage.getAppointmentsByPaymentId(paymentId);
+      if (existingAppointments && existingAppointments.length > 0) {
+        console.log(`[PIX Expiration] Pagamento ${paymentId} já confirmado - agendamento ${existingAppointments[0].id} existe.`);
+        return;
+      }
+
+      // Pagamento não foi confirmado - enviar mensagem
+      console.log(`[PIX Expiration] Pagamento ${paymentId} NÃO confirmado - enviando aviso de expiração.`);
+
+      const globalSettings = await storage.getGlobalSettings();
+      const instances = await storage.getWhatsappInstancesByCompany(companyId);
+      const activeInstance = instances[0];
+
+      if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey && activeInstance) {
+        let formattedPhone = clientPhone.replace(/\D/g, '');
+        if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
+          formattedPhone = '55' + formattedPhone;
+        }
+
+        let apiUrl = globalSettings.evolutionApiUrl.replace(/\/+$/, '');
+
+        const expirationMsg = `⏰ *Tempo de pagamento expirado*\n\nO prazo de 10 minutos para o pagamento via PIX se encerrou e o agendamento não foi realizado.\n\nCaso ainda deseje agendar, é só enviar uma nova mensagem que estaremos prontos para atendê-lo! 😊`;
+
+        await fetch(`${apiUrl}/message/sendText/${activeInstance.instanceName}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': globalSettings.evolutionApiGlobalKey
+          },
+          body: JSON.stringify({
+            number: formattedPhone,
+            text: expirationMsg
+          })
+        });
+
+        console.log(`[PIX Expiration] Mensagem de expiração enviada para ${formattedPhone}`);
+
+        // Salvar mensagem na conversa
+        if (conversationId) {
+          await storage.createMessage({
+            conversationId,
+            content: expirationMsg,
+            role: 'assistant',
+            messageType: 'text',
+            delivered: true,
+            timestamp: new Date(),
+          });
+        }
+      }
+    } catch (error) {
+      console.error(`[PIX Expiration] Erro ao verificar expiração do pagamento ${paymentId}:`, error);
+    }
+  }, EXPIRATION_MS);
+
+  console.log(`[PIX Expiration] Verificação agendada para pagamento ${paymentId} em ~10min30s`);
+}
+
+/**
  * Cria cobrança PIX e retorna QR Code via Mercado Pago
  * Não precisa de CPF - o QR Code vem direto na resposta!
  */
@@ -102,10 +176,13 @@ export async function createPixPayment(
     const systemUrl = globalSettings?.systemUrl || '';
 
     // Montar payload - Mercado Pago PIX não precisa de CPF!
+    // Expiração em 10 minutos
+    const expirationDate = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const paymentPayload: any = {
       transaction_amount: Number(paymentData.servicePrice),
       description: `${company.fantasyName || 'Pagamento'} - ${paymentData.serviceName}`,
       payment_method_id: 'pix',
+      date_of_expiration: expirationDate,
       payer: {
         email: paymentData.clientEmail || `cliente_${Date.now()}@pagamento.com`,
         first_name: paymentData.clientName.split(' ')[0] || 'Cliente',
@@ -157,7 +234,7 @@ export async function createPixPayment(
       pixQrCode: {
         encodedImage: transactionData.qr_code_base64,
         payload: transactionData.qr_code,
-        expirationDate: payment.date_of_expiration || new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        expirationDate: payment.date_of_expiration || expirationDate,
       },
     };
   } catch (error) {
@@ -529,12 +606,31 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
                 formattedPhone = '55' + formattedPhone;
               }
 
-              // Usar dados reais do serviço na mensagem
-              const serviceData = pendingData.serviceId ? await storage.getService(pendingData.serviceId) : null;
-              const displayServiceName = serviceData?.name || pendingData.serviceName || 'Serviço';
-              const displayPrice = servicePrice !== '0.00' ? `\nValor: R$ ${parseFloat(servicePrice).toFixed(2).replace('.', ',')}` : '';
+              // Buscar nome do profissional do banco para garantir dado correto
+              let professionalName = pendingData.professionalName || '';
+              if (pendingData.professionalId && !professionalName) {
+                try {
+                  const prof = await storage.getProfessional(pendingData.professionalId);
+                  if (prof) professionalName = prof.name;
+                } catch (e) { /* usar fallback */ }
+              }
 
-              const confirmationMessage = `*Pagamento Confirmado!*\n\nSeu agendamento foi confirmado com sucesso!\n\n*Detalhes:*\nCliente: ${pendingData.clientName}\nServiço: ${displayServiceName}${displayPrice}\n${pendingData.professionalName ? `Profissional: ${pendingData.professionalName}\n` : ''}Data: ${pendingData.date || appointmentDate}\nHorário: ${pendingData.time || appointmentTime}\nDuração: ${serviceDuration} minutos\n\nAguardamos você!`;
+              // Formatar data com dia da semana
+              const diasSemana = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+              const dateForDisplay = appointmentDate || pendingData.date || '';
+              let formattedDateDisplay = dateForDisplay;
+              try {
+                // appointmentDate está em YYYY-MM-DD
+                const [year, month, day] = dateForDisplay.split('-').map(Number);
+                const dateObj = new Date(year, month - 1, day);
+                const diaSemana = diasSemana[dateObj.getDay()];
+                formattedDateDisplay = `${diaSemana}, ${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
+              } catch (e) { /* usar data sem dia da semana */ }
+
+              const timeForDisplay = appointmentTime || pendingData.time || '';
+              const profPart = professionalName ? ` com ${professionalName}` : '';
+
+              const confirmationMessage = `*Pagamento Confirmado!* ✅\n\nAgendamento realizado com sucesso! Nos vemos no dia ${formattedDateDisplay} às ${timeForDisplay}${profPart}.`;
 
               let apiUrl = globalSettings.evolutionApiUrl;
               apiUrl = apiUrl.replace(/\/+$/, '');

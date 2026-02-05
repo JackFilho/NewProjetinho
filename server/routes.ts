@@ -10355,7 +10355,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                       // FLUXO NORMAL - CRIAR AGENDAMENTO
                       // ========================================
                       // Import payment functions (Mercado Pago)
-                      const { createPixPayment, createCardPayment, isPaymentEnabled } = await import('./asaas-routes');
+                      const { createPixPayment, createCardPayment, isPaymentEnabled, schedulePixExpirationCheck } = await import('./asaas-routes');
 
                       // Check if company has Asaas configured
                       const companyWithAsaas = await storage.getCompany(company.id);
@@ -10402,7 +10402,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             console.log('📋 Dados pendentes recuperados:', pendingPixData);
 
                             // Importar função Asaas
-                            const { createAsaasPixPayment } = await import('./asaas-routes');
+                            const { createPixPayment: createAsaasPixPayment } = await import('./asaas-routes');
 
                             // Criar cobrança PIX COM o CPF
                             const pixPaymentWithCpf = await createAsaasPixPayment(company.id, {
@@ -10431,7 +10431,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 number: formattedPhoneForCpf,
                                 mediatype: 'image',
                                 media: pixPaymentWithCpf.pixQrCode.encodedImage,
-                                caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${pendingPixData.servicePrice.toFixed(2)}\n⏰ Válido por 30 minutos`
+                                caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${pendingPixData.servicePrice.toFixed(2)}\n⏰ Válido por 10 minutos`
                               };
 
                               await fetch(`${correctedApiUrlForCpf}/message/sendMedia/${instanceName}`, {
@@ -10502,6 +10502,14 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 delivered: true,
                                 timestamp: new Date(),
                               });
+
+                              // Agendar verificação de expiração do PIX (10 min)
+                              schedulePixExpirationCheck(
+                                pixPaymentWithCpf.id,
+                                company.id,
+                                phoneNumber,
+                                conversation.id
+                              );
 
                               console.log('✅ QR Code PIX enviado com sucesso após CPF!');
                             } else {
@@ -10659,7 +10667,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                     number: formattedPhoneForPaymentMsg,
                                     mediatype: 'image',
                                     media: pixPayment.pixQrCode.encodedImage,
-                                    caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n⏰ Válido por 30 minutos`
+                                    caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n⏰ Válido por 10 minutos`
                                   })
                                 });
 
@@ -10719,6 +10727,14 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                   delivered: true,
                                   timestamp: new Date(),
                                 });
+
+                                // Agendar verificação de expiração do PIX (10 min)
+                                schedulePixExpirationCheck(
+                                  pixPayment.id,
+                                  company.id,
+                                  phoneNumber,
+                                  conversation.id
+                                );
                               } else {
                                 console.log('❌ Falha ao criar cobrança PIX');
                               }
@@ -11025,7 +11041,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                   console.log('💳 Método de pagamento:', paymentMethod);
 
                   // Import payment functions (Mercado Pago)
-                  const { createPixPayment, createCardPayment } = await import('./asaas-routes');
+                  const { createPixPayment, createCardPayment, schedulePixExpirationCheck } = await import('./asaas-routes');
 
                   // Check if company has Asaas configured
                   const companyWithAsaas = await storage.getCompany(company.id);
@@ -11193,7 +11209,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 number: formattedPhoneForPaymentProcess,
                                 mediatype: 'image',
                                 media: pixPaymentResult.pixQrCode.encodedImage,
-                                caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n⏰ Válido por 30 minutos`
+                                caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n⏰ Válido por 10 minutos`
                               })
                             });
 
@@ -11253,6 +11269,14 @@ Por favor, escolha um dos horários disponíveis acima.`;
                               delivered: true,
                               timestamp: new Date(),
                             });
+
+                            // Agendar verificação de expiração do PIX (10 min)
+                            schedulePixExpirationCheck(
+                              pixPaymentResult.id,
+                              company.id,
+                              phoneNumber,
+                              conversation.id
+                            );
                           } else {
                             console.log('❌ Falha ao criar cobrança PIX');
                           }
