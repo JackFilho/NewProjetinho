@@ -1034,14 +1034,15 @@ export default function CompanyProfessionals() {
                         <div className="space-y-2">
                           <Label htmlFor="minimumAdvanceHours">Antecedência Mínima *</Label>
                           <Select
-                            value={form.watch('minimumAdvanceHours')?.toString() || '0'}
-                            onValueChange={(value) => form.setValue('minimumAdvanceHours', parseInt(value))}
+                            value={String(parseFloat(form.watch('minimumAdvanceHours')?.toString() || '0') || 0)}
+                            onValueChange={(value) => form.setValue('minimumAdvanceHours', parseFloat(value))}
                           >
                             <SelectTrigger>
                               <SelectValue placeholder="Selecione" />
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="0">Sem antecedência</SelectItem>
+                              <SelectItem value="0.5">30 minutos</SelectItem>
                               <SelectItem value="1">1 hora</SelectItem>
                               <SelectItem value="2">2 horas</SelectItem>
                               <SelectItem value="3">3 horas</SelectItem>

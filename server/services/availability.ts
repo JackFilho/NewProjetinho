@@ -65,11 +65,9 @@ export interface SlotValidationResult {
  * Obtém a data atual no fuso horário do Brasil
  */
 function getBrazilDate(): Date {
-  const now = new Date();
-  const brazilOffset = -3 * 60; // UTC-3
-  const localOffset = now.getTimezoneOffset();
-  const diff = brazilOffset - localOffset;
-  return new Date(now.getTime() + diff * 60 * 1000);
+  // Usar toLocaleString com timezone para garantir o horário correto do Brasil
+  const nowStr = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' });
+  return new Date(nowStr);
 }
 
 /**
@@ -283,19 +281,20 @@ export async function getAvailableSlots(
     // Se timeInterval for 0 (sem intervalo), usar a duração do serviço como intervalo
     const configuredInterval = professional.timeInterval || 0;
     const timeInterval = configuredInterval === 0 ? serviceDuration : configuredInterval;
-    const minimumAdvanceHours = professional.minimumAdvanceHours || 0;
+    const minimumAdvanceHours = Number(professional.minimumAdvanceHours) || 0;
 
     // Calcular horário mínimo considerando antecedência
     const now = getBrazilDate();
-    const todayStr = now.toISOString().split('T')[0];
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     let minTimeMinutes = workStartMinutes;
 
-    if (dateStr === todayStr && minimumAdvanceHours > 0) {
+    // Para agendamentos HOJE, filtrar horários passados e aplicar antecedência mínima
+    if (dateStr === todayStr) {
       const currentMinutes = now.getHours() * 60 + now.getMinutes();
-      const minAdvanceMinutes = currentMinutes + (minimumAdvanceHours * 60);
+      const advanceMinutes = minimumAdvanceHours * 60;
+      const minAdvanceMinutes = currentMinutes + advanceMinutes;
       minTimeMinutes = Math.max(workStartMinutes, minAdvanceMinutes);
 
-      // Arredondar para o próximo múltiplo do intervalo (se houver intervalo)
       if (timeInterval > 0) {
         minTimeMinutes = Math.ceil(minTimeMinutes / timeInterval) * timeInterval;
       }

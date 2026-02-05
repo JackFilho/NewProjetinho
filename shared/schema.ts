@@ -286,7 +286,7 @@ export const professionals = mysqlTable("professionals", {
   password: varchar("password", { length: 255 }),
   phone: varchar("phone", { length: 50 }),
   timeInterval: int("time_interval").notNull().default(30), // Appointment interval in minutes (15, 30, 60, etc.)
-  minimumAdvanceHours: int("minimum_advance_hours").notNull().default(0), // Minimum hours in advance required for booking (0 = no minimum)
+  minimumAdvanceHours: decimal("minimum_advance_hours", { precision: 4, scale: 2 }).notNull().default("0"), // Minimum hours in advance required for booking (0 = no minimum, 0.5 = 30min)
   specialties: json("specialties").$type<string[]>(),
   workDays: json("work_days"),
   workStartTime: varchar("work_start_time", { length: 10 }),

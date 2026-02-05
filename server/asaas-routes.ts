@@ -687,6 +687,10 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
           }
         }
       }
+      } finally {
+        // Sempre liberar o lock ao finalizar processamento
+        processingPayments.delete(paymentId);
+      }
     }
 
     res.status(200).json({ received: true });

@@ -871,9 +871,15 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
     }
 
     // Add minimum advance hours information
-    const minimumAdvanceHours = prof.minimumAdvanceHours || 0;
+    const minimumAdvanceHours = Number(prof.minimumAdvanceHours) || 0;
     if (minimumAdvanceHours > 0) {
-      availabilityText += `- Antecedência mínima: ${minimumAdvanceHours}h (válido apenas para agendamentos HOJE - dias futuros sempre permitidos)\n`;
+      // Formatar corretamente: 0.5 = "30 minutos", 1 = "1 hora", 2 = "2 horas"
+      const advanceText = minimumAdvanceHours < 1
+        ? `${Math.round(minimumAdvanceHours * 60)} minutos`
+        : minimumAdvanceHours === 1
+          ? '1 hora'
+          : `${minimumAdvanceHours} horas`;
+      availabilityText += `- Antecedência mínima: ${advanceText} (válido apenas para agendamentos HOJE - dias futuros sempre permitidos)\n`;
     } else {
       availabilityText += `- Antecedência mínima: Nenhuma\n`;
     }
@@ -1588,11 +1594,37 @@ async function getAvailableTimesForService(
     const configuredInterval = professional.timeInterval || 0;
     const timeInterval = configuredInterval === 0 ? serviceDuration : configuredInterval;
 
+    // === FILTRO DE HORÁRIOS PASSADOS E ANTECEDÊNCIA MÍNIMA ===
+    const brazilNowStr = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' });
+    const brazilNow = new Date(brazilNowStr);
+    const todayStr = `${brazilNow.getFullYear()}-${String(brazilNow.getMonth() + 1).padStart(2, '0')}-${String(brazilNow.getDate()).padStart(2, '0')}`;
+
+    let minTimeMinutes = workStartMinutes;
+    const minimumAdvanceHours = Number(professional.minimumAdvanceHours) || 0;
+
+    if (dateStr === todayStr) {
+      const currentMinutes = brazilNow.getHours() * 60 + brazilNow.getMinutes();
+      const advanceMinutes = minimumAdvanceHours * 60;
+      const minAdvanceMinutes = currentMinutes + advanceMinutes;
+      minTimeMinutes = Math.max(workStartMinutes, minAdvanceMinutes);
+
+      if (timeInterval > 0) {
+        minTimeMinutes = Math.ceil(minTimeMinutes / timeInterval) * timeInterval;
+      }
+    }
+    // === FIM DO FILTRO ===
+
     // Calcular horários disponíveis
     const availableTimes: string[] = [];
     let currentTimeMinutes = workStartMinutes;
 
     while (currentTimeMinutes + serviceDuration <= workEndMinutes) {
+      // NOVO: Pular horários antes do mínimo permitido (passados + antecedência)
+      if (currentTimeMinutes < minTimeMinutes) {
+        currentTimeMinutes += timeInterval;
+        continue;
+      }
+
       const currentHour = Math.floor(currentTimeMinutes / 60);
       const currentMin = currentTimeMinutes % 60;
       const timeStr = `${String(currentHour).padStart(2, '0')}:${String(currentMin).padStart(2, '0')}`;
@@ -8995,7 +9027,24 @@ Por favor, verifique:
                             const occupiedTimes = dayAppointments.map(apt => apt.appointmentTime);
                             let availableTimes = possibleTimes.filter(time => !occupiedTimes.includes(time));
 
-                            console.log('🔍 Horários ocupados:', occupiedTimes);
+                            // === FILTRAR HORÁRIOS PASSADOS E ANTECEDÊNCIA MÍNIMA ===
+                            const brazilTimeStr = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' });
+                            const brazilTime = new Date(brazilTimeStr);
+                            const todayBrazil = `${brazilTime.getFullYear()}-${String(brazilTime.getMonth() + 1).padStart(2, '0')}-${String(brazilTime.getDate()).padStart(2, '0')}`;
+
+                            if (newDate === todayBrazil) {
+                              const currentMinutes = brazilTime.getHours() * 60 + brazilTime.getMinutes();
+                              const minimumAdvanceHours = Number(professional.minimumAdvanceHours) || 0;
+                              const advanceMinutes = minimumAdvanceHours * 60;
+                              const minAllowedMinutes = currentMinutes + advanceMinutes;
+
+                              availableTimes = availableTimes.filter(time => {
+                                const [h, m] = time.split(':').map(Number);
+                                const timeMinutes = h * 60 + m;
+                                return timeMinutes >= minAllowedMinutes;
+                              });
+                            }
+                            // === FIM DO FILTRO ===
 
                             // Buscar pausas do profissional neste dia
                             const professionalBreaks = await storage.getProfessionalBreaks(professional.id);
@@ -13530,9 +13579,15 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
     }
 
     // Add minimum advance hours information
-    const minimumAdvanceHours = prof.minimumAdvanceHours || 0;
+    const minimumAdvanceHours = Number(prof.minimumAdvanceHours) || 0;
     if (minimumAdvanceHours > 0) {
-      availabilityText += `- Antecedência mínima: ${minimumAdvanceHours}h (válido apenas para agendamentos HOJE - dias futuros sempre permitidos)\n`;
+      // Formatar corretamente: 0.5 = "30 minutos", 1 = "1 hora", 2 = "2 horas"
+      const advanceText = minimumAdvanceHours < 1
+        ? `${Math.round(minimumAdvanceHours * 60)} minutos`
+        : minimumAdvanceHours === 1
+          ? '1 hora'
+          : `${minimumAdvanceHours} horas`;
+      availabilityText += `- Antecedência mínima: ${advanceText} (válido apenas para agendamentos HOJE - dias futuros sempre permitidos)\n`;
     } else {
       availabilityText += `- Antecedência mínima: Nenhuma\n`;
     }
