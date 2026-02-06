@@ -409,28 +409,46 @@ async function listClientAppointments(clientPhone: string, companyId: number): P
 }
 
 // Helper function to list client's future appointments with numbers (for cancel/reschedule)
+// OTIMIZADO: Consulta direta no banco com filtros (não carrega todos na memória)
 async function listClientAppointmentsNumbered(clientPhone: string, companyId: number, action: 'cancelar' | 'remarcar'): Promise<string> {
   try {
-    const allAppointments = await storage.getAppointmentsByCompany(companyId);
-    const now = new Date();
+    const cleanClientPhone = clientPhone.replace(/\D/g, '');
 
-    // Filter appointments for this client that are in the future or today
-    const clientAppointments = allAppointments.filter(apt => {
-      const aptDate = new Date(apt.appointmentDate);
-      aptDate.setHours(0, 0, 0, 0);
-      const nowDate = new Date(now);
-      nowDate.setHours(0, 0, 0, 0);
+    // Calcular data de hoje no fuso horário de São Paulo
+    const nowBrasilia = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+    const todayStr = nowBrasilia.toISOString().split('T')[0]; // YYYY-MM-DD
 
-      return (
-        apt.clientPhone?.replace(/\D/g, '') === clientPhone.replace(/\D/g, '') &&
-        (apt.status === 'agendado' || apt.status === 'confirmado') &&
-        aptDate >= nowDate
-      );
-    }).sort((a, b) => {
-      const dateA = new Date(`${a.appointmentDate}T${a.appointmentTime}`);
-      const dateB = new Date(`${b.appointmentDate}T${b.appointmentTime}`);
-      return dateA.getTime() - dateB.getTime();
-    });
+    console.log('📋 [listClientAppointmentsNumbered] OTIMIZADO:');
+    console.log('   📞 Telefone:', cleanClientPhone);
+    console.log('   🏢 Company ID:', companyId);
+    console.log('   📅 Data de hoje (Brasília):', todayStr);
+
+    // Consulta direta no banco - MUITO mais eficiente!
+    // Busca apenas agendamentos futuros deste cliente com status válido
+    const [rows] = await pool.execute(`
+      SELECT
+        a.id,
+        a.appointment_date,
+        a.appointment_time,
+        a.status,
+        a.professional_id,
+        a.service_id,
+        s.name as service_name,
+        p.name as professional_name
+      FROM appointments a
+      LEFT JOIN services s ON a.service_id = s.id
+      LEFT JOIN professionals p ON a.professional_id = p.id
+      WHERE REPLACE(REPLACE(REPLACE(a.client_phone, '-', ''), ' ', ''), '(', '') LIKE ?
+        AND a.appointment_date >= ?
+        AND LOWER(a.status) IN ('pendente', 'confirmado', 'agendado', 'scheduled', 'confirmed')
+        AND p.company_id = ?
+      ORDER BY a.appointment_date ASC, a.appointment_time ASC
+      LIMIT 10
+    `, [`%${cleanClientPhone}%`, todayStr, companyId]);
+
+    const clientAppointments = rows as any[];
+
+    console.log('   🎯 Agendamentos encontrados:', clientAppointments.length);
 
     if (clientAppointments.length === 0) {
       return `Você não possui agendamentos futuros para ${action}.`;
@@ -441,17 +459,15 @@ async function listClientAppointmentsNumbered(clientPhone: string, companyId: nu
 
     let appointmentsList = `📋 Seus próximos agendamentos:\n\n`;
 
-    for (let i = 0; i < clientAppointments.length && i < 10; i++) {
+    for (let i = 0; i < clientAppointments.length; i++) {
       const apt = clientAppointments[i];
-      const professional = await storage.getProfessional(apt.professionalId);
-      const service = await storage.getService(apt.serviceId);
 
-      const date = new Date(apt.appointmentDate);
+      const date = new Date(apt.appointment_date);
       const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
       const dayName = dayNames[date.getDay()];
 
-      appointmentsList += `${numberEmojis[i]} ${dayName}, ${date.toLocaleDateString('pt-BR')} às ${apt.appointmentTime}\n`;
-      appointmentsList += `   💼 ${service?.name || 'Serviço'} | 👤 ${professional?.name || 'Profissional'}\n\n`;
+      appointmentsList += `${numberEmojis[i]} ${dayName}, ${date.toLocaleDateString('pt-BR')} às ${apt.appointment_time}\n`;
+      appointmentsList += `   💼 ${apt.service_name || 'Serviço'} | 👤 ${apt.professional_name || 'Profissional'}\n\n`;
     }
 
     appointmentsList += `Qual agendamento você deseja ${actionText}? (responda com o número)`;
@@ -7754,6 +7770,14 @@ if (ignoredNumbers !== undefined) {
               const conversationHistory = recentMessages
                 .reverse() // Oldest first
                 .filter(msg => {
+                  // Filter out system messages (internal markers like PENDING_CANCEL_ID)
+                  if (msg.role === 'system' || !msg.role || msg.role === '') {
+                    return false;
+                  }
+                  // Filter out internal pending markers
+                  if (msg.content.includes('[PENDING_CANCEL_ID:') || msg.content.includes('[PENDING_RESCHEDULE_ID:')) {
+                    return false;
+                  }
                   // Filter out messages that are confirmations of already-created appointments
                   if (msg.role === 'assistant') {
                     const isOldConfirmation = msg.content.includes('Agendamento Confirmado!') ||
@@ -8258,32 +8282,28 @@ CANCELAMENTO DE AGENDAMENTOS:
 Quando o cliente mencionar qualquer uma dessas frases:
 "cancelar", "desmarcar", "não vou poder ir", "preciso cancelar", "não vou conseguir ir", "não vou mais", "quero desmarcar", "preciso desmarcar"
 
-→ Use o comando: [LISTAR_AGENDAMENTOS_CANCELAR]
-→ O sistema vai mostrar automaticamente os agendamentos futuros do cliente
-→ Diga apenas: "Vou verificar seus agendamentos..."
-→ O sistema substituirá por uma lista numerada
-→ Aguarde o cliente responder com o NÚMERO (1, 2, 3...)
-→ Após o cliente escolher, confirme: "Confirma o cancelamento do agendamento X? Responda SIM para cancelar."
+→ Responda EXATAMENTE assim (copie exatamente):
+"Vou verificar seus agendamentos... [LISTAR_AGENDAMENTOS_CANCELAR]"
+
+IMPORTANTE: O comando [LISTAR_AGENDAMENTOS_CANCELAR] DEVE estar na sua resposta!
+O sistema vai substituir automaticamente pela lista de agendamentos do cliente.
+
+→ Após o cliente responder com um NÚMERO (1, 2, 3...), confirme: "Confirma o cancelamento do agendamento X? Responda SIM para cancelar."
 
 REAGENDAMENTO (REMARCAR):
 Quando o cliente mencionar qualquer uma dessas frases:
 "remarcar", "alterar horário", "mudar data", "reagendar", "trocar horário", "mudar horário", "adiar"
 
-→ Use o comando: [LISTAR_AGENDAMENTOS_REMARCAR]
-→ O sistema vai mostrar automaticamente os agendamentos futuros do cliente
-→ Diga apenas: "Vou verificar seus agendamentos..."
-→ O sistema substituirá por uma lista numerada
-→ Aguarde o cliente responder com o NÚMERO (1, 2, 3...)
-→ Após o cliente escolher, pergunte: "Para qual data e horário você gostaria de remarcar?"
-→ Use [MOSTRAR_HORARIOS_LIVRES] para mostrar disponibilidade
-→ Após escolher novo horário, confirme a remarcação
+→ Informe ao cliente que para remarcar é necessário PRIMEIRO CANCELAR o agendamento atual e depois fazer um novo agendamento.
+→ Pergunte se ele deseja cancelar o agendamento atual.
+→ Se sim, siga o fluxo de cancelamento acima.
 
-REGRAS IMPORTANTES PARA CANCELAMENTO E REMARCAÇÃO:
-- SEMPRE use os comandos [LISTAR_AGENDAMENTOS_CANCELAR] ou [LISTAR_AGENDAMENTOS_REMARCAR]
+REGRAS CRÍTICAS PARA CANCELAMENTO:
+- SEMPRE inclua o comando [LISTAR_AGENDAMENTOS_CANCELAR] na sua resposta quando for cancelar
+- Sem o comando, o sistema NÃO consegue mostrar os agendamentos!
 - NÃO peça dados do agendamento - o sistema lista automaticamente pelo telefone
 - O cliente só precisa responder com o NÚMERO do agendamento
-- Seja natural e conversacional
-- O sistema processará tudo automaticamente nos bastidores`;
+- Seja natural e conversacional`;
 
               // Prepare messages for OpenAI with conversation history
               const messages = [
@@ -8714,13 +8734,6 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                 aiResponse = aiResponse.replace(/.*\[LISTAR_AGENDAMENTOS_CANCELAR\].*/g, appointmentsList);
               }
 
-              // Process [LISTAR_AGENDAMENTOS_REMARCAR] command - lista agendamentos para remarcação
-              if (aiResponse.includes('[LISTAR_AGENDAMENTOS_REMARCAR]')) {
-                console.log('📋 Listando agendamentos para REMARCAÇÃO...');
-                const appointmentsList = await listClientAppointmentsNumbered(phoneNumber, company.id, 'remarcar');
-                aiResponse = aiResponse.replace(/.*\[LISTAR_AGENDAMENTOS_REMARCAR\].*/g, appointmentsList);
-              }
-
               // Process [VERIFICAR_HORARIO_SEMANA:professionalName:time] command
               // Verifica se um horário específico está disponível em algum dia da semana
               const verificarHorarioMatch = aiResponse.match(/\[VERIFICAR_HORARIO_SEMANA:([^:]+):(\d{1,2}:\d{2})\]/);
@@ -8900,38 +8913,41 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
               const recentUserMessages = conversationHistory.slice(-5).filter(m => m.role === 'user').map(m => m.content).join(' ');
               const recentAssistantMessages = conversationHistory.slice(-5).filter(m => m.role === 'assistant').map(m => m.content).join(' ');
 
-              // Verificar se a mensagem anterior continha listagem de agendamentos para cancelar/remarcar
+              // Verificar se a mensagem anterior continha listagem de agendamentos para cancelar
               const lastAssistantMessage = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
               const wasListingForCancel = lastAssistantMessage.includes('Qual agendamento você deseja cancelar?');
-              const wasListingForReschedule = lastAssistantMessage.includes('Qual agendamento você deseja remarcar?');
 
               // Verificar se usuário respondeu com um número (1, 2, 3, etc.)
               const numberMatch = messageText.match(/^[1-9]$|^10$/);
 
-              if ((wasListingForCancel || wasListingForReschedule) && numberMatch) {
+              if (wasListingForCancel && numberMatch) {
                 const selectedNumber = parseInt(numberMatch[0]);
                 console.log(`📋 Usuário escolheu agendamento número: ${selectedNumber}`);
 
-                // Buscar agendamentos do cliente
-                const allAppointments = await storage.getAppointmentsByCompany(company.id);
-                const now = new Date();
+                // Buscar agendamentos do cliente - OTIMIZADO com consulta direta
+                const cleanPhone = phoneNumber.replace(/\D/g, '');
+                const nowBrasilia = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+                const todayStr = nowBrasilia.toISOString().split('T')[0];
 
-                const clientAppointments = allAppointments.filter(apt => {
-                  const aptDate = new Date(apt.appointmentDate);
-                  aptDate.setHours(0, 0, 0, 0);
-                  const nowDate = new Date(now);
-                  nowDate.setHours(0, 0, 0, 0);
+                const [appointmentRows] = await pool.execute(`
+                  SELECT
+                    a.id,
+                    a.appointment_date as appointmentDate,
+                    a.appointment_time as appointmentTime,
+                    a.status,
+                    a.professional_id as professionalId,
+                    a.service_id as serviceId
+                  FROM appointments a
+                  LEFT JOIN professionals p ON a.professional_id = p.id
+                  WHERE REPLACE(REPLACE(REPLACE(a.client_phone, '-', ''), ' ', ''), '(', '') LIKE ?
+                    AND a.appointment_date >= ?
+                    AND LOWER(a.status) IN ('pendente', 'confirmado', 'agendado', 'scheduled', 'confirmed')
+                    AND p.company_id = ?
+                  ORDER BY a.appointment_date ASC, a.appointment_time ASC
+                  LIMIT 10
+                `, [`%${cleanPhone}%`, todayStr, company.id]);
 
-                  return (
-                    apt.clientPhone?.replace(/\D/g, '') === phoneNumber.replace(/\D/g, '') &&
-                    (apt.status === 'agendado' || apt.status === 'confirmado') &&
-                    aptDate >= nowDate
-                  );
-                }).sort((a, b) => {
-                  const dateA = new Date(`${a.appointmentDate}T${a.appointmentTime}`);
-                  const dateB = new Date(`${b.appointmentDate}T${b.appointmentTime}`);
-                  return dateA.getTime() - dateB.getTime();
-                });
+                const clientAppointments = appointmentRows as any[];
 
                 if (selectedNumber <= clientAppointments.length) {
                   const selectedAppointment = clientAppointments[selectedNumber - 1];
@@ -8942,9 +8958,8 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                   const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
                   const dayName = dayNames[date.getDay()];
 
-                  if (wasListingForCancel) {
-                    // Mostrar confirmação de cancelamento
-                    aiResponse = `✅ Agendamento selecionado:
+                  // Mostrar confirmação de cancelamento
+                  aiResponse = `✅ Agendamento selecionado:
 
 📅 ${dayName}, ${date.toLocaleDateString('pt-BR')} às ${selectedAppointment.appointmentTime}
 💼 ${service?.name || 'Serviço'}
@@ -8952,31 +8967,11 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 
 Confirma o cancelamento? Responda *SIM* para cancelar ou *NÃO* para manter o agendamento.`;
 
-                    // Salvar ID do agendamento no contexto para quando confirmar
-                    await storage.addMessage({
-                      conversationId: conversation.id,
-                      role: 'system',
-                      content: `[PENDING_CANCEL_ID:${selectedAppointment.id}]`
-                    });
-
-                  } else if (wasListingForReschedule) {
-                    // Mostrar agendamento selecionado e pedir nova data/hora
-                    aiResponse = `✅ Agendamento selecionado para remarcar:
-
-📅 ${dayName}, ${date.toLocaleDateString('pt-BR')} às ${selectedAppointment.appointmentTime}
-💼 ${service?.name || 'Serviço'}
-👤 ${professional?.name || 'Profissional'}
-
-Para qual *data* e *horário* você gostaria de remarcar?
-Exemplo: "quinta às 14:00" ou "10/02/2025 às 15:30"`;
-
-                    // Salvar ID do agendamento no contexto para quando confirmar
-                    await storage.addMessage({
-                      conversationId: conversation.id,
-                      role: 'system',
-                      content: `[PENDING_RESCHEDULE_ID:${selectedAppointment.id}]`
-                    });
-                  }
+                  // Salvar ID do agendamento no contexto para quando confirmar
+                  await pool.execute(
+                    `INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)`,
+                    [conversation.id, 'system', `[PENDING_CANCEL_ID:${selectedAppointment.id}]`]
+                  );
                 } else {
                   aiResponse = `❌ Número inválido. Por favor, escolha um número entre 1 e ${clientAppointments.length}.`;
                 }
@@ -9021,228 +9016,7 @@ Seu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é 
                 }
               }
 
-              // ========================================
-              // DETECTAR NOVA DATA/HORA PARA REMARCAÇÃO (NOVO SISTEMA)
-              // ========================================
-              // Verificar se existe um agendamento pendente de remarcação
-              const allConversationMessages = await storage.getMessagesByConversation(conversation.id);
-              const pendingRescheduleMsg = allConversationMessages.find(m => m.content.includes('[PENDING_RESCHEDULE_ID:'));
-
-              // Detectar se usuário está fornecendo NOVA data para reagendamento
-              const hasDateAndTime = messageText.match(/\d{2}\/\d{2}\/\d{4}/) && messageText.match(/\d{1,2}:\d{2}/);
-              const hasOnlyTime = !messageText.match(/\d{2}\/\d{2}\/\d{4}/) && messageText.match(/\d{1,2}[:\h]\d{2}|^\d{1,2}h$/i);
-              const hasDayReference = messageText.match(/segunda|terça|quarta|quinta|sexta|sábado|domingo|amanhã|hoje/i);
-
-              // Contexto de remarcação: tem agendamento pendente OU mensagem recente pedindo nova data
-              const veryRecentAssistantMessages = conversationHistory
-                .slice(-6)
-                .filter(m => m.role === 'assistant')
-                .slice(-3)
-                .map(m => m.content)
-                .join(' ');
-
-              const isInRescheduleContext = (
-                !!pendingRescheduleMsg ||
-                veryRecentAssistantMessages.toLowerCase().includes('para qual data e horário') ||
-                veryRecentAssistantMessages.toLowerCase().includes('gostaria de remarcar')
-              );
-
-              const isProvidingNewDate = (
-                !messageText.match(/^(sim|s|ok|não|n)$/i) && // Não é confirmação simples
-                (hasDateAndTime || hasOnlyTime || hasDayReference) &&
-                isInRescheduleContext
-              );
-
-              console.log('🔍 DEBUG - Verificando isProvidingNewDate:');
-              console.log('   - Tem PENDING_RESCHEDULE_ID?', !!pendingRescheduleMsg);
-              console.log('   - Mensagem do usuário:', messageText);
-              console.log('   - Tem data+hora?', hasDateAndTime, '| Só hora?', hasOnlyTime, '| Ref dia?', hasDayReference);
-              console.log('   - Em contexto remarcação?', isInRescheduleContext);
-              console.log('   - RESULTADO:', isProvidingNewDate);
-
-              if (isProvidingNewDate) {
-                console.log('==================================================');
-                console.log('📅 DETECTADA NOVA DATA PARA REAGENDAMENTO');
-                console.log('==================================================');
-
-                // Extrair nova data/hora da mensagem do usuário
-                let newDateMatch = messageText.match(/(\d{2}\/\d{2}\/\d{4})/);
-                let newTimeMatch = messageText.match(/(?:às\s+)?(\d{1,2}[:\h]\d{2})|(\d{1,2})h/i);
-
-                // Normalizar horário
-                let newTime = '';
-                if (newTimeMatch) {
-                  if (newTimeMatch[1]) {
-                    newTime = newTimeMatch[1].replace('h', ':');
-                  } else if (newTimeMatch[2]) {
-                    newTime = newTimeMatch[2] + ':00';
-                  }
-                }
-
-                // Verificar se temos ID do agendamento pendente (NOVO SISTEMA)
-                if (pendingRescheduleMsg) {
-                  const idMatch = pendingRescheduleMsg.content.match(/\[PENDING_RESCHEDULE_ID:(\d+)\]/);
-                  if (idMatch) {
-                    const appointmentId = parseInt(idMatch[1]);
-                    console.log(`📋 Usando PENDING_RESCHEDULE_ID: ${appointmentId}`);
-
-                    // Buscar agendamento pelo ID
-                    const originalAppointment = await storage.getAppointment(appointmentId);
-
-                    if (originalAppointment && newTime) {
-                      const professional = await storage.getProfessional(originalAppointment.professionalId);
-                      const service = await storage.getService(originalAppointment.serviceId);
-
-                      // Se não tem data, pedir ao usuário
-                      if (!newDateMatch) {
-                        // Verificar se usuário mencionou dia da semana
-                        const dayMatch = messageText.match(/segunda|terça|quarta|quinta|sexta|sábado|domingo|amanhã|hoje/i);
-                        if (dayMatch) {
-                          // Converter dia da semana para data
-                          const dayName = dayMatch[0].toLowerCase();
-                          const today = new Date();
-                          const daysMap: { [key: string]: number } = {
-                            'domingo': 0, 'segunda': 1, 'terça': 2, 'quarta': 3,
-                            'quinta': 4, 'sexta': 5, 'sábado': 6
-                          };
-                          if (dayName === 'hoje') {
-                            newDateMatch = [today.toLocaleDateString('pt-BR'), today.toLocaleDateString('pt-BR')];
-                          } else if (dayName === 'amanhã') {
-                            const tomorrow = new Date(today);
-                            tomorrow.setDate(tomorrow.getDate() + 1);
-                            newDateMatch = [tomorrow.toLocaleDateString('pt-BR'), tomorrow.toLocaleDateString('pt-BR')];
-                          } else {
-                            const targetDay = daysMap[dayName.replace('-feira', '')];
-                            if (targetDay !== undefined) {
-                              const daysUntilTarget = (targetDay - today.getDay() + 7) % 7 || 7;
-                              const targetDate = new Date(today);
-                              targetDate.setDate(targetDate.getDate() + daysUntilTarget);
-                              newDateMatch = [targetDate.toLocaleDateString('pt-BR'), targetDate.toLocaleDateString('pt-BR')];
-                            }
-                          }
-                        }
-                      }
-
-                      if (newDateMatch) {
-                        const newDate = newDateMatch[1] || newDateMatch[0];
-                        const newDateParts = newDate.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-
-                        if (newDateParts) {
-                          const newDateParsed = `${newDateParts[3]}-${newDateParts[2]}-${newDateParts[1]}`;
-                          const newTimeParsed = newTime.includes(':') ?
-                            newTime.split(':').map((p, i) => i === 0 ? p.padStart(2, '0') : p).join(':') : newTime;
-
-                          // Verificar disponibilidade
-                          const allAppointments = await storage.getAppointmentsByCompany(company.id);
-                          const conflictingAppointment = allAppointments.find(apt =>
-                            apt.id !== appointmentId &&
-                            apt.professionalId === originalAppointment.professionalId &&
-                            apt.appointmentDate === newDateParsed &&
-                            apt.appointmentTime === newTimeParsed &&
-                            apt.status !== 'cancelado' && apt.status !== 'Cancelado'
-                          );
-
-                          if (conflictingAppointment) {
-                            // Horário indisponível
-                            aiResponse = `❌ O horário ${newTime} não está disponível em ${newDate}.
-
-Por favor, escolha outro horário ou data.`;
-                          } else {
-                            // Horário disponível - mostrar confirmação
-                            const origDate = new Date(originalAppointment.appointmentDate + 'T00:00:00');
-                            const newDateObj = new Date(newDateParsed + 'T00:00:00');
-                            const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-
-                            aiResponse = `✅ Confirme a remarcação:
-
-📅 DE: ${dayNames[origDate.getDay()]}, ${origDate.toLocaleDateString('pt-BR')} às ${originalAppointment.appointmentTime}
-📅 PARA: ${dayNames[newDateObj.getDay()]}, ${newDate} às ${newTimeParsed}
-
-💼 ${service?.name || 'Serviço'}
-👤 ${professional?.name || 'Profissional'}
-
-Confirma a remarcação? Responda *SIM* para confirmar ou *NÃO* para cancelar.`;
-
-                            console.log('✅ Confirmação de remarcação gerada!');
-                          }
-                        }
-                      } else {
-                        aiResponse = `Para remarcar, preciso saber a data também.
-
-Por favor, informe a data e horário desejados.
-Exemplo: "quinta às 14:00" ou "10/02/2025 às 15:30"`;
-                      }
-                    }
-                  }
-                } else {
-                  // FALLBACK: Sistema antigo - buscar dados nas mensagens
-                  console.log('⚠️ Sem PENDING_RESCHEDULE_ID, usando sistema antigo...');
-
-                  // Se não tem data na mensagem, buscar da ÚLTIMA mensagem do assistente
-                  if (!newDateMatch) {
-                    const lastAssistantMsg = conversationHistory
-                      .slice()
-                      .reverse()
-                      .find(m => m.role === 'assistant');
-
-                    if (lastAssistantMsg) {
-                      const dateFromAssistant = lastAssistantMsg.content.match(/(\d{2}\/\d{2}\/\d{4})/);
-                      if (dateFromAssistant) {
-                        newDateMatch = dateFromAssistant;
-                      }
-                    }
-                  }
-
-                  if (newDateMatch && newTime) {
-                    const newDate = newDateMatch[1];
-
-                    // Buscar mensagem com dados do agendamento original
-                    const conversationMessages = await storage.getMessagesByConversation(conversation.id);
-                    const recentMessages = conversationMessages.slice(0, 15);
-
-                    const originalAppointmentMsg = recentMessages.find(m =>
-                      m.role === 'assistant' &&
-                      m.content.includes('✅ Agendamento') &&
-                      (m.content.includes('para remarcar') || m.content.includes('Para qual data'))
-                    );
-
-                    if (originalAppointmentMsg) {
-                      const origDateMatch = originalAppointmentMsg.content.match(/📅\s+([^,]+),\s+(\d{2}\/\d{2}\/\d{4})/);
-                      const origTimeMatch = originalAppointmentMsg.content.match(/🕐\s+(\d{1,2}:\d{2})/);
-                      const origServiceMatch = originalAppointmentMsg.content.match(/💼\s+([^\n]+)/);
-                      const origProfMatch = originalAppointmentMsg.content.match(/👤\s+([^\n]+)/);
-
-                      if (origDateMatch && origTimeMatch && origServiceMatch && origProfMatch) {
-                        // Dados do agendamento original encontrados - gerar confirmação
-                        const origDayName = origDateMatch[1];
-                        const origDate = origDateMatch[2];
-                        const origTime = origTimeMatch[1];
-                        const serviceName = origServiceMatch[1].trim();
-                        const profName = origProfMatch[1].trim();
-
-                        // Gerar resposta de confirmação usando dados encontrados
-                        const newDateParts = newDate.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-                        if (newDateParts) {
-                          const newDateObj = new Date(`${newDateParts[3]}-${newDateParts[2]}-${newDateParts[1]}T00:00:00`);
-                          const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-
-                          aiResponse = `✅ Confirme a remarcação:
-
-📅 DE: ${origDayName}, ${origDate} às ${origTime}
-📅 PARA: ${dayNames[newDateObj.getDay()]}, ${newDate} às ${newTime}
-
-💼 ${serviceName}
-👤 ${profName}
-
-Confirma a remarcação? Responda *SIM* para confirmar ou *NÃO* para cancelar.`;
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-
-              // Clean up confirmation message to avoid question detection issues
+// Clean up confirmation message to avoid question detection issues
               if (aiResponse.toLowerCase().includes('agendamento realizado com sucesso')) {
                 aiResponse = aiResponse.replace(/Qualquer dúvida[^.!]*[.!?]*/gi, '');
                 aiResponse = aiResponse.replace(/estou por aqui[^.!]*[.!?]*/gi, '');
@@ -10362,141 +10136,6 @@ Por favor, escolha um dos horários disponíveis acima.`;
                         console.log('   - Data:', parsedDate || 'não encontrada');
                         console.log('   - Hora:', parsedTime || 'não encontrada');
                       }
-                    } else if (
-                      summaryMessage.content.includes('Confirma a remarcação?') ||
-                      (summaryMessage.content.includes('DE:') && summaryMessage.content.includes('PARA:') && summaryMessage.content.includes('💼') && summaryMessage.content.includes('👤'))
-                    ) {
-                      // ========================================
-                      // PROCESSAR REAGENDAMENTO
-                      // ========================================
-                      console.log('==================================================');
-                      console.log('🔄 PROCESSANDO REAGENDAMENTO');
-                      console.log('==================================================');
-                      console.log('📩 Mensagem de confirmação:', summaryMessage.content.substring(0, 200));
-                      console.log('🔍 Padrões detectados:');
-                      console.log('   - Tem "Confirma a remarcação?":', summaryMessage.content.includes('Confirma a remarcação?'));
-                      console.log('   - Tem "DE:":', summaryMessage.content.includes('DE:'));
-                      console.log('   - Tem "PARA:":', summaryMessage.content.includes('PARA:'));
-                      console.log('   - Tem "💼":', summaryMessage.content.includes('💼'));
-                      console.log('   - Tem "👤":', summaryMessage.content.includes('👤'));
-
-                      // Extrair dados da mensagem de confirmação
-                      // Formato: "📅 DE: segunda-feira, 15/12/2025 às 14:00"
-                      // Formato: "📅 PARA: sexta-feira, 20/12/2025 às 16:00"
-                      const originalDateMatch = summaryMessage.content.match(/DE:\s+[^,]+,\s+(\d{2}\/\d{2}\/\d{4})\s+às\s+(\d{1,2}:\d{2})/);
-                      const newDateMatch = summaryMessage.content.match(/PARA:\s+[^,]+,\s+(\d{2}\/\d{2}\/\d{4})\s+às\s+(\d{1,2}:\d{2})/);
-                      const serviceMatch = summaryMessage.content.match(/💼\s+([^\n]+)/);
-                      const professionalMatch = summaryMessage.content.match(/👤\s+([^\n]+)/);
-
-                      if (originalDateMatch && newDateMatch && serviceMatch && professionalMatch) {
-                        const origDate = originalDateMatch[1];
-                        const origTime = originalDateMatch[2];
-                        const newDate = newDateMatch[1];
-                        const newTime = newDateMatch[2];
-                        const serviceName = serviceMatch[1].trim();
-                        const profName = professionalMatch[1].trim();
-
-                        console.log('📋 Dados extraídos da confirmação:');
-                        console.log('   Original:', origDate, 'às', origTime);
-                        console.log('   Novo:', newDate, 'às', newTime);
-                        console.log('   Serviço:', serviceName);
-                        console.log('   Profissional:', profName);
-
-                        // Parse data original para YYYY-MM-DD
-                        const origDateParts = origDate.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-                        const parsedOrigDate = origDateParts ? `${origDateParts[3]}-${origDateParts[2]}-${origDateParts[1]}` : '';
-                        const parsedOrigTime = origTime.match(/(\d{1,2}):(\d{2})/) ?
-                          `${origTime.match(/(\d{1,2}):(\d{2})/)[1].padStart(2, '0')}:${origTime.match(/(\d{1,2}):(\d{2})/)[2]}` : '';
-
-                        // Parse nova data para YYYY-MM-DD
-                        const newDateParts = newDate.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-                        const parsedNewDate = newDateParts ? `${newDateParts[3]}-${newDateParts[2]}-${newDateParts[1]}` : '';
-                        const parsedNewTime = newTime.match(/(\d{1,2}):(\d{2})/) ?
-                          `${newTime.match(/(\d{1,2}):(\d{2})/)[1].padStart(2, '0')}:${newTime.match(/(\d{1,2}):(\d{2})/)[2]}` : '';
-
-                        console.log('🔍 Parseado:');
-                        console.log('   Original:', parsedOrigDate, parsedOrigTime);
-                        console.log('   Novo:', parsedNewDate, parsedNewTime);
-
-                        // Buscar serviço e profissional
-                        const services = await storage.getServicesByCompany(company.id);
-                        const professionals = await storage.getProfessionalsByCompany(company.id);
-
-                        // Normalize strings for comparison
-                        const normalizeString = (str: string) => {
-                          return str
-                            .toLowerCase()
-                            .normalize('NFD')
-                            .replace(/[\u0300-\u036f]/g, '') // Remove accents
-                            .replace(/\s+/g, ' ') // Replace multiple spaces with single space
-                            .trim();
-                        };
-
-                        const normalizedSearchService = normalizeString(serviceName);
-                        const normalizedSearchProfessional = normalizeString(profName);
-
-                        const service = services.find(s => {
-                          const normalizedServiceName = normalizeString(s.name);
-                          return normalizedServiceName.includes(normalizedSearchService) ||
-                                 normalizedSearchService.includes(normalizedServiceName);
-                        });
-
-                        const professional = professionals.find(p => {
-                          const normalizedProfName = normalizeString(p.name);
-                          return normalizedProfName.includes(normalizedSearchProfessional) ||
-                                 normalizedSearchProfessional.includes(normalizedProfName);
-                        });
-
-                        console.log('🔍 Encontrados:', service?.name, professional?.name);
-
-                        if (service && professional && parsedOrigDate && parsedOrigTime && parsedNewDate && parsedNewTime) {
-                          // Buscar agendamento ORIGINAL
-                          const allAppointments = await storage.getAppointmentsByCompany(company.id);
-                          const appointmentToReschedule = allAppointments.find(apt =>
-                            apt.serviceId === service.id &&
-                            apt.professionalId === professional.id &&
-                            apt.appointmentDate === parsedOrigDate &&
-                            apt.appointmentTime === parsedOrigTime &&
-                            apt.status !== 'cancelado' &&
-                            apt.status !== 'Cancelado'
-                          );
-
-                          if (appointmentToReschedule) {
-                            console.log('✅ Agendamento encontrado! ID:', appointmentToReschedule.id);
-
-                            // Atualizar agendamento no banco
-                            const rescheduleResult = await rescheduleAppointment(
-                              appointmentToReschedule.id,
-                              parsedNewDate,
-                              parsedNewTime,
-                              company.id
-                            );
-                            console.log('✅ Resultado do reagendamento:', rescheduleResult);
-
-                            // Broadcast rescheduling event
-                            broadcastEvent({
-                              type: 'rescheduled_appointment',
-                              appointment: {
-                                id: appointmentToReschedule.id,
-                                newDate: parsedNewDate,
-                                newTime: parsedNewTime,
-                                companyId: company.id
-                              }
-                            });
-
-                            // Clear cache
-                            clearAvailabilityCache(company.id);
-                          } else {
-                            console.log('❌ Agendamento original não encontrado para remarcar');
-                          }
-                        } else {
-                          console.log('❌ Dados insuficientes para buscar agendamento');
-                        }
-                      } else {
-                        console.log('❌ Falha ao extrair dados da mensagem de confirmação');
-                      }
-
-                      // FIM DO BLOCO DE REMARCAÇÃO - NÃO CRIAR NOVO AGENDAMENTO!
                     } else {
                       // ========================================
                       // FLUXO NORMAL - CRIAR AGENDAMENTO
