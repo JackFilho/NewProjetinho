@@ -8917,11 +8917,93 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
               const lastAssistantMessage = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
               const wasListingForCancel = lastAssistantMessage.includes('Qual agendamento você deseja cancelar?');
 
-              // Verificar se usuário respondeu com um número (1, 2, 3, etc.)
-              const numberMatch = messageText.match(/^[1-9]$|^10$/);
+              // Função para extrair número de várias formas de escrita
+              const extractNumberFromText = (text: string, listMessage: string): number | null => {
+                const lowerText = text.toLowerCase().trim();
 
-              if (wasListingForCancel && numberMatch) {
-                const selectedNumber = parseInt(numberMatch[0]);
+                // Mapeamento de números escritos por extenso
+                const writtenNumbers: { [key: string]: number } = {
+                  'um': 1, 'uma': 1, 'primeiro': 1, 'primeira': 1, '1º': 1, '1ª': 1,
+                  'dois': 2, 'duas': 2, 'segundo': 2, '2º': 2, '2ª': 2,
+                  'tres': 3, 'três': 3, 'terceiro': 3, 'terceira': 3, '3º': 3, '3ª': 3,
+                  'quatro': 4, '4º': 4, '4ª': 4,
+                  'cinco': 5, 'quinto': 5, '5º': 5, '5ª': 5,
+                  'seis': 6, 'sexto': 6, '6º': 6, '6ª': 6,
+                  'sete': 7, 'setimo': 7, 'sétimo': 7, 'setima': 7, 'sétima': 7, '7º': 7, '7ª': 7,
+                  'oito': 8, 'oitavo': 8, 'oitava': 8, '8º': 8, '8ª': 8,
+                  'nove': 9, 'nono': 9, 'nona': 9, '9º': 9, '9ª': 9,
+                  'dez': 10, 'decimo': 10, 'décimo': 10, 'decima': 10, 'décima': 10, '10º': 10, '10ª': 10
+                };
+
+                // Mapeamento de dias da semana
+                const daysOfWeek: { [key: string]: string } = {
+                  'domingo': 'Domingo', 'dom': 'Domingo',
+                  'segunda': 'Segunda', 'seg': 'Segunda',
+                  'terça': 'Terça', 'terca': 'Terça', 'ter': 'Terça',
+                  'quarta': 'Quarta', 'qua': 'Quarta',
+                  'quinta': 'Quinta', 'qui': 'Quinta',
+                  'sexta': 'Sexta', 'sex': 'Sexta',
+                  'sábado': 'Sábado', 'sabado': 'Sábado', 'sab': 'Sábado'
+                };
+
+                // Tentar match direto com número
+                const directMatch = lowerText.match(/^[1-9]$|^10$/);
+                if (directMatch) {
+                  return parseInt(directMatch[0]);
+                }
+
+                // Tentar extrair número de frases como "o 1", "opção 2", "agendamento 3"
+                const phraseMatch = lowerText.match(/(?:o|a|opção|opcao|agendamento|número|numero)\s*(\d+)/);
+                if (phraseMatch && parseInt(phraseMatch[1]) >= 1 && parseInt(phraseMatch[1]) <= 10) {
+                  return parseInt(phraseMatch[1]);
+                }
+
+                // Tentar encontrar dia da semana na mensagem do usuário
+                for (const [dayKey, dayName] of Object.entries(daysOfWeek)) {
+                  if (lowerText.includes(dayKey)) {
+                    console.log(`🗓️ Usuário mencionou dia da semana: ${dayName}`);
+                    // Procurar qual número corresponde a esse dia na lista
+                    const numberEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+                    for (let i = 0; i < numberEmojis.length; i++) {
+                      // Verificar se este número está associado ao dia mencionado
+                      const emojiPattern = new RegExp(`${numberEmojis[i]}\\s*${dayName}`, 'i');
+                      if (emojiPattern.test(listMessage)) {
+                        console.log(`✅ Encontrado: ${dayName} é o agendamento número ${i + 1}`);
+                        return i + 1;
+                      }
+                    }
+                    break;
+                  }
+                }
+
+                // Tentar encontrar número escrito por extenso (exceto dias da semana)
+                for (const [word, num] of Object.entries(writtenNumbers)) {
+                  // Evitar conflito com "segunda", "quarta", "quinta", "sexta" como dias da semana
+                  if (['segunda', 'quarta', 'quinta', 'sexta'].includes(word)) {
+                    // Só considera como número ordinal se tiver contexto de "opção" ou similar
+                    if (lowerText.includes(`${word} opção`) || lowerText.includes(`a ${word}`)) {
+                      return num;
+                    }
+                    continue;
+                  }
+                  if (lowerText.includes(word)) {
+                    return num;
+                  }
+                }
+
+                // Tentar extrair qualquer número da mensagem
+                const anyNumberMatch = lowerText.match(/\b(\d+)\b/);
+                if (anyNumberMatch && parseInt(anyNumberMatch[1]) >= 1 && parseInt(anyNumberMatch[1]) <= 10) {
+                  return parseInt(anyNumberMatch[1]);
+                }
+
+                return null;
+              };
+
+              // Verificar se usuário respondeu com um número (várias formas)
+              const selectedNumber = extractNumberFromText(messageText, lastAssistantMessage);
+
+              if (wasListingForCancel && selectedNumber) {
                 console.log(`📋 Usuário escolheu agendamento número: ${selectedNumber}`);
 
                 // Buscar agendamentos do cliente - OTIMIZADO com consulta direta
@@ -8984,12 +9066,22 @@ Confirma o cancelamento? Responda *SIM* para cancelar ou *NÃO* para manter o ag
               const lastAssistantMsg = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
               const isAskingCancelConfirmation = lastAssistantMsg.includes('Confirma o cancelamento?') || lastAssistantMsg.includes('SIM* para cancelar');
 
+              console.log('🔍 DEBUG CANCELAMENTO:');
+              console.log('   - Mensagem do usuário:', messageText);
+              console.log('   - É confirmação SIM?', !!isConfirmingSIM);
+              console.log('   - Última msg do assistente (100 chars):', lastAssistantMsg.substring(0, 100));
+              console.log('   - Está pedindo confirmação de cancelamento?', isAskingCancelConfirmation);
+
               if (isConfirmingSIM && isAskingCancelConfirmation) {
                 console.log('✅ Usuário confirmou cancelamento com SIM');
 
                 // Buscar o ID do agendamento pendente nas mensagens do sistema
                 const allMessages = await storage.getMessagesByConversation(conversation.id);
                 const pendingCancelMsg = allMessages.find(m => m.content.includes('[PENDING_CANCEL_ID:'));
+
+                console.log('🔍 Buscando PENDING_CANCEL_ID...');
+                console.log('   - Total de mensagens:', allMessages.length);
+                console.log('   - Encontrou PENDING_CANCEL_ID?', !!pendingCancelMsg);
 
                 if (pendingCancelMsg) {
                   const idMatch = pendingCancelMsg.content.match(/\[PENDING_CANCEL_ID:(\d+)\]/);
@@ -9012,6 +9104,73 @@ Seu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é 
                     } else {
                       aiResponse = `❌ ${cancelResult.message}`;
                     }
+                  }
+                } else {
+                  // FALLBACK: Tentar extrair dados da mensagem de confirmação
+                  console.log('⚠️ PENDING_CANCEL_ID não encontrado, tentando fallback...');
+
+                  // Extrair dados da mensagem de confirmação anterior
+                  // Formato esperado: "📅 Segunda, 07/02/2026 às 10:40" e "💼 Serviço | 👤 Profissional"
+                  const dateMatch = lastAssistantMsg.match(/📅\s+[^,]+,\s+(\d{2}\/\d{2}\/\d{4})\s+às\s+(\d{1,2}:\d{2})/);
+                  const serviceMatch = lastAssistantMsg.match(/💼\s+([^|\n]+)/);
+                  const profMatch = lastAssistantMsg.match(/👤\s+([^\n]+)/);
+
+                  console.log('🔍 Dados extraídos do fallback:');
+                  console.log('   - Data:', dateMatch ? dateMatch[1] : 'não encontrada');
+                  console.log('   - Hora:', dateMatch ? dateMatch[2] : 'não encontrada');
+                  console.log('   - Serviço:', serviceMatch ? serviceMatch[1].trim() : 'não encontrado');
+                  console.log('   - Profissional:', profMatch ? profMatch[1].trim() : 'não encontrado');
+
+                  if (dateMatch && serviceMatch && profMatch) {
+                    const aptDateStr = dateMatch[1];
+                    const aptTimeStr = dateMatch[2];
+                    const serviceName = serviceMatch[1].trim();
+                    const profName = profMatch[1].trim();
+
+                    // Converter data para formato YYYY-MM-DD
+                    const dateParts = aptDateStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+                    if (dateParts) {
+                      const parsedDate = `${dateParts[3]}-${dateParts[2]}-${dateParts[1]}`;
+                      const parsedTime = aptTimeStr.padStart(5, '0');
+
+                      console.log('🔍 Buscando agendamento: Data', parsedDate, 'Hora', parsedTime);
+
+                      // Buscar agendamento pelo telefone, data e hora
+                      const cleanPhone = phoneNumber.replace(/\D/g, '');
+                      const [aptRows] = await pool.execute(`
+                        SELECT a.id
+                        FROM appointments a
+                        LEFT JOIN professionals p ON a.professional_id = p.id
+                        WHERE REPLACE(REPLACE(REPLACE(a.client_phone, '-', ''), ' ', ''), '(', '') LIKE ?
+                          AND a.appointment_date = ?
+                          AND a.appointment_time = ?
+                          AND LOWER(a.status) IN ('pendente', 'confirmado', 'agendado', 'scheduled', 'confirmed')
+                          AND p.company_id = ?
+                        LIMIT 1
+                      `, [`%${cleanPhone}%`, parsedDate, parsedTime, company.id]);
+
+                      const foundApts = aptRows as any[];
+                      if (foundApts.length > 0) {
+                        const appointmentId = foundApts[0].id;
+                        console.log(`🗑️ Fallback: Cancelando agendamento ID: ${appointmentId}`);
+
+                        const cancelResult = await cancelAppointmentById(appointmentId, company.id);
+
+                        if (cancelResult.success) {
+                          aiResponse = `✅ Agendamento cancelado com sucesso!
+
+Seu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é só me avisar! 😊`;
+                        } else {
+                          aiResponse = `❌ ${cancelResult.message}`;
+                        }
+                      } else {
+                        console.log('❌ Fallback: Agendamento não encontrado');
+                        aiResponse = `❌ Não consegui encontrar o agendamento para cancelar. Por favor, tente novamente.`;
+                      }
+                    }
+                  } else {
+                    console.log('❌ Fallback: Dados insuficientes na mensagem');
+                    aiResponse = `❌ Ocorreu um erro ao processar o cancelamento. Por favor, tente novamente desde o início.`;
                   }
                 }
               }
