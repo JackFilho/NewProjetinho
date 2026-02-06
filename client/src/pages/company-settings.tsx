@@ -95,16 +95,10 @@ export default function CompanySettings() {
   const queryClient = useQueryClient();
   const { company } = useCompanyAuth();
 
-  // Log company data when loaded
+  // Company data loaded effect (logging removed for security)
   useEffect(() => {
     if (company) {
-      console.log('🔍 [FRONTEND] Company data loaded:', {
-        id: company.id,
-        googleMapsLocation: company.googleMapsLocation,
-        coursesDescription: company.coursesDescription,
-        coursesImages: company.coursesImages,
-        coursesPdfs: company.coursesPdfs,
-      });
+      // Company data loaded
     }
   }, [company]);
 
@@ -114,17 +108,14 @@ export default function CompanySettings() {
 
   useEffect(() => {
     if (company && shouldReloadFiles.current) {
-      console.log('🔍 [COURSE FILES] Loading files from company data:', {
-        coursesImages: company.coursesImages,
-        coursesPdfs: company.coursesPdfs
-      });
+      // Loading course files from company data
 
       const existingFiles: Array<{url: string, type: string, name: string}> = [];
 
       // Load existing images
       if (company.coursesImages) {
         const imageUrls = company.coursesImages.split(',').map(url => url.trim()).filter(url => url);
-        console.log('🔍 [COURSE FILES] Parsed image URLs:', imageUrls);
+        // Parsed image URLs
         imageUrls.forEach((url, index) => {
           existingFiles.push({
             url,
@@ -137,7 +128,7 @@ export default function CompanySettings() {
       // Load existing PDFs
       if (company.coursesPdfs) {
         const pdfUrls = company.coursesPdfs.split(',').map(url => url.trim()).filter(url => url);
-        console.log('🔍 [COURSE FILES] Parsed PDF URLs:', pdfUrls);
+        // Parsed PDF URLs
         pdfUrls.forEach((url, index) => {
           existingFiles.push({
             url,
@@ -147,7 +138,7 @@ export default function CompanySettings() {
         });
       }
 
-      console.log('🔍 [COURSE FILES] Setting courseFiles to:', existingFiles);
+      // Course files loaded
       setCourseFiles(existingFiles);
       shouldReloadFiles.current = false; // Prevent reloading until next save
     }
@@ -468,13 +459,10 @@ export default function CompanySettings() {
 
   const updateProfileMutation = useMutation({
     mutationFn: async (data: CompanyProfileData) => {
-      console.log('🔧 [FRONTEND] Saving profile data:', data);
       const response = await apiRequest("/api/company/profile", "PUT", data);
-      console.log('🔧 [FRONTEND] Profile save response:', response);
       return response;
     },
     onSuccess: (data) => {
-      console.log('🔧 [FRONTEND] Profile saved successfully:', data);
       toast({
         title: "Perfil atualizado",
         description: "As informações da empresa foram atualizadas com sucesso.",
@@ -603,13 +591,10 @@ export default function CompanySettings() {
 
   const updateAiAgentMutation = useMutation({
     mutationFn: async (data: CompanyAiAgentData) => {
-      console.log('🔧 [FRONTEND] Saving AI agent data:', data);
       const response = await apiRequest("/api/company/ai-agent", "PUT", data);
-      console.log('🔧 [FRONTEND] AI agent save response:', response);
       return response;
     },
     onSuccess: (data) => {
-      console.log('🔧 [FRONTEND] AI agent saved successfully:', data);
       toast({
         title: "Agente IA configurado",
         description: "As configurações do agente IA foram atualizadas com sucesso.",
@@ -1851,7 +1836,7 @@ export default function CompanySettings() {
                           : "Notificações N8N foram desativadas"
                       });
                     }).catch(err => {
-                      console.error('Erro ao atualizar webhook n8n:', err);
+                      console.error('Erro ao atualizar webhook n8n');
                       toast({
                         title: "Erro",
                         description: "Falha ao atualizar configuração",
@@ -1883,7 +1868,7 @@ export default function CompanySettings() {
                           })
                         }).then(() => {
                           queryClient.invalidateQueries({ queryKey: ['/api/company/auth/profile'] });
-                        }).catch(err => console.error('Erro ao atualizar webhook n8n:', err));
+                        }).catch(err => console.error('Erro ao atualizar webhook n8n'));
                       }, 1000);
                       return () => clearTimeout(timeout);
                     }}
@@ -1916,7 +1901,7 @@ export default function CompanySettings() {
                             });
                           }
                         }).catch(err => {
-                          console.error('Erro ao testar webhook:', err);
+                          console.error('Erro ao testar webhook');
                           toast({
                             title: "Erro",
                             description: "Falha ao enviar teste",

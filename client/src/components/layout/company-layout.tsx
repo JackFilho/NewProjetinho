@@ -253,7 +253,7 @@ export default function CompanyLayout({ children }: CompanyLayoutProps) {
           }
         }
       } catch (error) {
-        console.error('Erro ao auto-completar agendamentos antigos:', error);
+        console.error('Erro ao auto-completar agendamentos antigos');
       }
     };
 
