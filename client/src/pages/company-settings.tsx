@@ -334,7 +334,7 @@ export default function CompanySettings() {
       aiAgentPrompt: company.aiAgentPrompt || "",
       agentInactivityTimeout: company.agentInactivityTimeout ? Number(company.agentInactivityTimeout) : 30,
       autoSelectProfessional: company.autoSelectProfessional === true,
-      openaiApiKey: company.openaiApiKey || "",
+      openaiApiKey: "",
       openaiModel: company.openaiModel || "gpt-4o-mini",
       openaiTemperature: company.openaiTemperature ? Number(company.openaiTemperature) : 0.7,
       openaiMaxTokens: company.openaiMaxTokens ? Number(company.openaiMaxTokens) : 180,
@@ -415,7 +415,7 @@ export default function CompanySettings() {
       asaasEnabled: false,
     },
     values: company ? {
-      asaasApiKey: company.asaasApiKey || "",
+      asaasApiKey: "",
       asaasEnvironment: company.asaasEnvironment || "sandbox",
       asaasEnabled: company.asaasEnabled || false,
     } : undefined,
@@ -440,12 +440,12 @@ export default function CompanySettings() {
   // Force update OpenAI fields when company data changes
   useEffect(() => {
     if (company) {
-      if (company.openaiApiKey) aiAgentForm.setValue('openaiApiKey', company.openaiApiKey, { shouldValidate: false, shouldDirty: false });
+      // API key não é mais retornada pelo backend por segurança - o campo fica vazio até o usuário digitar uma nova
       if (company.openaiModel) aiAgentForm.setValue('openaiModel', company.openaiModel, { shouldValidate: false, shouldDirty: false });
       if (company.openaiTemperature !== undefined) aiAgentForm.setValue('openaiTemperature', Number(company.openaiTemperature), { shouldValidate: false, shouldDirty: false });
       if (company.openaiMaxTokens !== undefined) aiAgentForm.setValue('openaiMaxTokens', Number(company.openaiMaxTokens), { shouldValidate: false, shouldDirty: false });
     }
-  }, [company?.openaiApiKey, company?.openaiModel, company?.openaiTemperature, company?.openaiMaxTokens, aiAgentForm]);
+  }, [company?.hasOpenaiApiKey, company?.openaiModel, company?.openaiTemperature, company?.openaiMaxTokens, aiAgentForm]);
 
   // WhatsApp instances query
   const { data: whatsappInstances = [], isLoading: isLoadingInstances } = useQuery<any[]>({
@@ -2260,7 +2260,7 @@ export default function CompanySettings() {
                           <FormControl>
                             <Input
                               type="password"
-                              placeholder="sk-..."
+                              placeholder={company?.hasOpenaiApiKey ? "••••••••• (chave já configurada - deixe vazio para manter)" : "sk-..."}
                               {...field}
                             />
                           </FormControl>
@@ -3606,7 +3606,7 @@ export default function CompanySettings() {
                         <FormControl>
                           <Input
                             type="password"
-                            placeholder="Digite seu Access Token do Mercado Pago"
+                            placeholder={company?.hasAsaasApiKey ? "••••••••• (chave já configurada - deixe vazio para manter)" : "Digite seu Access Token do Mercado Pago"}
                             {...field}
                           />
                         </FormControl>

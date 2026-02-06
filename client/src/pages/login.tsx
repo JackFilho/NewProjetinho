@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
+import { sanitizeHtml } from "@/utils/sanitize";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -166,7 +167,7 @@ export default function Login() {
       <footer className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-2 z-40">
         <div className="text-xs text-gray-500 text-center">
           {settings?.customHtml ? (
-            <div dangerouslySetInnerHTML={{ __html: settings.customHtml }} />
+            <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(settings.customHtml) }} />
           ) : (
             <>{settings?.systemName || "AIDA"} ©2025 - Versão 1.0 - Powered by Halarum</>
           )}

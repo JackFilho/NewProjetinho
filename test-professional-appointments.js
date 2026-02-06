@@ -2,10 +2,13 @@
 const mysql = require('mysql2/promise');
 
 async function testAppointments() {
+  if (!process.env.DB_PASSWORD) {
+    throw new Error('Variável DB_PASSWORD é obrigatória');
+  }
   const connection = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
+    password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME || 'inhouseaida'
   });
 

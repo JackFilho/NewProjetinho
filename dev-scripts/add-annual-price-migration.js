@@ -1,12 +1,15 @@
 const mysql = require('mysql2/promise');
 
 async function addAnnualPriceColumn() {
+  if (!process.env.MYSQL_HOST || !process.env.MYSQL_PASSWORD) {
+    throw new Error('Variáveis MYSQL_HOST e MYSQL_PASSWORD são obrigatórias');
+  }
   const connection = await mysql.createConnection({
-    host: process.env.MYSQL_HOST || '69.62.101.23',
-    port: process.env.MYSQL_PORT || 3306,
-    user: process.env.MYSQL_USER || 'gilliard_salao',
-    password: process.env.MYSQL_PASSWORD || 'Gilliard@2024',
-    database: process.env.MYSQL_DATABASE || 'gilliard_salao'
+    host: process.env.MYSQL_HOST,
+    port: parseInt(process.env.MYSQL_PORT || '3306'),
+    user: process.env.MYSQL_USER,
+    password: process.env.MYSQL_PASSWORD,
+    database: process.env.MYSQL_DATABASE
   });
 
   try {

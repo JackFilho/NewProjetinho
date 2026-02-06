@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "crypto";
 import storage from "./storage";
 import { z } from "zod";
 
@@ -172,7 +173,7 @@ export async function createPixPayment(
         console.log('[MercadoPago] externalReference truncado para 256 chars');
       }
     }
-    console.log(`[MercadoPago] externalReference (${externalRef.length} chars):`, externalRef);
+    console.log(`[MercadoPago] externalReference (${externalRef.length} chars)`);
 
     // Buscar URL do sistema para webhook
     const globalSettings = await storage.getGlobalSettings();
@@ -200,7 +201,7 @@ export async function createPixPayment(
       console.log('[MercadoPago] Webhook URL:', paymentPayload.notification_url);
     }
 
-    console.log('[MercadoPago] Criando cobrança PIX:', JSON.stringify(paymentPayload, null, 2));
+    console.log('[MercadoPago] Criando cobrança PIX - valor:', paymentPayload.transaction_amount, '- método:', paymentPayload.payment_method_id);
 
     const response = await fetch(`${MP_API_URL}/v1/payments`, {
       method: 'POST',
@@ -344,7 +345,7 @@ export async function createCardPayment(
       console.log('[MercadoPago] Webhook URL:', preferencePayload.notification_url);
     }
 
-    console.log('[MercadoPago] Criando preferência de checkout:', JSON.stringify(preferencePayload, null, 2));
+    console.log('[MercadoPago] Criando preferência de checkout - items:', preferencePayload.items?.length, '- valor:', preferencePayload.items?.[0]?.unit_price);
 
     const response = await fetch(`${MP_API_URL}/checkout/preferences`, {
       method: 'POST',
@@ -362,7 +363,7 @@ export async function createCardPayment(
     }
 
     const preference = await response.json();
-    console.log('[MercadoPago] Preferência criada:', preference.id, 'Link:', preference.init_point);
+    console.log('[MercadoPago] Preferência criada:', preference.id);
 
     return {
       id: preference.id,
@@ -463,11 +464,7 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
     const { companyId } = req.params;
     const notification = req.body;
 
-    console.log(`[MP Webhook] ========================================`);
     console.log(`[MP Webhook] Notificação recebida para empresa ${companyId}`);
-    console.log(`[MP Webhook] Body:`, JSON.stringify(notification, null, 2));
-    console.log(`[MP Webhook] Query:`, JSON.stringify(req.query, null, 2));
-    console.log(`[MP Webhook] ========================================`);
 
     // Mercado Pago envia diferentes formatos de notificação
     let paymentId: string | null = null;
@@ -542,15 +539,18 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
       }
 
       const externalRef = payment.external_reference;
-      console.log(`[MP Webhook] External Reference:`, externalRef);
-
       // Tentar parsear como JSON (dados do agendamento pendente)
       try {
         const pendingData = JSON.parse(externalRef);
-        console.log(`[MP Webhook] Dados parseados:`, JSON.stringify(pendingData, null, 2));
 
         if (pendingData.type === 'pending_appointment') {
-          console.log(`[MP Webhook] Tipo pending_appointment detectado - criando agendamento...`);
+          // SEGURANÇA: Validar que o companyId do external_reference bate com o da URL
+          if (String(pendingData.companyId) !== String(companyId)) {
+            console.error(`[MP Webhook] ⚠️ SEGURANÇA: companyId mismatch! URL=${companyId}, payload=${pendingData.companyId}`);
+            processingPayments.delete(paymentId);
+            return res.status(200).json({ received: true, error: 'companyId mismatch' });
+          }
+          console.log(`[MP Webhook] Criando agendamento...`);
 
           // Converter data - pode vir como DD/MM/YYYY ou YYYY-MM-DD
           let appointmentDate = '';

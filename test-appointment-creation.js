@@ -6,10 +6,13 @@ async function testAppointmentCreation() {
 
   try {
     // Conectar ao banco de dados
+    if (!process.env.DB_PASSWORD) {
+      throw new Error('Variável DB_PASSWORD é obrigatória');
+    }
     connection = await mysql.createConnection({
       host: process.env.DB_HOST || 'localhost',
       user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || 'aida123',
+      password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME || 'inhouseaida'
     });
 

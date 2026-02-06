@@ -107,7 +107,7 @@ export const companyAiAgentSchema = z.object({
   aiAgentPrompt: z.string().min(10, "Prompt deve ter pelo menos 10 caracteres"),
   agentInactivityTimeout: z.number().int().min(10).max(60).default(30),
   autoSelectProfessional: z.boolean().default(false),
-  openaiApiKey: z.string().min(1, "Chave da API OpenAI é obrigatória"),
+  openaiApiKey: z.string().optional(),
   openaiModel: z.string().min(1, "Modelo é obrigatório").default("gpt-4o-mini"),
   openaiTemperature: z.number().min(0).max(2).default(0.7),
   openaiMaxTokens: z.number().int().min(100).max(8000).default(180),
@@ -179,7 +179,7 @@ export const companySettingsSchema = z.object({
 });
 
 export const asaasConfigSchema = z.object({
-  asaasApiKey: z.string().min(1, "Chave da API é obrigatória"),
+  asaasApiKey: z.string().optional(),
   asaasEnvironment: z.enum(["sandbox", "production"]).optional(),
   asaasEnabled: z.boolean().optional(),
 });

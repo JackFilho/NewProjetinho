@@ -44,8 +44,12 @@ const app = express();
 const MemoryStore = createMemoryStore(session);
 
 // Session configuration
+const sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret) {
+  throw new Error('SESSION_SECRET é obrigatória. Defina no arquivo .env');
+}
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'your-secret-key',
+  secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
   store: new MemoryStore({

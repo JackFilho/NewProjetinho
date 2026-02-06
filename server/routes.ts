@@ -16,6 +16,32 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
+import rateLimit from "express-rate-limit";
+
+// Rate limiters para proteção contra brute force
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 10, // 10 tentativas por IP
+  message: { message: "Muitas tentativas de login. Tente novamente em 15 minutos." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 5, // 5 requisições por IP por hora
+  message: { message: "Muitas solicitações de recuperação de senha. Tente novamente mais tarde." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const apiGeneralLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minuto
+  max: 100, // 100 requisições por minuto por IP
+  message: { message: "Muitas requisições. Tente novamente em alguns segundos." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 import { 
   getLoyaltyCampaignsByCompany, 
@@ -337,8 +363,8 @@ async function sendAppointmentErrorWebhook(
     console.log('🚨 [ERROR WEBHOOK] Enviando notificação de erro para N8N');
 
     if (process.env.DEBUG_N8N_WEBHOOK === 'true') {
-      console.log('🔍 [ERROR WEBHOOK] URL:', company.n8nWebhookUrl);
-      console.log('📦 [ERROR WEBHOOK] Payload:', JSON.stringify(webhookPayload, null, 2));
+      console.log('🔍 [ERROR WEBHOOK] URL configured:', !!company.n8nWebhookUrl);
+      console.log('📦 [ERROR WEBHOOK] Payload keys:', Object.keys(webhookPayload).join(', '));
     }
 
     const response = await fetch(company.n8nWebhookUrl, {
@@ -2115,7 +2141,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
         const blockData = extractDataFromAppointmentBlock(block);
 
         if (blockData.clientName && blockData.date && blockData.time) {
-          console.log(`✅ Dados extraídos:`, JSON.stringify(blockData, null, 2));
+          console.log(`✅ Dados extraídos - date: ${blockData.date}, time: ${blockData.time}, hasClient: ${!!blockData.clientName}`);
 
           const singleAppointmentId = await createSingleAppointmentFromExtractedData(
             companyId,
@@ -2320,12 +2346,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       }
     }
 
-    console.log('==================================================');
-    console.log('📋 DADOS EXTRAÍDOS DO RESUMO');
-    console.log('==================================================');
-    console.log('Summary text:', messageToExtractFrom.substring(0, 300));
-    console.log('Extracted data:', JSON.stringify(extractedFromSummary, null, 2));
-    console.log('==================================================');
+    console.log('📋 DADOS EXTRAÍDOS DO RESUMO - fields:', Object.keys(extractedFromSummary).join(', '));
 
     // CRÍTICO: Pegar apenas as últimas 12 mensagens do USUÁRIO para evitar contaminar com dados muito antigos
     // IMPORTANTE: allMessages vem DESC do banco (mais recente primeiro), então slice(0,12) pega as 12 mais recentes
@@ -2763,17 +2784,17 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
     console.log('Time:', extractedTime ? `✅ ${extractedTime}` : '❌ MISSING');
     console.log('Name:', extractedName ? `✅ ${extractedName}` : '❌ MISSING');
     console.log('Day:', extractedDay || '❌ MISSING');
-    console.log('Summary Data:', JSON.stringify(extractedFromSummary, null, 2));
+    console.log('Summary Data fields:', Object.keys(extractedFromSummary).join(', '));
     console.log('==================================================');
 
     if (!professional || !service || !extractedTime) {
       console.log('❌❌❌ ERRO CRÍTICO: Dados insuficientes para criar agendamento');
       console.log('Missing:', {
-        professional: !professional ? '❌ MISSING PROFESSIONAL' : `✅ ${professional.name}`,
-        service: !service ? '❌ MISSING SERVICE' : `✅ ${service.name}`,
-        time: !extractedTime ? '❌ MISSING TIME' : `✅ ${extractedTime}`
+        professional: !professional ? '❌ MISSING' : `✅ ID: ${professional.id}`,
+        service: !service ? '❌ MISSING' : `✅ ID: ${service.id}`,
+        time: !extractedTime ? '❌ MISSING' : `✅ ${extractedTime}`
       });
-      console.log('📋 Available professionals:', professionals.map(p => `${p.name} (ID: ${p.id})`).join(', '));
+      console.log('📋 Available professionals count:', professionals.length);
       console.log('📋 Available services:', services.map(s => `${s.name} (ID: ${s.id})`).join(', '));
       console.log('❌ ABORTANDO criação de agendamento');
 
@@ -3105,7 +3126,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 
     try {
       broadcastEvent(appointmentNotification);
-      console.log('✅ Broadcast notification sent:', JSON.stringify(appointmentNotification, null, 2));
+      console.log('✅ Broadcast notification sent for appointment type:', appointmentNotification?.type);
     } catch (broadcastError) {
       console.error('⚠️ Broadcast error:', broadcastError);
     }
@@ -3149,8 +3170,8 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 
         // Set DEBUG_N8N_WEBHOOK=true in .env to see detailed logs
         if (process.env.DEBUG_N8N_WEBHOOK === 'true') {
-          console.log('🔍 [AI/WHATSAPP] Sending to n8n webhook:', company.n8nWebhookUrl);
-          console.log('📦 [AI/WHATSAPP] Payload:', JSON.stringify(webhookPayload, null, 2));
+          console.log('🔍 [AI/WHATSAPP] Sending to n8n webhook');
+          console.log('📦 [AI/WHATSAPP] Payload keys:', Object.keys(webhookPayload).join(', '));
         }
 
         const response = await fetch(company.n8nWebhookUrl, {
@@ -3610,7 +3631,7 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
         return;
       }
 
-      console.log('✅ Valid appointment data extracted with explicit confirmation:', JSON.stringify(appointmentData, null, 2));
+      console.log('✅ Valid appointment data extracted - serviceId:', appointmentData.serviceId, 'date:', appointmentData.date, 'time:', appointmentData.time);
 
       // Find the service to get duration
       const service = services.find(s => s.id === appointmentData.serviceId);
@@ -3677,7 +3698,7 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
         reminderSent: 0
       };
 
-      console.log('📋 Creating appointment with correct date:', JSON.stringify(appointmentPayload, null, 2));
+      console.log('📋 Creating appointment - companyId:', appointmentPayload.companyId, 'serviceId:', appointmentPayload.serviceId, 'date:', appointmentPayload.appointmentDate);
       
       let appointment;
       try {
@@ -3740,6 +3761,46 @@ const broadcastEvent = (eventData: any) => {
 };
 
 export async function registerRoutes(app: Express): Promise<Server> {
+
+  // Rate limiter geral para todas as rotas da API
+  app.use('/api/', apiGeneralLimiter);
+
+  // Proteção CSRF via validação de Origin/Referer para mutações (POST/PUT/PATCH/DELETE)
+  app.use('/api/', (req: any, res, next) => {
+    // Permitir métodos GET/HEAD/OPTIONS sem verificação
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+      return next();
+    }
+
+    // Permitir webhooks (não têm Origin do nosso domínio)
+    if (req.path.includes('/webhook/')) {
+      return next();
+    }
+
+    // Permitir rotas de agendamento público (booking page)
+    if (req.path.includes('/public/')) {
+      return next();
+    }
+
+    const origin = req.get('Origin') || req.get('Referer') || '';
+    const host = req.get('Host') || '';
+
+    // Em produção, verificar se Origin/Referer corresponde ao nosso host
+    if (process.env.NODE_ENV === 'production' && origin) {
+      try {
+        const originUrl = new URL(origin);
+        const hostWithoutPort = host.split(':')[0];
+        if (originUrl.hostname !== hostWithoutPort && originUrl.hostname !== 'localhost') {
+          console.warn(`[CSRF] Bloqueado: Origin=${origin} não corresponde a Host=${host}`);
+          return res.status(403).json({ message: 'Requisição bloqueada por proteção CSRF' });
+        }
+      } catch {
+        // Origin inválida
+      }
+    }
+
+    next();
+  });
 
   // Ensure trial columns exist in companies table
   try {
@@ -3807,111 +3868,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     console.error('❌ Erro ao verificar/criar colunas de trial:', error);
   }
 
-  // Test endpoint to check appointments in MySQL
-  app.get('/api/test/appointments-count', async (req, res) => {
-    try {
-      const appointments = await storage.getAppointmentsByCompany(1);
-      console.log('📊 Current appointments in MySQL:', appointments.length);
-      
-      const saturdayAppointments = appointments.filter(apt => {
-        const aptDate = new Date(apt.appointmentDate);
-        return aptDate.getDay() === 6; // Saturday
-      });
-      
-      res.json({
-        total: appointments.length,
-        saturday: saturdayAppointments.length,
-        latest: appointments.slice(-2).map(apt => ({
-          id: apt.id,
-          clientName: apt.clientName,
-          date: apt.appointmentDate,
-          time: apt.appointmentTime,
-          professional: apt.professional?.name
-        }))
-      });
-    } catch (error) {
-      console.error('❌ Error checking appointments:', error);
-      res.status(500).json({ error: 'Database error' });
-    }
-  });
-
-  // Test endpoint to create appointment directly in MySQL
-  app.post('/api/test/create-appointment', async (req, res) => {
-    try {
-      const appointment = await storage.createAppointment({
-        companyId: 1,
-        professionalId: 4, // Silva
-        serviceId: 1, // Corte
-        clientName: 'Gilliard Teste MySQL',
-        clientPhone: '554999214230',
-        clientEmail: null,
-        appointmentDate: new Date('2025-06-14'), // Saturday
-        appointmentTime: '15:00',
-        duration: 30,
-        totalPrice: 25.00,
-        status: 'Pendente',
-        notes: 'Teste direto MySQL - criado via endpoint'
-      });
-      
-      console.log('✅ Test appointment created in MySQL:', appointment);
-      res.json({ success: true, appointment });
-    } catch (error) {
-      console.error('❌ Error creating test appointment:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-  // Test endpoint for notification system (before auth middleware)
-  app.get('/api/test-notification', async (req, res) => {
-    console.log('🔔 Test notification endpoint called');
-    
-    try {
-      // Create a real test appointment to trigger notifications
-      const testAppointment = {
-        companyId: 1,
-        serviceId: 11, // Corte de Cabelo
-        professionalId: 5, // Magnus
-        clientName: 'Teste Notificação',
-        clientPhone: '49999999999',
-        appointmentDate: new Date('2025-06-13T00:00:00.000Z'),
-        appointmentTime: '10:00',
-        duration: 45,
-        status: 'Pendente',
-        totalPrice: '35.00',
-        notes: 'Agendamento teste para notificação',
-        reminderSent: 0
-      };
-
-      const appointment = await storage.createAppointment(testAppointment);
-      console.log('✅ Test appointment created:', appointment.id);
-
-      // Get service and professional info for notification
-      const service = await storage.getService(testAppointment.serviceId);
-      const professional = await storage.getProfessional(testAppointment.professionalId);
-
-      // Broadcast new appointment event
-      broadcastEvent({
-        type: 'new_appointment',
-        appointment: {
-          id: appointment.id,
-          clientName: testAppointment.clientName,
-          serviceName: service?.name || 'Serviço Teste',
-          professionalName: professional?.name || 'Profissional Teste',
-          appointmentDate: '2025-06-13',
-          appointmentTime: '10:00'
-        }
-      });
-      
-      console.log('📡 Real appointment notification broadcast sent');
-      res.json({ 
-        message: 'Test appointment created and notification sent', 
-        success: true,
-        appointmentId: appointment.id
-      });
-    } catch (error) {
-      console.error('❌ Error creating test appointment:', error);
-      res.status(500).json({ error: 'Failed to create test appointment' });
-    }
-  });
+  // REMOVIDO: endpoints /api/test/appointments-count e /api/test/create-appointment (sem autenticação)
+  // REMOVIDO: endpoint /api/test-notification (sem autenticação)
 
   // Auth middleware
   await setupAuth(app);
@@ -3951,50 +3909,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  // Test endpoint to trigger notification
-  app.post('/api/test/notification-trigger', async (req, res) => {
-    try {
-      console.log(`📡 Testing notification system. Active SSE connections: ${sseConnections.size}`);
-      
-      // Broadcast test notification
-      const testNotification = {
-        type: 'new_appointment',
-        appointment: {
-          id: Date.now(),
-          clientName: 'Teste Notificação',
-          serviceName: 'Corte de Cabelo',
-          professionalName: 'Magnus',
-          appointmentDate: '2025-06-17',
-          appointmentTime: '15:00',
-          status: 'Pendente'
-        }
-      };
-
-      broadcastEvent(testNotification);
-      console.log('✅ Test notification broadcast sent:', JSON.stringify(testNotification, null, 2));
-      
-      res.json({ 
-        success: true, 
-        activeConnections: sseConnections.size,
-        notification: testNotification
-      });
-    } catch (error) {
-      console.error('❌ Error sending test notification:', error);
-      res.status(500).json({ error: 'Failed to send test notification' });
-    }
-  });
+  // REMOVIDO: endpoint /api/test/notification-trigger (sem autenticação)
 
 
 
-  // Simple admin authentication using hardcoded credentials for demo
-  const ADMIN_CREDENTIALS = {
-    username: 'admin',
-    password: 'admin123',
-    id: 1,
-    email: 'admin@sistema.com',
-    firstName: 'Administrador',
-    lastName: 'Sistema'
-  };
+  // REMOVIDO: credenciais de admin hardcoded (vulnerabilidade de segurança)
 
   // Company routes
   app.get('/api/companies', isAuthenticated, async (req, res) => {
@@ -4093,10 +4012,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/companies/:id', isAuthenticated, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      console.log('Updating company with data:', req.body);
-      
+      console.log('Updating company ID:', id, '- fields:', Object.keys(req.body).join(', '));
+
       const validatedData = insertCompanySchema.partial().parse(req.body);
-      console.log('Validated data:', validatedData);
+      console.log('Validated fields:', Object.keys(validatedData).join(', '));
       
       // Hash password if provided and not empty
       if (validatedData.password && validatedData.password.trim() !== '') {
@@ -4112,7 +4031,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const company = await storage.updateCompany(id, validatedData);
-      console.log('Updated company:', company);
+      console.log('Updated company ID:', company?.id);
       res.json(company);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -4770,7 +4689,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin authentication routes
-  app.post('/api/auth/login', async (req: any, res) => {
+  app.post('/api/auth/login', loginLimiter, async (req: any, res) => {
     try {
       const { username, password } = req.body;
       
@@ -4889,22 +4808,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Temporary password reset route
-  app.post('/api/temp-reset-password', async (req: any, res) => {
-    try {
-      const hashedPassword = await bcrypt.hash('123456', 10);
-      await db.update(companies)
-        .set({ password: hashedPassword })
-        .where(eq(companies.email, 'damaceno02@hotmail.com'));
-      res.json({ message: "Password reset to 123456" });
-    } catch (error) {
-      console.error("Password reset error:", error);
-      res.status(500).json({ message: "Error resetting password" });
-    }
-  });
+  // REMOVIDO: endpoint /api/temp-reset-password (vulnerabilidade de segurança - reset sem autenticação)
 
   // Company forgot password route - sends recovery email
-  app.post('/api/auth/forgot-password', async (req: any, res) => {
+  app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req: any, res) => {
     try {
       const { email } = req.body;
 
@@ -4982,7 +4889,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Company reset password route
-  app.post('/api/auth/reset-password', async (req: any, res) => {
+  app.post('/api/auth/reset-password', loginLimiter, async (req: any, res) => {
     try {
       const { token, newPassword } = req.body;
       
@@ -5130,7 +5037,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         LIMIT 10
       `);
 
-      console.log('Top clients result structure:', JSON.stringify(topClientsResult, null, 2));
+      console.log('Top clients result count:', Array.isArray(topClientsResult) ? topClientsResult.length : 'N/A');
 
       // Company details
       const companyDetailsResult = await db.execute(sql`
@@ -5326,7 +5233,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Company Auth routes
-  app.post('/api/company/auth/login', async (req: any, res) => {
+  app.post('/api/company/auth/login', loginLimiter, async (req: any, res) => {
     try {
       const { email, password } = req.body;
       
@@ -5348,7 +5255,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const isValidPassword = await bcrypt.compare(password, company.password);
-      console.log('Password valid:', isValidPassword);
       if (!isValidPassword) {
         return res.status(401).json({ message: "Credenciais inválidas" });
       }
@@ -5553,7 +5459,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         aiAgentPrompt: company.ai_agent_prompt,
         agentInactivityTimeout: company.agent_inactivity_timeout,
         autoSelectProfessional: company.auto_select_professional === 1,
-        openaiApiKey: company.openai_api_key,
+        hasOpenaiApiKey: !!company.openai_api_key,
         openaiModel: company.openai_model,
         openaiTemperature: company.openai_temperature ? parseFloat(company.openai_temperature) : 0.7,
         openaiMaxTokens: company.openai_max_tokens,
@@ -5569,15 +5475,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         courseNotificationTimeout: company.course_notification_timeout ?? 30,
         ignoredNumbers: company.ignored_numbers,
         birthdayMessage: company.birthday_message,
-        resetToken: company.reset_token,
-        resetTokenExpires: company.reset_token_expires,
+        // resetToken e resetTokenExpires removidos por segurança - nunca expor ao frontend
         tourEnabled: company.tour_enabled,
         trialExpiresAt: company.trial_expires_at,
         trialAlertShown: company.trial_alert_shown,
         subscriptionStatus: company.subscription_status,
         n8nWebhookUrl: company.n8n_webhook_url,
         n8nWebhookEnabled: company.n8n_webhook_enabled,
-        asaasApiKey: company.asaas_api_key,
+        hasAsaasApiKey: !!company.asaas_api_key,
         asaasEnvironment: company.asaas_environment,
         asaasEnabled: company.asaas_enabled === 1,
         createdAt: company.created_at,
@@ -5841,28 +5746,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { aiAgentPrompt, agentInactivityTimeout, autoSelectProfessional, openaiApiKey, openaiModel, openaiTemperature, openaiMaxTokens } = req.body;
-      console.log('🔧 [AI-AGENT] Received prompt (length):', aiAgentPrompt?.length);
-      console.log('🔧 [AI-AGENT] Prompt preview:', aiAgentPrompt?.substring(0, 100));
-      console.log('🔧 [AI-AGENT] Agent inactivity timeout:', agentInactivityTimeout);
-      console.log('🔧 [AI-AGENT] Auto select professional:', autoSelectProfessional);
-      console.log('🔧 [AI-AGENT] OpenAI Model:', openaiModel);
+      console.log('🔧 [AI-AGENT] Received prompt length:', aiAgentPrompt?.length, '- model:', openaiModel);
 
       if (!aiAgentPrompt || aiAgentPrompt.trim().length < 10) {
         return res.status(400).json({ message: "Prompt deve ter pelo menos 10 caracteres" });
       }
 
-      if (!openaiApiKey || openaiApiKey.trim().length < 10) {
-        return res.status(400).json({ message: "Chave da API OpenAI é obrigatória" });
+      // Se a key não foi enviada, verificar se já existe no banco
+      if (!openaiApiKey || openaiApiKey.trim().length === 0) {
+        const existingCompany = await storage.getCompanyById(companyId);
+        if (!existingCompany?.openaiApiKey) {
+          return res.status(400).json({ message: "Chave da API OpenAI é obrigatória" });
+        }
       }
 
       // Build update object
       const updateData: any = {
         aiAgentPrompt: aiAgentPrompt.trim(),
-        openaiApiKey: openaiApiKey.trim(),
         openaiModel: openaiModel || 'gpt-4o-mini',
         openaiTemperature: openaiTemperature !== undefined ? openaiTemperature : 0.7,
         openaiMaxTokens: openaiMaxTokens !== undefined ? openaiMaxTokens : 180,
       };
+
+      // Só atualizar a API key se o usuário enviou uma nova
+      if (openaiApiKey && openaiApiKey.trim().length > 0) {
+        updateData.openaiApiKey = openaiApiKey.trim();
+      }
 
       // Only add agentInactivityTimeout if provided
       if (agentInactivityTimeout !== undefined && agentInactivityTimeout !== null) {
@@ -6185,152 +6094,7 @@ if (ignoredNumbers !== undefined) {
     }
   });
 
-  // Debug endpoint para verificar agendamentos da conversa 71
-  app.get('/api/debug/conversation-71-appointments', async (req: any, res) => {
-    try {
-      const companyId = 1;
-      const conversationId = 71;
-
-      console.log('🔍 DEBUG: Checking appointments for Conversa ID 71');
-
-      const existingAppointments = await storage.getAppointmentsByCompany(companyId);
-      console.log(`🔍 DEBUG: Found ${existingAppointments.length} total appointments for company ${companyId}`);
-
-      // Filter appointments that mention this conversation
-      const conversationAppointments = existingAppointments.filter(apt =>
-        apt.notes && apt.notes.includes(`Conversa ID: ${conversationId}`)
-      );
-
-      res.json({
-        success: true,
-        conversationId: conversationId,
-        totalAppointments: existingAppointments.length,
-        conversationAppointments: conversationAppointments.length,
-        appointments: conversationAppointments.map(apt => ({
-          id: apt.id,
-          status: apt.status,
-          clientName: apt.clientName,
-          createdAt: apt.createdAt,
-          minutesAgo: apt.createdAt ? Math.floor((Date.now() - new Date(apt.createdAt).getTime()) / (1000 * 60)) : null,
-          notes: apt.notes
-        }))
-      });
-
-    } catch (error) {
-      console.error('Error debugging conversation 71:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Force appointment creation for conversation 71
-  app.post('/api/debug/force-conversation-71-appointment', async (req: any, res) => {
-    try {
-      const companyId = 1;
-      const conversationId = 71;
-
-      console.log('🚀 FORCE: Attempting to create appointment for Conversa ID 71');
-
-      // Force creation by calling the function directly
-      await createAppointmentFromConversation(conversationId, companyId);
-
-      res.json({
-        success: true,
-        message: 'Forced appointment creation attempt completed. Check logs for details.'
-      });
-
-    } catch (error) {
-      console.error('Error forcing appointment creation for conversation 71:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Force appointment creation for conversation 79 (the problematic one)
-  app.post('/api/debug/force-conversation-79-appointment', async (req: any, res) => {
-    try {
-      const companyId = 1;
-      const conversationId = 79;
-
-      console.log('🚀 FORCE: Attempting to create appointment for Conversa ID 79 (the problematic one)');
-
-      // Force creation by calling the function directly
-      await createAppointmentFromConversation(conversationId, companyId);
-
-      res.json({
-        success: true,
-        message: 'Forced appointment creation attempt completed for conversation 79. Check logs for details.'
-      });
-
-    } catch (error) {
-      console.error('Error forcing appointment creation for conversation 79:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Test endpoint para diagnosticar problema do agendamento Gilliard
-  app.post('/api/test/gilliard-appointment', async (req: any, res) => {
-    try {
-      console.log('🧪 TESTING: Simulando caso do agendamento Gilliard confirmado mas não salvo');
-      
-      const companyId = 1; // ID da empresa
-      
-      // Dados exatos do agendamento Gilliard confirmado
-      const testExtractedData = JSON.stringify({
-        clientName: "Gilliard",
-        clientPhone: "5511999999999", // Telefone válido brasileiro
-        professionalId: 5, // Magnus (conforme logs)
-        serviceId: 8, // Hidratação (conforme logs)
-        appointmentDate: "2025-06-13", // Sábado 11/11 conforme imagem
-        appointmentTime: "09:00" // 09:00 conforme confirmação
-      });
-      
-      console.log('📋 Simulando extração de dados:', testExtractedData);
-      
-      // Primeiro verificar e criar instância WhatsApp se necessário
-      let whatsappInstanceId = 1;
-      try {
-        await db.execute(sql`
-          INSERT IGNORE INTO whatsapp_instances (id, instance_name, phone_number, status, company_id, created_at) 
-          VALUES (1, 'test-instance', '5511999999999', 'connected', ${companyId}, NOW())
-        `);
-        console.log('✅ Instância WhatsApp criada/verificada');
-      } catch (error) {
-        console.log('⚠️ Instância WhatsApp já existe ou erro na criação');
-      }
-
-      // Criar conversa de teste
-      const testConversation = await storage.createConversation({
-        companyId,
-        whatsappInstanceId,
-        phoneNumber: '5511999999999',
-        contactName: 'Gilliard',
-        lastMessageAt: new Date()
-      });
-      
-      const testConversationId = testConversation.id;
-      
-      // Simular inserção direta dos dados na conversa para teste
-      await storage.createMessage({
-        conversationId: testConversationId,
-        content: 'TESTE: Obrigado. Gilliard! Seu agendamento está confirmado para uma hidratação com o Magnus no sábado, dia 11/11, às 09:00. Qualquer dúvida ou alteração, estou à disposição. Tenha um ótimo dia!',
-        role: 'assistant',
-        messageId: 'test-message-123',
-        timestamp: new Date()
-      });
-      
-      // Simular o processo completo de criação usando a conversa correta
-      await createAppointmentFromConversation(testConversationId, companyId);
-      
-      res.json({ 
-        success: true, 
-        message: 'Teste do agendamento Gilliard executado. Verifique os logs.',
-        testData: testExtractedData
-      });
-      
-    } catch (error) {
-      console.error('❌ Erro no teste do agendamento Gilliard:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
+  // REMOVIDO: endpoints /api/debug/* e /api/test/gilliard-appointment (sem autenticação, expõem dados)
 
   // Webhook endpoint for WhatsApp integration with AI agent
   app.post('/api/webhook/whatsapp/:instanceName', async (req: any, res) => {
@@ -6339,7 +6103,6 @@ if (ignoredNumbers !== undefined) {
       console.log('🔔 WhatsApp webhook received');
       console.log('📋 Instance:', req.params.instanceName);
       console.log('📋 Event:', req.body.event);
-      console.log('📋 Full data:', JSON.stringify(req.body, null, 2));
     }
 
     try {
@@ -6527,7 +6290,6 @@ if (ignoredNumbers !== undefined) {
       // Log da estrutura da mensagem
       if (message?.message) {
         console.log('📦 Message structure keys:', Object.keys(message.message));
-        console.log('📦 Full message object:', JSON.stringify(message.message, null, 2).substring(0, 500));
       }
 
       // Handle both text and audio messages
@@ -6589,7 +6351,7 @@ if (ignoredNumbers !== undefined) {
 
             if (!rawPhoneNumber) {
               console.log('❌ Could not find real phone number - all sources contain @lid or are invalid');
-              console.log('📊 Message key for debugging:', JSON.stringify(message?.key, null, 2));
+              console.log('📊 Message key fields for debugging:', Object.keys(message?.key || {}).join(', '));
             }
           }
 
@@ -6616,7 +6378,7 @@ if (ignoredNumbers !== undefined) {
             }
 
             console.log('❌ Could not extract valid phone number from message');
-            console.log('📊 Full message structure for debugging:', JSON.stringify(message, null, 2));
+            console.log('📊 Message structure keys for debugging:', Object.keys(message || {}).join(', '));
             return res.status(200).json({ received: true, processed: false, reason: 'Invalid phone number' });
           }
 
@@ -7342,7 +7104,7 @@ if (ignoredNumbers !== undefined) {
           // Process audio message if present
           if (isAudioMessage) {
             console.log('🎵 Processing audio message...');
-            console.log('📊 Full message structure:', JSON.stringify(message, null, 2));
+            console.log('📊 Message structure keys:', Object.keys(message || {}).join(', '));
             try {
               // Get audio data from webhook structure
               let audioBase64 = message.base64;
@@ -7940,7 +7702,7 @@ if (ignoredNumbers !== undefined) {
               const OpenAI = (await import('openai')).default;
 
               // Use company's OpenAI configuration
-              console.log('🔑 OpenAI API Key status:', company.openaiApiKey ? `Key found (${company.openaiApiKey.substring(0, 10)}...)` : 'No key found');
+              console.log('🔑 OpenAI API Key status:', company.openaiApiKey ? 'Configurada' : 'Não configurada');
 
               if (!company.openaiApiKey) {
                 console.log('❌ Company does not have OpenAI API key configured');
@@ -11675,7 +11437,7 @@ Obrigado pela preferência! 🙏`;
         reminderSent: 0
       };
 
-      console.log('📋 Final appointment data:', JSON.stringify(appointmentData, null, 2));
+      console.log('📋 Final appointment data - companyId:', appointmentData.companyId, 'serviceId:', appointmentData.serviceId, 'date:', appointmentData.appointmentDate);
 
       const appointment = await storage.createAppointment(appointmentData);
 
@@ -11725,8 +11487,8 @@ Obrigado pela preferência! 🙏`;
 
           // Set DEBUG_N8N_WEBHOOK=true in .env to see detailed logs
           if (process.env.DEBUG_N8N_WEBHOOK === 'true') {
-            console.log('🔍 [COMPANY] Sending to n8n webhook:', company.n8nWebhookUrl);
-            console.log('📦 [COMPANY] Payload:', JSON.stringify(webhookPayload, null, 2));
+            console.log('🔍 [COMPANY] Sending to n8n webhook');
+            console.log('📦 [COMPANY] Payload keys:', Object.keys(webhookPayload).join(', '));
           }
 
           const response = await fetch(company.n8nWebhookUrl, {
@@ -11802,7 +11564,7 @@ Obrigado pela preferência! 🙏`;
       }
 
       const id = parseInt(req.params.id);
-      console.log('📋 Updating appointment ID:', id, 'with data:', JSON.stringify(req.body, null, 2));
+      console.log('📋 Updating appointment ID:', id, '- fields:', Object.keys(req.body).join(', '));
       
       // Process the update data
       const updateData: any = {};
@@ -11851,7 +11613,7 @@ Obrigado pela preferência! 🙏`;
       
       updateData.updatedAt = new Date();
       
-      console.log('📋 Processed update data:', JSON.stringify(updateData, null, 2));
+      console.log('📋 Processed update data - fields:', Object.keys(updateData).join(', '));
       
       const appointment = await storage.updateAppointment(id, updateData);
 
@@ -12274,7 +12036,7 @@ Obrigado pela preferência! 🙏`;
       }
 
       const id = parseInt(req.params.id);
-      console.log(`Updating service ${id} for company ${companyId} with data:`, req.body);
+      console.log(`Updating service ${id} for company ${companyId} - fields:`, Object.keys(req.body).join(', '));
 
       // Verificar se o serviço pertence à empresa
       const existingService = await storage.getService(id);
@@ -12997,7 +12759,7 @@ Obrigado pela preferência! 🙏`;
       // Log for debugging
       console.log('📅 Received scheduledDate:', req.body.scheduledDate);
       console.log('🎯 Target type:', req.body.targetType);
-      console.log('👥 Selected clients:', req.body.selectedClients);
+      console.log('👥 Selected clients count:', req.body.selectedClients?.length || 0);
 
       // Convert datetime-local string to Date with Brazil timezone offset (UTC-3)
       // datetime-local format: "2025-12-19T01:51"
@@ -13074,7 +12836,7 @@ Obrigado pela preferência! 🙏`;
 
       // Mascarar a chave da API para segurança
       const config = {
-        asaasApiKey: company.asaas_api_key ? `${company.asaas_api_key.slice(0, 10)}...` : null,
+        hasAsaasApiKey: !!company.asaas_api_key,
         asaasEnvironment: company.asaas_environment,
         asaasEnabled: Boolean(company.asaas_enabled),
         hasApiKey: !!company.asaas_api_key,
@@ -13097,19 +12859,29 @@ Obrigado pela preferência! 🙏`;
 
       const { asaasApiKey, asaasEnvironment, asaasEnabled } = req.body;
 
-      // Validação básica
+      // Se a key não foi enviada, verificar se já existe
       if (!asaasApiKey || asaasApiKey.trim().length === 0) {
-        return res.status(400).json({ error: "Chave da API é obrigatória" });
+        const existingCompany = await storage.getCompanyById(companyId);
+        if (!existingCompany?.asaasApiKey) {
+          return res.status(400).json({ error: "Chave da API é obrigatória" });
+        }
+        // Atualizar apenas environment e enabled, mantendo a key existente
+        await db.execute(
+          sql`UPDATE companies
+              SET asaas_environment = ${asaasEnvironment || "sandbox"},
+                  asaas_enabled = ${asaasEnabled ? 1 : 0}
+              WHERE id = ${companyId}`
+        );
+      } else {
+        // Atualizar tudo incluindo a nova key
+        await db.execute(
+          sql`UPDATE companies
+              SET asaas_api_key = ${asaasApiKey.trim()},
+                  asaas_environment = ${asaasEnvironment || "sandbox"},
+                  asaas_enabled = ${asaasEnabled ? 1 : 0}
+              WHERE id = ${companyId}`
+        );
       }
-
-      // Atualizar no banco de dados usando SQL direto
-      await db.execute(
-        sql`UPDATE companies
-            SET asaas_api_key = ${asaasApiKey.trim()},
-                asaas_environment = ${asaasEnvironment || "sandbox"},
-                asaas_enabled = ${asaasEnabled ? 1 : 0}
-            WHERE id = ${companyId}`
-      );
 
       res.json({
         success: true,
@@ -14135,7 +13907,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
         const blockData = extractDataFromAppointmentBlock(block);
 
         if (blockData.clientName && blockData.date && blockData.time) {
-          console.log(`✅ Dados extraídos:`, JSON.stringify(blockData, null, 2));
+          console.log(`✅ Dados extraídos - date: ${blockData.date}, time: ${blockData.time}, hasClient: ${!!blockData.clientName}`);
 
           const singleAppointmentId = await createSingleAppointmentFromExtractedData(
             companyId,
@@ -14340,12 +14112,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       }
     }
 
-    console.log('==================================================');
-    console.log('📋 DADOS EXTRAÍDOS DO RESUMO');
-    console.log('==================================================');
-    console.log('Summary text:', messageToExtractFrom.substring(0, 300));
-    console.log('Extracted data:', JSON.stringify(extractedFromSummary, null, 2));
-    console.log('==================================================');
+    console.log('📋 DADOS EXTRAÍDOS DO RESUMO - fields:', Object.keys(extractedFromSummary).join(', '));
 
     // CRÍTICO: Pegar apenas as últimas 12 mensagens do USUÁRIO para evitar contaminar com dados muito antigos
     // IMPORTANTE: allMessages vem DESC do banco (mais recente primeiro), então slice(0,12) pega as 12 mais recentes
@@ -14783,17 +14550,17 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
     console.log('Time:', extractedTime ? `✅ ${extractedTime}` : '❌ MISSING');
     console.log('Name:', extractedName ? `✅ ${extractedName}` : '❌ MISSING');
     console.log('Day:', extractedDay || '❌ MISSING');
-    console.log('Summary Data:', JSON.stringify(extractedFromSummary, null, 2));
+    console.log('Summary Data fields:', Object.keys(extractedFromSummary).join(', '));
     console.log('==================================================');
 
     if (!professional || !service || !extractedTime) {
       console.log('❌❌❌ ERRO CRÍTICO: Dados insuficientes para criar agendamento');
       console.log('Missing:', {
-        professional: !professional ? '❌ MISSING PROFESSIONAL' : `✅ ${professional.name}`,
-        service: !service ? '❌ MISSING SERVICE' : `✅ ${service.name}`,
-        time: !extractedTime ? '❌ MISSING TIME' : `✅ ${extractedTime}`
+        professional: !professional ? '❌ MISSING' : `✅ ID: ${professional.id}`,
+        service: !service ? '❌ MISSING' : `✅ ID: ${service.id}`,
+        time: !extractedTime ? '❌ MISSING' : `✅ ${extractedTime}`
       });
-      console.log('📋 Available professionals:', professionals.map(p => `${p.name} (ID: ${p.id})`).join(', '));
+      console.log('📋 Available professionals count:', professionals.length);
       console.log('📋 Available services:', services.map(s => `${s.name} (ID: ${s.id})`).join(', '));
       console.log('❌ ABORTANDO criação de agendamento');
 
@@ -15125,7 +14892,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 
     try {
       broadcastEvent(appointmentNotification);
-      console.log('✅ Broadcast notification sent:', JSON.stringify(appointmentNotification, null, 2));
+      console.log('✅ Broadcast notification sent for appointment type:', appointmentNotification?.type);
     } catch (broadcastError) {
       console.error('⚠️ Broadcast error:', broadcastError);
     }
@@ -15169,8 +14936,8 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 
         // Set DEBUG_N8N_WEBHOOK=true in .env to see detailed logs
         if (process.env.DEBUG_N8N_WEBHOOK === 'true') {
-          console.log('🔍 [AI/WHATSAPP] Sending to n8n webhook:', company.n8nWebhookUrl);
-          console.log('📦 [AI/WHATSAPP] Payload:', JSON.stringify(webhookPayload, null, 2));
+          console.log('🔍 [AI/WHATSAPP] Sending to n8n webhook');
+          console.log('📦 [AI/WHATSAPP] Payload keys:', Object.keys(webhookPayload).join(', '));
         }
 
         const response = await fetch(company.n8nWebhookUrl, {
@@ -15630,7 +15397,7 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
         return;
       }
 
-      console.log('✅ Valid appointment data extracted with explicit confirmation:', JSON.stringify(appointmentData, null, 2));
+      console.log('✅ Valid appointment data extracted - serviceId:', appointmentData.serviceId, 'date:', appointmentData.date, 'time:', appointmentData.time);
 
       // Find the service to get duration
       const service = services.find(s => s.id === appointmentData.serviceId);
@@ -15697,7 +15464,7 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
         reminderSent: 0
       };
 
-      console.log('📋 Creating appointment with correct date:', JSON.stringify(appointmentPayload, null, 2));
+      console.log('📋 Creating appointment - companyId:', appointmentPayload.companyId, 'serviceId:', appointmentPayload.serviceId, 'date:', appointmentPayload.appointmentDate);
       
       let appointment;
       try {
@@ -16801,8 +16568,8 @@ const broadcastEvent = (eventData: any) => {
       };
 
       console.log(`🔗 Sending webhook configuration to: ${webhookSetUrl}`);
-      console.log(`📋 Webhook payload:`, JSON.stringify(webhookPayload, null, 2));
-      console.log(`🔑 API Key being used:`, globalSettings.evolutionApiGlobalKey ? `${globalSettings.evolutionApiGlobalKey.substring(0, 10)}...` : 'NOT SET');
+      console.log(`📋 Webhook payload keys:`, Object.keys(webhookPayload).join(', '));
+      console.log(`🔑 API Key configured:`, !!globalSettings.evolutionApiGlobalKey);
 
       const evolutionResponse = await fetch(webhookSetUrl, {
         method: 'POST',
@@ -17060,7 +16827,7 @@ const broadcastEvent = (eventData: any) => {
   app.get('/api/public/review/:token', async (req, res) => {
     try {
       const token = req.params.token;
-      console.log(`📋 Fetching review invitation data for token: ${token}`);
+      console.log(`📋 Fetching review invitation data for token: ${token ? token.substring(0, 8) + '...' : 'none'}`);
 
       const result = await storage.getReviewInvitationByToken(token);
 
@@ -17081,7 +16848,7 @@ const broadcastEvent = (eventData: any) => {
       const token = req.params.token;
       const { rating, comment } = req.body;
 
-      console.log(`⭐ Submitting review for token: ${token}, rating: ${rating}`);
+      console.log(`⭐ Submitting review for token: ${token ? token.substring(0, 8) + '...' : 'none'}, rating: ${rating}`);
 
       if (!rating || rating < 1 || rating > 5) {
         return res.status(400).json({ message: "Avaliação deve ser entre 1 e 5 estrelas" });
@@ -17682,7 +17449,7 @@ const broadcastEvent = (eventData: any) => {
   });
   
   // Professional login
-  app.post('/api/auth/professional/login', async (req, res) => {
+  app.post('/api/auth/professional/login', loginLimiter, async (req, res) => {
     try {
       const { email, password } = req.body;
       
@@ -17696,61 +17463,35 @@ const broadcastEvent = (eventData: any) => {
       const professional = await storage.getProfessionalByEmail(email);
       
       if (!professional) {
-        console.log(`❌ Professional not found: ${email}`);
+        console.log('❌ Professional not found for login attempt');
         return res.status(401).json({ message: "Email ou senha incorretos" });
       }
-      console.log(`👤 Found professional: ${professional.name} (ID: ${professional.id})`);
-      console.log(`🔑 Password in DB: ${professional.password ? 'Set' : 'Not set'}`);
-      console.log(`🔑 Password type: ${professional.password && professional.password.startsWith('$2b$') ? 'Hashed' : 'Plain text'}`);
+      console.log(`👤 Found professional ID: ${professional.id}, hasPassword: ${!!professional.password}`);
 
       // Check if professional has a password set
       if (!professional.password) {
-        console.log(`❌ No password set for professional: ${email}`);
+        console.log(`❌ No password set for professional ID: ${professional.id}`);
         return res.status(401).json({ message: "Acesso não configurado. Entre em contato com a empresa." });
       }
 
       // Verify password
       let passwordMatch = false;
-      
+
       if (professional.password.startsWith('$2b$')) {
         // Password is hashed, use bcrypt compare
-        console.log(`🔐 Comparing hashed password for: ${email}`);
         passwordMatch = await bcrypt.compare(password, professional.password);
-        console.log(`🔐 Password match result: ${passwordMatch}`);
-        
-        // Temporary fix: If bcrypt comparison fails but we know it's Magnus with correct password
-        if (!passwordMatch && email === 'mag@gmail.com' && password === '12345678') {
-          console.log(`🔧 Applying temporary fix for Magnus authentication`);
-          passwordMatch = true;
-          // Generate new hash and update
-          const newHash = await bcrypt.hash(password, 10);
-          await storage.updateProfessional(professional.id, { password: newHash });
-          console.log(`✅ Password rehashed for professional: ${professional.email}`);
-        }
       } else {
         // Password is plain text, compare directly and then hash it
-        console.log(`🔐 Comparing plain text password for: ${email}`);
-        console.log(`🔐 Input password: "${password}"`);
-        console.log(`🔐 Stored password: "${professional.password}"`);
         if (password === professional.password) {
           passwordMatch = true;
           // Hash the password for future use
           const hashedPassword = await bcrypt.hash(password, 10);
           await storage.updateProfessional(professional.id, { password: hashedPassword });
-          console.log(`Password hashed for professional: ${professional.email}`);
         }
       }
-      
+
       if (!passwordMatch) {
-        console.log(`❌ Password mismatch for: ${email}`);
-        
-        // Emergency fallback for Magnus - allow direct access for testing
-        if (email === 'mag@gmail.com' && password === '12345678') {
-          console.log(`🚨 Emergency access granted for Magnus`);
-          passwordMatch = true;
-        } else {
-          return res.status(401).json({ message: "Email ou senha incorretos" });
-        }
+        return res.status(401).json({ message: "Email ou senha incorretos" });
       }
 
       // Check if professional is active
@@ -18031,8 +17772,8 @@ const broadcastEvent = (eventData: any) => {
 
           // Set DEBUG_N8N_WEBHOOK=true in .env to see detailed logs
           if (process.env.DEBUG_N8N_WEBHOOK === 'true') {
-            console.log('🔍 [PROFESSIONAL] Sending to n8n webhook:', company.n8nWebhookUrl);
-            console.log('📦 [PROFESSIONAL] Payload:', JSON.stringify(webhookPayload, null, 2));
+            console.log('🔍 [PROFESSIONAL] Sending to n8n webhook');
+            console.log('📦 [PROFESSIONAL] Payload keys:', Object.keys(webhookPayload).join(', '));
           }
 
           const response = await fetch(company.n8nWebhookUrl, {
@@ -18065,7 +17806,7 @@ const broadcastEvent = (eventData: any) => {
       const professionalId = req.session.professionalId;
       const { clientName, clientPhone, notes, status, appointmentDate, appointmentTime } = req.body;
 
-      console.log('🔄 Professional updating appointment:', appointmentId, 'with data:', req.body);
+      console.log('🔄 Professional updating appointment:', appointmentId, '- fields:', Object.keys(req.body).join(', '));
 
       // Verify appointment belongs to this professional
       const appointment = await storage.getAppointment(appointmentId);

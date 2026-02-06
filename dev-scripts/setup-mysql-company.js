@@ -2,12 +2,15 @@ import mysql from 'mysql2/promise';
 import bcrypt from 'bcrypt';
 
 async function setupMySQLCompany() {
+  if (!process.env.MYSQL_HOST || !process.env.MYSQL_PASSWORD) {
+    throw new Error('Variáveis MYSQL_HOST e MYSQL_PASSWORD são obrigatórias');
+  }
   const connection = await mysql.createConnection({
-    host: process.env.MYSQL_HOST || '69.62.101.23',
-    port: parseInt(process.env.MYSQL_PORT) || 3306,
-    user: process.env.MYSQL_USER || 'gilliard_salao',
-    password: process.env.MYSQL_PASSWORD || 'NQEc0ViGRJpS',
-    database: process.env.MYSQL_DATABASE || 'gilliard_salao'
+    host: process.env.MYSQL_HOST,
+    port: parseInt(process.env.MYSQL_PORT || '3306'),
+    user: process.env.MYSQL_USER,
+    password: process.env.MYSQL_PASSWORD,
+    database: process.env.MYSQL_DATABASE
   });
 
   try {

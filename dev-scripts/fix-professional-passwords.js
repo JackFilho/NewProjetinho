@@ -6,13 +6,20 @@ import { professionals } from './shared/schema.ts';
 
 async function fixProfessionalPasswords() {
   console.log('🔧 Fixing professional passwords...');
-  
+
+  const host = process.env.MYSQL_HOST || process.env.DB_HOST;
+  const password = process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD;
+
+  if (!host || !password) {
+    throw new Error('Missing required environment variables: MYSQL_HOST (or DB_HOST) and MYSQL_PASSWORD (or DB_PASSWORD) must be set');
+  }
+
   const connection = await mysql.createConnection({
-    host: process.env.DB_HOST || '69.62.101.23',
+    host,
     port: parseInt(process.env.DB_PORT || '3306'),
-    user: process.env.DB_USER || 'gilliard_salao',
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME || 'gilliard_salao',
+    user: process.env.DB_USER,
+    password,
+    database: process.env.DB_NAME,
   });
 
   const db = drizzle(connection);

@@ -1,12 +1,15 @@
 const mysql = require('mysql2/promise');
 
 async function checkTrialColumn() {
+  if (!process.env.MYSQL_HOST || !process.env.MYSQL_PASSWORD) {
+    throw new Error('Variáveis MYSQL_HOST e MYSQL_PASSWORD são obrigatórias');
+  }
   const pool = mysql.createPool({
-    host: '31.97.166.39',
-    port: 3306,
-    user: 'agenday_dev',
-    password: 'YourPassword2024',
-    database: 'agenday_dev',
+    host: process.env.MYSQL_HOST,
+    port: parseInt(process.env.MYSQL_PORT || '3306'),
+    user: process.env.MYSQL_USER,
+    password: process.env.MYSQL_PASSWORD,
+    database: process.env.MYSQL_DATABASE,
     connectionLimit: 10,
     acquireTimeout: 60000,
     timeout: 60000,

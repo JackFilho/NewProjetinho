@@ -2,15 +2,19 @@ import session from "express-session";
 import type { Express, RequestHandler } from "express";
 
 export function getSession() {
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret) {
+    throw new Error('SESSION_SECRET é obrigatória. Defina no arquivo .env');
+  }
   return session({
-    secret: process.env.SESSION_SECRET || 'admin-system-secret-key',
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: false,
+      secure: process.env.NODE_ENV === 'production',
       maxAge: 7 * 24 * 60 * 60 * 1000,
-      sameSite: 'lax',
+      sameSite: 'strict',
     },
     name: 'connect.sid',
   });
@@ -22,16 +26,10 @@ export async function setupAuth(app: Express) {
 
 export const isAuthenticated: RequestHandler = async (req: any, res, next) => {
   try {
-    console.log('🔐 Admin auth check - Session ID:', req.sessionID);
-    console.log('🔐 Admin auth check - Admin ID:', req.session.adminId);
-
     const adminId = req.session.adminId;
     if (!adminId) {
-      console.log('❌ Admin auth failed - No adminId in session');
       return res.status(401).json({ message: "Não autenticado" });
     }
-
-    console.log('✅ Admin authenticated:', adminId);
     next();
   } catch (error) {
     console.error("Authentication error:", error);

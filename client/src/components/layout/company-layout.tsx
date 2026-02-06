@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { sanitizeHtml } from "@/utils/sanitize";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -308,7 +309,7 @@ export default function CompanyLayout({ children }: CompanyLayoutProps) {
         <footer className="fixed bottom-0 left-0 right-0 lg:left-64 bg-white border-t border-gray-200 px-4 py-2 z-40">
           <div className="text-xs text-gray-500 text-center">
             {settings?.customHtml ? (
-              <div dangerouslySetInnerHTML={{ __html: settings.customHtml }} />
+              <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(settings.customHtml) }} />
             ) : (
               <>{settings?.systemName || "AIDA"} ©2025 - Versão 1.0 - Powered by Halarum</>
             )}

@@ -4,13 +4,20 @@ import mysql from 'mysql2/promise';
 async function checkAppointmentsTable() {
   let connection;
 
+  const host = process.env.MYSQL_HOST || process.env.DB_HOST;
+  const password = process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD;
+
+  if (!host || !password) {
+    throw new Error('Missing required environment variables: MYSQL_HOST (or DB_HOST) and MYSQL_PASSWORD (or DB_PASSWORD) must be set');
+  }
+
   try {
     // Conectar ao banco de dados
     connection = await mysql.createConnection({
-      host: process.env.DB_HOST || 'localhost',
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || 'aida123',
-      database: process.env.DB_NAME || 'inhouseaida'
+      host,
+      user: process.env.DB_USER,
+      password,
+      database: process.env.DB_NAME
     });
 
     console.log('✅ Conectado ao banco de dados');

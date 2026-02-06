@@ -6,11 +6,15 @@ async function resetMagnusPassword() {
   
   try {
     // Create database connection
+    if (!process.env.MYSQL_HOST || !process.env.MYSQL_PASSWORD) {
+      throw new Error('Variáveis MYSQL_HOST e MYSQL_PASSWORD são obrigatórias');
+    }
     connection = await mysql.createConnection({
-      host: '69.62.101.23',
-      user: 'gilliard_salao',
-      password: 'Gilliard123!',
-      database: 'gilliard_salao'
+      host: process.env.MYSQL_HOST,
+      port: parseInt(process.env.MYSQL_PORT || '3306'),
+      user: process.env.MYSQL_USER,
+      password: process.env.MYSQL_PASSWORD,
+      database: process.env.MYSQL_DATABASE
     });
 
     console.log('Connected to MySQL database');

@@ -234,14 +234,15 @@ export class AsaasService {
 
   /**
    * Processa webhook do Asaas
+   * Valida o webhook token e retorna o payload se válido
    */
-  async handleWebhook(payload: any, asaasSignature: string) {
-    console.log('🔄 Processando webhook do Asaas');
+  async handleWebhook(payload: any, webhookToken: string, expectedToken: string) {
+    // Validar token do webhook para garantir que veio do Asaas
+    if (!webhookToken || webhookToken !== expectedToken) {
+      throw new Error('Token de webhook inválido');
+    }
 
-    // TODO: Implementar validação de assinatura do webhook
-    // A validação deve ser feita usando o access token configurado
-
-    console.log('📨 Evento do webhook:', payload.event);
+    console.log('📨 Webhook Asaas - Evento:', payload.event);
     return payload;
   }
 
