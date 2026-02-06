@@ -1700,6 +1700,171 @@ async function getAvailableTimesForService(
 
 // ==================== FIM DO CÁLCULO DE HORÁRIOS DISPONÍVEIS PARA SERVIÇO ====================
 
+// ========================================
+// FUNÇÃO AUXILIAR GLOBAL: Criar um único agendamento a partir de dados extraídos
+// ========================================
+async function createSingleAppointmentFromExtractedData(
+  targetCompanyId: number,
+  data: any,
+  targetPhoneNumber: string,
+  targetInitialStatus: string,
+  targetContactName?: string
+): Promise<number | null> {
+  try {
+    // Buscar serviços e profissionais
+    const services = await storage.getServicesByCompany(targetCompanyId);
+    const professionals = await storage.getProfessionalsByCompany(targetCompanyId);
+
+    // Encontrar serviço
+    let serviceId: number | null = null;
+    let serviceDuration = 30;
+    if (data.service) {
+      const serviceName = data.service.toLowerCase();
+      const foundService = services.find(s => s.name.toLowerCase() === serviceName) ||
+                          services.find(s => s.name.toLowerCase().includes(serviceName) || serviceName.includes(s.name.toLowerCase()));
+      if (foundService) {
+        serviceId = foundService.id;
+        serviceDuration = foundService.duration || 30;
+      }
+    }
+
+    // Encontrar profissional
+    let professionalId: number | null = null;
+    if (data.professional) {
+      const profName = data.professional.toLowerCase();
+      const foundProf = professionals.find(p => p.name.toLowerCase() === profName) ||
+                       professionals.find(p => p.name.toLowerCase().includes(profName) || profName.includes(p.name.toLowerCase()));
+      if (foundProf) {
+        professionalId = foundProf.id;
+      }
+    }
+
+    // Se não encontrou profissional, usar o primeiro ativo
+    if (!professionalId && professionals.length > 0) {
+      const activeProf = professionals.find(p => p.active);
+      if (activeProf) professionalId = activeProf.id;
+    }
+
+    // Converter data DD/MM/YYYY para YYYY-MM-DD
+    let appointmentDate = '';
+    if (data.date) {
+      const dateParts = data.date.split('/');
+      if (dateParts.length === 3) {
+        appointmentDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+      }
+    }
+
+    if (!appointmentDate || !data.time || !professionalId) {
+      console.log('❌ [Multi] Dados insuficientes:', { appointmentDate, time: data.time, professionalId });
+      return null;
+    }
+
+    // Verificar conflito de horário - busca direta no banco
+    const [existingAppointments] = await pool.execute(
+      `SELECT appointment_time, duration, status FROM appointments
+       WHERE professional_id = ? AND appointment_date = ?
+       AND status NOT IN ('Cancelado', 'cancelado', 'cancelled')`,
+      [professionalId, appointmentDate]
+    ) as any;
+
+    const requestedTimeMinutes = parseInt(data.time.split(':')[0]) * 60 + parseInt(data.time.split(':')[1]);
+    const requestedEndMinutes = requestedTimeMinutes + serviceDuration;
+
+    for (const apt of existingAppointments) {
+      const aptTime = apt.appointment_time || apt.appointmentTime;
+      if (!aptTime) continue;
+      const aptTimeMinutes = parseInt(aptTime.split(':')[0]) * 60 + parseInt(aptTime.split(':')[1]);
+      const aptEndMinutes = aptTimeMinutes + (apt.duration || 30);
+
+      if ((requestedTimeMinutes < aptEndMinutes) && (requestedEndMinutes > aptTimeMinutes)) {
+        console.log(`❌ [Multi] Conflito: ${data.time} conflita com ${aptTime}`);
+        return null;
+      }
+    }
+
+    // Criar ou buscar cliente - busca direta no banco
+    let clientId: number | null = null;
+    const cleanPhone = targetPhoneNumber.replace(/\D/g, '');
+    const clientName = data.clientName || targetContactName || 'Cliente';
+
+    // Buscar cliente existente pelo telefone
+    const [existingClients] = await pool.execute(
+      `SELECT id FROM clients WHERE company_id = ? AND phone = ? LIMIT 1`,
+      [targetCompanyId, cleanPhone]
+    ) as any;
+
+    if (existingClients && existingClients.length > 0) {
+      clientId = existingClients[0].id;
+    } else {
+      // Criar novo cliente
+      const [insertResult] = await pool.execute(
+        `INSERT INTO clients (company_id, name, phone, created_at) VALUES (?, ?, ?, NOW())`,
+        [targetCompanyId, clientName, cleanPhone]
+      ) as any;
+      clientId = insertResult.insertId;
+    }
+
+    // Criar agendamento
+    const appointment = await storage.createAppointment({
+      companyId: targetCompanyId,
+      professionalId,
+      serviceId,
+      clientId,
+      clientName: data.clientName || targetContactName || 'Cliente',
+      clientPhone: cleanPhone,
+      appointmentDate,
+      appointmentTime: data.time,
+      duration: serviceDuration,
+      status: targetInitialStatus,
+      notes: `Agendamento via WhatsApp (múltiplos)`
+    });
+
+    return appointment.id;
+  } catch (error) {
+    console.error('❌ [Multi] Erro ao criar agendamento:', error);
+    return null;
+  }
+}
+
+// ========================================
+// FUNÇÃO AUXILIAR GLOBAL: Extrair dados de um único bloco de agendamento
+// ========================================
+function extractDataFromAppointmentBlock(blockText: string): any {
+  const data: any = {};
+
+  // Extract service
+  const serviceMatch = blockText.match(/💼\s*Serviço:\s*(.+?)(?:\n|$)/i) ||
+                      blockText.match(/Serviço:\s*(.+?)(?:\n|$)/i);
+  if (serviceMatch) data.service = serviceMatch[1].trim();
+
+  // Extract name
+  const nameMatch = blockText.match(/👤\s*Nome:\s*(.+?)(?:\n|$)/i) ||
+                   blockText.match(/Nome:\s*(.+?)(?:\n|$)/i);
+  if (nameMatch) data.clientName = nameMatch[1].trim();
+
+  // Extract professional
+  const profMatch = blockText.match(/🏢\s*Profissional:\s*(.+?)(?:\n|$)/i) ||
+                   blockText.match(/Profissional:\s*(.+?)(?:\n|$)/i);
+  if (profMatch) data.professional = profMatch[1].trim();
+
+  // Extract date
+  const dateMatch = blockText.match(/📅\s*Data:\s*(?:[^,\d]+,\s*)?(\d{1,2}\/\d{1,2}\/\d{4})/i) ||
+                   blockText.match(/Data:\s*(?:[^,\d]+,\s*)?(\d{1,2}\/\d{1,2}\/\d{4})/i) ||
+                   blockText.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
+  if (dateMatch) {
+    const dateParts = dateMatch[1].trim().split('/');
+    if (dateParts.length === 3) {
+      data.date = `${dateParts[0].padStart(2, '0')}/${dateParts[1].padStart(2, '0')}/${dateParts[2]}`;
+    }
+  }
+
+  // Extract time
+  const timeMatch = blockText.match(/🕐\s*Horário:\s*(\d{1,2}:\d{2})/i) ||
+                   blockText.match(/Horário:\s*(\d{1,2}:\d{2})/i);
+  if (timeMatch) data.time = timeMatch[1].trim();
+
+  return data;
+}
 
 async function createAppointmentFromAIConfirmation(conversationId: number, companyId: number, aiResponse: string, phoneNumber: string, initialStatus: string = 'agendado', contactName?: string): Promise<number | null> {
   try {
@@ -1819,6 +1984,93 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
         messageToExtractFrom = summaryMessage.content;
       } else {
         console.log('⚠️ Mensagem de RESUMO não encontrada, usando resposta atual');
+      }
+    }
+    // ========================================
+
+    // ========================================
+    // 🔄 DETECTAR MÚLTIPLOS AGENDAMENTOS
+    // ========================================
+    // Método 1: Marcadores numéricos (1️⃣, 2️⃣, etc.)
+    const numericMarkers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '①', '②', '③', '④', '⑤'];
+    const foundNumericMarkers = numericMarkers.filter(marker => messageToExtractFrom.includes(marker));
+
+    // Método 2: Contar ocorrências de campos-chave (👤 Nome:, 🕐 Horário:)
+    const nameMatches = (messageToExtractFrom.match(/👤\s*Nome:/gi) || []).length;
+    const timeMatches = (messageToExtractFrom.match(/🕐\s*Horário:/gi) || []).length;
+
+    // Detecta múltiplos se: tem 2+ marcadores numéricos OU tem 2+ nomes E 2+ horários
+    const hasMultipleByMarkers = foundNumericMarkers.length >= 2;
+    const hasMultipleByFields = nameMatches >= 2 && timeMatches >= 2;
+
+    if (hasMultipleByMarkers || hasMultipleByFields) {
+      console.log('🔄 MÚLTIPLOS AGENDAMENTOS DETECTADOS!');
+      console.log(`   - Marcadores numéricos: ${foundNumericMarkers.length}`);
+      console.log(`   - Campos Nome: ${nameMatches}, Horário: ${timeMatches}`);
+
+      // Escolher método de divisão baseado no que foi detectado
+      let appointmentBlocks: string[];
+
+      // Função auxiliar para validar se um bloco tem dados mínimos de agendamento
+      const isValidAppointmentBlock = (block: string): boolean => {
+        const trimmed = block.trim();
+        // Bloco válido deve ter Nome E (Data ou Horário)
+        const hasName = /Nome:/i.test(trimmed);
+        const hasDateOrTime = /Data:/i.test(trimmed) || /Horário:/i.test(trimmed) || /\d{1,2}:\d{2}/.test(trimmed);
+        return !!trimmed && hasName && hasDateOrTime;
+      };
+
+      if (hasMultipleByMarkers) {
+        // Dividir por marcadores numéricos
+        const splitPattern = /(?=1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|①|②|③|④|⑤)/;
+        appointmentBlocks = messageToExtractFrom.split(splitPattern).filter(isValidAppointmentBlock);
+        console.log('   - Método de divisão: marcadores numéricos');
+      } else {
+        // Dividir por ocorrências de "👤 Nome:" (cada bloco começa com um nome)
+        const splitPattern = /(?=👤\s*Nome:)/gi;
+        appointmentBlocks = messageToExtractFrom.split(splitPattern).filter(isValidAppointmentBlock);
+        console.log('   - Método de divisão: campos Nome:');
+      }
+
+      console.log(`📋 Total de ${appointmentBlocks.length} blocos de agendamento VÁLIDOS encontrados`);
+
+      const createdAppointmentIds: number[] = [];
+
+      for (let i = 0; i < appointmentBlocks.length; i++) {
+        const block = appointmentBlocks[i];
+        console.log(`\n========== PROCESSANDO AGENDAMENTO ${i + 1} ==========`);
+        console.log('Bloco (primeiros 300 chars):', block.substring(0, 300));
+
+        const blockData = extractDataFromAppointmentBlock(block);
+
+        if (blockData.clientName && blockData.date && blockData.time) {
+          console.log(`✅ Dados extraídos:`, JSON.stringify(blockData, null, 2));
+
+          const singleAppointmentId = await createSingleAppointmentFromExtractedData(
+            companyId,
+            blockData,
+            phoneNumber,
+            initialStatus,
+            contactName
+          );
+
+          if (singleAppointmentId) {
+            createdAppointmentIds.push(singleAppointmentId);
+            console.log(`✅ Agendamento ${i + 1} criado com ID: ${singleAppointmentId}`);
+          } else {
+            console.log(`❌ Falha ao criar agendamento ${i + 1}`);
+          }
+        } else {
+          console.log(`⚠️ Dados incompletos no bloco ${i + 1}:`, blockData);
+        }
+      }
+
+      if (createdAppointmentIds.length > 0) {
+        console.log(`\n✅ TOTAL: ${createdAppointmentIds.length} agendamentos criados: [${createdAppointmentIds.join(', ')}]`);
+        return createdAppointmentIds[0]; // Retorna o primeiro ID para compatibilidade
+      } else {
+        console.log('❌ Nenhum agendamento foi criado dos múltiplos blocos');
+        return null;
       }
     }
     // ========================================
@@ -7873,6 +8125,79 @@ INSTRUÇÕES ADICIONAIS:
 - Use o histórico da conversa para dar respostas contextualizadas
 - Limite respostas a no máximo 200 palavras por mensagem
 - Lembre-se do que já foi discutido anteriormente na conversa
+
+═══════════════════════════════════════════════════════════════════
+🎯 MÚLTIPLOS AGENDAMENTOS (DUAS OU MAIS PESSOAS)
+═══════════════════════════════════════════════════════════════════
+
+Quando o cliente quiser agendar para MÚLTIPLAS PESSOAS (ex: "quero agendar para mim e minha amiga", "dois horários", "para minha mãe e eu"), siga estas regras:
+
+1. COLETE OS DADOS DE CADA PESSOA SEPARADAMENTE:
+   - Nome de cada pessoa
+   - Serviço desejado (pode ser o mesmo ou diferente)
+   - Horário para cada um (DEVE ser horários diferentes!)
+
+2. NO RESUMO DE CONFIRMAÇÃO, USE SEMPRE O FORMATO COM NÚMEROS:
+   - Use 1️⃣, 2️⃣, 3️⃣, etc. para separar cada agendamento
+   - CADA agendamento DEVE ter seus próprios dados completos
+
+3. FORMATO OBRIGATÓRIO DO RESUMO:
+   "Perfeito! Vou confirmar os dados para os agendamentos:
+
+   1️⃣
+   👤 Nome: [nome da pessoa 1]
+   🏢 Profissional: [profissional]
+   💼 Serviço: [serviço]
+   📅 Data: [dia da semana], [data]
+   🕐 Horário: [horário 1]
+
+   2️⃣
+   👤 Nome: [nome da pessoa 2]
+   🏢 Profissional: [profissional]
+   💼 Serviço: [serviço]
+   📅 Data: [dia da semana], [data]
+   🕐 Horário: [horário 2]
+
+   Está tudo correto? Responda SIM para confirmar os agendamentos ou me informe se precisa alterar algo."
+
+⚠️ REGRAS IMPORTANTES:
+- SEMPRE use os emojis numéricos (1️⃣, 2️⃣) para separar cada agendamento
+- NUNCA coloque dois agendamentos sem o separador numérico
+- Cada bloco DEVE ter todos os campos: Nome, Profissional, Serviço, Data, Horário
+- Os horários DEVEM ser diferentes para cada pessoa (ex: 10:00 e 10:40)
+
+⚠️ FLUXO PARA MÚLTIPLAS PESSOAS (PASSO A PASSO):
+1. Pergunte os serviços (ex: "Qual serviço para você e qual para sua mãe?")
+2. Pergunte a data UMA VEZ SÓ (ex: "Qual dia vocês preferem?")
+3. Use [MOSTRAR_HORARIOS_LIVRES] com a SOMA das durações dos serviços de todas as pessoas
+   - Ex: Pessoa 1 quer serviço de 20min + Pessoa 2 quer serviço de 60min = use duração de 80min
+   - Isso garante que só serão oferecidos horários onde CABEM AMBOS os agendamentos consecutivos
+4. Pergunte o horário da PRIMEIRA pessoa (ex: "Qual horário você prefere?")
+5. AGUARDE a resposta
+6. Após a primeira pessoa escolher, CALCULE o horário da segunda pessoa automaticamente:
+   - O horário da segunda pessoa é IMEDIATAMENTE APÓS o término do primeiro
+   - Ex: Se primeira escolheu 10:00 (serviço de 20min) → segunda será às 10:20
+   - Diga: "Perfeito! Então você fica às 10:00 e sua mãe logo em seguida às 10:20. Tudo certo?"
+7. Por fim, colete os NOMES de cada pessoa
+
+⚠️ VERIFICAÇÃO DE ESPAÇO OBRIGATÓRIA:
+- ANTES de confirmar, verifique se há espaço para AMBOS os serviços consecutivos
+- Calcule: horário_pessoa1 + duração_serviço1 + duração_serviço2 = horário_término_total
+- Se o horário_término_total conflita com outro agendamento, o horário NÃO serve
+- Ex: Pessoa 1 às 10:00 (20min) + Pessoa 2 (60min) = término às 11:20
+      Se tem alguém às 10:50, esse horário NÃO funciona! Ofereça outro.
+
+⚠️ HORÁRIOS CONSECUTIVOS OBRIGATÓRIOS:
+- Por se tratar de MÚLTIPLO AGENDAMENTO, as pessoas querem ser atendidas em SEQUÊNCIA
+- A segunda pessoa NÃO escolhe o horário - ela fica AUTOMATICAMENTE no horário seguinte
+- Apenas confirme: "Você às [horário1] e [pessoa2] às [horário1 + duração]. Pode ser?"
+
+⚠️ NÃO REPITA:
+- NÃO pergunte a data novamente para cada pessoa
+- NÃO use [MOSTRAR_HORARIOS_LIVRES] duas vezes
+- NÃO ofereça escolha de horário para a segunda pessoa - é automático/consecutivo
+
+═══════════════════════════════════════════════════════════════════
 
 CANCELAMENTO DE AGENDAMENTOS:
 - Se cliente mencionar "cancelar", "desmarcar", "não vou poder ir", "preciso cancelar", faça UMA ÚNICA pergunta:
@@ -14180,6 +14505,93 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
         messageToExtractFrom = summaryMessage.content;
       } else {
         console.log('⚠️ Mensagem de RESUMO não encontrada, usando resposta atual');
+      }
+    }
+    // ========================================
+
+    // ========================================
+    // 🔄 DETECTAR MÚLTIPLOS AGENDAMENTOS
+    // ========================================
+    // Método 1: Marcadores numéricos (1️⃣, 2️⃣, etc.)
+    const numericMarkers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '①', '②', '③', '④', '⑤'];
+    const foundNumericMarkers = numericMarkers.filter(marker => messageToExtractFrom.includes(marker));
+
+    // Método 2: Contar ocorrências de campos-chave (👤 Nome:, 🕐 Horário:)
+    const nameMatches = (messageToExtractFrom.match(/👤\s*Nome:/gi) || []).length;
+    const timeMatches = (messageToExtractFrom.match(/🕐\s*Horário:/gi) || []).length;
+
+    // Detecta múltiplos se: tem 2+ marcadores numéricos OU tem 2+ nomes E 2+ horários
+    const hasMultipleByMarkers = foundNumericMarkers.length >= 2;
+    const hasMultipleByFields = nameMatches >= 2 && timeMatches >= 2;
+
+    if (hasMultipleByMarkers || hasMultipleByFields) {
+      console.log('🔄 MÚLTIPLOS AGENDAMENTOS DETECTADOS!');
+      console.log(`   - Marcadores numéricos: ${foundNumericMarkers.length}`);
+      console.log(`   - Campos Nome: ${nameMatches}, Horário: ${timeMatches}`);
+
+      // Escolher método de divisão baseado no que foi detectado
+      let appointmentBlocks: string[];
+
+      // Função auxiliar para validar se um bloco tem dados mínimos de agendamento
+      const isValidAppointmentBlock = (block: string): boolean => {
+        const trimmed = block.trim();
+        // Bloco válido deve ter Nome E (Data ou Horário)
+        const hasName = /Nome:/i.test(trimmed);
+        const hasDateOrTime = /Data:/i.test(trimmed) || /Horário:/i.test(trimmed) || /\d{1,2}:\d{2}/.test(trimmed);
+        return !!trimmed && hasName && hasDateOrTime;
+      };
+
+      if (hasMultipleByMarkers) {
+        // Dividir por marcadores numéricos
+        const splitPattern = /(?=1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|①|②|③|④|⑤)/;
+        appointmentBlocks = messageToExtractFrom.split(splitPattern).filter(isValidAppointmentBlock);
+        console.log('   - Método de divisão: marcadores numéricos');
+      } else {
+        // Dividir por ocorrências de "👤 Nome:" (cada bloco começa com um nome)
+        const splitPattern = /(?=👤\s*Nome:)/gi;
+        appointmentBlocks = messageToExtractFrom.split(splitPattern).filter(isValidAppointmentBlock);
+        console.log('   - Método de divisão: campos Nome:');
+      }
+
+      console.log(`📋 Total de ${appointmentBlocks.length} blocos de agendamento VÁLIDOS encontrados`);
+
+      const createdAppointmentIds: number[] = [];
+
+      for (let i = 0; i < appointmentBlocks.length; i++) {
+        const block = appointmentBlocks[i];
+        console.log(`\n========== PROCESSANDO AGENDAMENTO ${i + 1} ==========`);
+        console.log('Bloco (primeiros 300 chars):', block.substring(0, 300));
+
+        const blockData = extractDataFromAppointmentBlock(block);
+
+        if (blockData.clientName && blockData.date && blockData.time) {
+          console.log(`✅ Dados extraídos:`, JSON.stringify(blockData, null, 2));
+
+          const singleAppointmentId = await createSingleAppointmentFromExtractedData(
+            companyId,
+            blockData,
+            phoneNumber,
+            initialStatus,
+            contactName
+          );
+
+          if (singleAppointmentId) {
+            createdAppointmentIds.push(singleAppointmentId);
+            console.log(`✅ Agendamento ${i + 1} criado com ID: ${singleAppointmentId}`);
+          } else {
+            console.log(`❌ Falha ao criar agendamento ${i + 1}`);
+          }
+        } else {
+          console.log(`⚠️ Dados incompletos no bloco ${i + 1}:`, blockData);
+        }
+      }
+
+      if (createdAppointmentIds.length > 0) {
+        console.log(`\n✅ TOTAL: ${createdAppointmentIds.length} agendamentos criados: [${createdAppointmentIds.join(', ')}]`);
+        return createdAppointmentIds[0]; // Retorna o primeiro ID para compatibilidade
+      } else {
+        console.log('❌ Nenhum agendamento foi criado dos múltiplos blocos');
+        return null;
       }
     }
     // ========================================
