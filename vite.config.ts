@@ -20,6 +20,7 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, "dist/public"),
     emptyOutDir: true,
+    sourcemap: false, // Desabilitar source maps em produção por segurança
   },
   server: {
     fs: {

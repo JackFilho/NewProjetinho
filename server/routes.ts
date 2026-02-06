@@ -9,6 +9,32 @@ import { insertCompanySchema, insertPlanSchema, insertGlobalSettingsSchema, inse
 import bcrypt from "bcrypt";
 import { z } from "zod";
 import QRCode from "qrcode";
+import { validateUploadContent, IMAGE_MIMES, COURSE_FILE_MIMES } from "./upload-validator";
+import {
+  validateBody,
+  adminLoginSchema,
+  companyLoginSchema,
+  professionalLoginSchema,
+  forgotPasswordSchema,
+  changePasswordSchema,
+  publicRegisterSchema,
+  aiAgentSchema,
+  n8nWebhookSchema,
+  createAppointmentSchema,
+  createProfessionalSchema,
+  updateProfessionalSchema,
+  createClientSchema,
+  updateClientSchema,
+  createServiceSchema,
+  updateServiceSchema,
+  createCampaignSchema,
+  createTransactionSchema,
+  createAdminSchema,
+  createAlertSchema,
+  createSupportTicketSchema,
+  createWhatsAppInstanceSchema,
+  createSubscriptionSchema,
+} from "./validation-schemas";
 import { reminderScheduler, rescheduleRemindersForAppointment } from "./reminder-scheduler";
 import { sql, eq, and, desc, asc, sum, count, gte, lte } from "drizzle-orm";
 import multer from "multer";
@@ -3762,6 +3788,9 @@ const broadcastEvent = (eventData: any) => {
 
 export async function registerRoutes(app: Express): Promise<Server> {
 
+  // Security headers (CSP, HSTS, X-Frame-Options, etc.)
+  app.use((await import("./security-headers")).securityHeaders);
+
   // Rate limiter geral para todas as rotas da API
   app.use('/api/', apiGeneralLimiter);
 
@@ -4287,13 +4316,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create subscription endpoint with annual billing support
-  app.post('/api/create-subscription', async (req, res) => {
+  app.post('/api/create-subscription', validateBody(createSubscriptionSchema), async (req, res) => {
     try {
       const { planId, isAnnual, installments } = req.body;
-
-      if (!planId) {
-        return res.status(400).json({ error: 'Plan ID é obrigatório' });
-      }
 
       // Get plan details
       const [planResult] = await db.execute(sql`
@@ -4616,7 +4641,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Logo upload endpoint
-  app.post('/api/upload/logo', isAuthenticated, logoUpload.single('logo'), async (req, res) => {
+  app.post('/api/upload/logo', isAuthenticated, logoUpload.single('logo'), validateUploadContent(IMAGE_MIMES), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: "Nenhum arquivo foi enviado" });
@@ -4640,7 +4665,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Favicon upload endpoint
-  app.post('/api/upload/favicon', isAuthenticated, logoUpload.single('favicon'), async (req, res) => {
+  app.post('/api/upload/favicon', isAuthenticated, logoUpload.single('favicon'), validateUploadContent(IMAGE_MIMES), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: "Nenhum arquivo foi enviado" });
@@ -4664,7 +4689,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Course file upload endpoint (images and PDFs)
-  app.post('/api/upload/course-file', isCompanyAuthenticated, courseFilesUpload.single('file'), async (req, res) => {
+  app.post('/api/upload/course-file', isCompanyAuthenticated, courseFilesUpload.single('file'), validateUploadContent(COURSE_FILE_MIMES), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: "Nenhum arquivo foi enviado" });
@@ -4689,13 +4714,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin authentication routes
-  app.post('/api/auth/login', loginLimiter, async (req: any, res) => {
+  app.post('/api/auth/login', loginLimiter, validateBody(adminLoginSchema), async (req: any, res) => {
     try {
       const { username, password } = req.body;
-      
-      if (!username || !password) {
-        return res.status(400).json({ message: "Usuário e senha são obrigatórios" });
-      }
 
       // Check admin credentials from database
       const admin = await storage.getAdminByUsername(username);
@@ -4774,7 +4795,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/admins', isAuthenticated, async (req, res) => {
+  app.post('/api/admins', isAuthenticated, validateBody(createAdminSchema), async (req, res) => {
     try {
       const adminData = req.body;
       const newAdmin = await storage.createAdmin(adminData);
@@ -4811,13 +4832,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // REMOVIDO: endpoint /api/temp-reset-password (vulnerabilidade de segurança - reset sem autenticação)
 
   // Company forgot password route - sends recovery email
-  app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req: any, res) => {
+  app.post('/api/auth/forgot-password', forgotPasswordLimiter, validateBody(forgotPasswordSchema), async (req: any, res) => {
     try {
       const { email } = req.body;
-
-      if (!email) {
-        return res.status(400).json({ message: "Email é obrigatório" });
-      }
 
       // Find company by email
       const company = await storage.getCompanyByEmail(email);
@@ -5233,13 +5250,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Company Auth routes
-  app.post('/api/company/auth/login', loginLimiter, async (req: any, res) => {
+  app.post('/api/company/auth/login', loginLimiter, validateBody(companyLoginSchema), async (req: any, res) => {
     try {
       const { email, password } = req.body;
-      
-      if (!email || !password) {
-        return res.status(400).json({ message: "Email e senha são obrigatórios" });
-      }
 
       const company = await storage.getCompanyByEmail(email);
       console.log('Company found for login:', company ? 'YES' : 'NO');
@@ -5594,7 +5607,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/company/password', async (req: any, res) => {
+  app.put('/api/company/password', validateBody(changePasswordSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -5602,10 +5615,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { currentPassword, newPassword } = req.body;
-      
-      if (!currentPassword || !newPassword) {
-        return res.status(400).json({ message: "Senha atual e nova senha são obrigatórias" });
-      }
 
       const company = await storage.getCompany(companyId);
       if (!company) {
@@ -5630,7 +5639,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Company N8N webhook configuration
-  app.put('/api/company/n8n-webhook', isCompanyAuthenticated, async (req: any, res) => {
+  app.put('/api/company/n8n-webhook', isCompanyAuthenticated, validateBody(n8nWebhookSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -5638,9 +5647,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { n8nWebhookUrl, n8nWebhookEnabled } = req.body;
-
-      console.log('🔔 Updating N8N webhook config for company', companyId);
-      console.log('🔔 Enabled:', n8nWebhookEnabled, 'URL:', n8nWebhookUrl);
 
       await storage.updateCompany(companyId, {
         n8nWebhookUrl: n8nWebhookUrl || null,
@@ -5736,21 +5742,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Company AI agent configuration
-  app.put('/api/company/ai-agent', async (req: any, res) => {
+  app.put('/api/company/ai-agent', validateBody(aiAgentSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
-      console.log('🔧 [AI-AGENT] Update request - CompanyId:', companyId);
 
       if (!companyId) {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
       const { aiAgentPrompt, agentInactivityTimeout, autoSelectProfessional, openaiApiKey, openaiModel, openaiTemperature, openaiMaxTokens } = req.body;
-      console.log('🔧 [AI-AGENT] Received prompt length:', aiAgentPrompt?.length, '- model:', openaiModel);
-
-      if (!aiAgentPrompt || aiAgentPrompt.trim().length < 10) {
-        return res.status(400).json({ message: "Prompt deve ter pelo menos 10 caracteres" });
-      }
 
       // Se a key não foi enviada, verificar se já existe no banco
       if (!openaiApiKey || openaiApiKey.trim().length === 0) {
@@ -11352,32 +11352,24 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.post('/api/company/appointments', async (req: any, res) => {
+  app.post('/api/company/appointments', validateBody(createAppointmentSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
-      // Validate required fields
-      const { 
-        professionalId, 
-        serviceId, 
-        clientName, 
-        clientPhone, 
-        appointmentDate, 
+      const {
+        professionalId,
+        serviceId,
+        clientName,
+        clientPhone,
+        appointmentDate,
         appointmentTime,
         status = 'agendado',
         notes,
         clientEmail
       } = req.body;
-
-      if (!professionalId || !serviceId || !clientName || !clientPhone || !appointmentDate || !appointmentTime) {
-        return res.status(400).json({ 
-          message: "Dados obrigatórios em falta",
-          required: ['professionalId', 'serviceId', 'clientName', 'clientPhone', 'appointmentDate', 'appointmentTime']
-        });
-      }
 
       // Get service details for duration and price
       const service = await storage.getService(serviceId);
@@ -12010,7 +12002,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.post('/api/company/services', async (req: any, res) => {
+  app.post('/api/company/services', validateBody(createServiceSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12028,7 +12020,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.put('/api/company/services/:id', async (req: any, res) => {
+  app.put('/api/company/services/:id', validateBody(updateServiceSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12036,7 +12028,6 @@ Obrigado pela preferência! 🙏`;
       }
 
       const id = parseInt(req.params.id);
-      console.log(`Updating service ${id} for company ${companyId} - fields:`, Object.keys(req.body).join(', '));
 
       // Verificar se o serviço pertence à empresa
       const existingService = await storage.getService(id);
@@ -12089,7 +12080,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.post('/api/company/professionals', loadCompanyPlan, requirePermission('professionals'), checkProfessionalsLimit, async (req: RequestWithPlan, res) => {
+  app.post('/api/company/professionals', loadCompanyPlan, requirePermission('professionals'), checkProfessionalsLimit, validateBody(createProfessionalSchema), async (req: RequestWithPlan, res) => {
     try {
       const companyId = (req.session as any).companyId;
       if (!companyId) {
@@ -12107,7 +12098,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.put('/api/company/professionals/:id', loadCompanyPlan, requirePermission('professionals'), async (req: RequestWithPlan, res) => {
+  app.put('/api/company/professionals/:id', loadCompanyPlan, requirePermission('professionals'), validateBody(updateProfessionalSchema), async (req: RequestWithPlan, res) => {
     try {
       const companyId = (req.session as any).companyId;
       if (!companyId) {
@@ -12535,7 +12526,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.post('/api/company/clients', async (req: any, res) => {
+  app.post('/api/company/clients', validateBody(createClientSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12560,7 +12551,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.put('/api/company/clients/:id', async (req: any, res) => {
+  app.put('/api/company/clients/:id', validateBody(updateClientSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12749,17 +12740,12 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.post('/api/company/campaigns', async (req: any, res) => {
+  app.post('/api/company/campaigns', validateBody(createCampaignSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
         return res.status(401).json({ message: "Não autenticado" });
       }
-
-      // Log for debugging
-      console.log('📅 Received scheduledDate:', req.body.scheduledDate);
-      console.log('🎯 Target type:', req.body.targetType);
-      console.log('👥 Selected clients count:', req.body.selectedClients?.length || 0);
 
       // Convert datetime-local string to Date with Brazil timezone offset (UTC-3)
       // datetime-local format: "2025-12-19T01:51"
@@ -15575,7 +15561,7 @@ const broadcastEvent = (eventData: any) => {
     }
   });
 
-  app.post('/api/company/support-tickets', supportTicketUpload.array('images', 3), async (req: any, res) => {
+  app.post('/api/company/support-tickets', supportTicketUpload.array('images', 3), validateUploadContent(IMAGE_MIMES), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       const { title, description, typeId } = req.body;
@@ -16089,7 +16075,7 @@ const broadcastEvent = (eventData: any) => {
     }
   });
 
-  app.post('/api/company/whatsapp/instances', async (req: any, res) => {
+  app.post('/api/company/whatsapp/instances', validateBody(createWhatsAppInstanceSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -16097,12 +16083,6 @@ const broadcastEvent = (eventData: any) => {
       }
 
       const { instanceName, phoneNumber } = req.body;
-
-      if (!instanceName || !phoneNumber) {
-        return res.status(400).json({ message: "Nome da instância e telefone são obrigatórios" });
-      }
-
-      console.log(`📱 Creating WhatsApp instance: ${instanceName} for company ${companyId}`);
 
       // Get global Evolution API settings
       const globalSettings = await storage.getGlobalSettings();
@@ -17449,15 +17429,9 @@ const broadcastEvent = (eventData: any) => {
   });
   
   // Professional login
-  app.post('/api/auth/professional/login', loginLimiter, async (req, res) => {
+  app.post('/api/auth/professional/login', loginLimiter, validateBody(professionalLoginSchema), async (req, res) => {
     try {
       const { email, password } = req.body;
-      
-      console.log(`🔐 Professional login attempt for: ${email}`);
-      
-      if (!email || !password) {
-        return res.status(400).json({ message: "Email e senha são obrigatórios" });
-      }
 
       // Use storage function instead of raw query
       const professional = await storage.getProfessionalByEmail(email);
@@ -17856,7 +17830,7 @@ const broadcastEvent = (eventData: any) => {
 
 
   // Public company registration endpoint
-  app.post('/api/public/register', async (req, res) => {
+  app.post('/api/public/register', validateBody(publicRegisterSchema), async (req, res) => {
     try {
       const {
         fantasyName,
@@ -17865,8 +17839,6 @@ const broadcastEvent = (eventData: any) => {
         password,
         phone
       } = req.body;
-
-      console.log('Public registration request:', { email, fantasyName });
 
       // Check if company already exists
       const [existingCompany] = await pool.execute(
@@ -18093,7 +18065,7 @@ const broadcastEvent = (eventData: any) => {
   });
 
   // Create admin alert
-  app.post('/api/admin/alerts', isAuthenticated, async (req, res) => {
+  app.post('/api/admin/alerts', isAuthenticated, validateBody(createAlertSchema), async (req, res) => {
     try {
       const { title, message, type, showToAllCompanies, targetCompanyIds, startDate, endDate } = req.body;
 
@@ -18518,7 +18490,7 @@ const broadcastEvent = (eventData: any) => {
   });
 
   // Create financial transaction
-  app.post('/api/company/financial/transactions', isCompanyAuthenticated, async (req: any, res) => {
+  app.post('/api/company/financial/transactions', isCompanyAuthenticated, validateBody(createTransactionSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
