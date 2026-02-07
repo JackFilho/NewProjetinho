@@ -5293,7 +5293,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       req.session.companyId = company.id;
-      res.json({ 
+      res.json({
         message: "Login realizado com sucesso",
         company: {
           id: company.id,
