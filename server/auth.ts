@@ -21,9 +21,6 @@ export function getSession() {
 }
 
 export async function setupAuth(app: Express) {
-  // Necessário quando atrás de proxy reverso (Cloudflare, Nginx, etc.)
-  // para que express-session reconheça a conexão como segura via X-Forwarded-Proto
-  app.set('trust proxy', 1);
   app.use(getSession());
 }
 
