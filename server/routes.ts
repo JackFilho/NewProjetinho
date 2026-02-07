@@ -4966,13 +4966,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Temporary bypass for development - accept any password for damaceno02@hotmail.com
-      let isValidPassword = false;
-      if (email === 'damaceno02@hotmail.com') {
-        isValidPassword = true; // Temporary bypass
-      } else {
-        isValidPassword = await bcrypt.compare(password, company.password);
-      }
+      const isValidPassword = await bcrypt.compare(password, company.password);
       if (!isValidPassword) {
         return res.status(401).json({ message: "Credenciais inválidas" });
       }
@@ -5255,17 +5249,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { email, password } = req.body;
 
       const company = await storage.getCompanyByEmail(email);
-      console.log('Company found for login:', company ? 'YES' : 'NO');
       if (!company) {
         return res.status(401).json({ message: "Credenciais inválidas" });
       }
-
-      console.log('Company data:', {
-        id: company.id,
-        email: company.email,
-        isActive: company.isActive,
-        planStatus: company.planStatus
-      });
 
       const isValidPassword = await bcrypt.compare(password, company.password);
       if (!isValidPassword) {
@@ -5794,7 +5780,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         aiAgentPrompt: updatedCompany.aiAgentPrompt,
         agentInactivityTimeout: updatedCompany.agentInactivityTimeout,
         autoSelectProfessional: updatedCompany.autoSelectProfessional === 1,
-        openaiApiKey: updatedCompany.openaiApiKey,
+        hasOpenaiApiKey: !!updatedCompany.openaiApiKey,
         openaiModel: updatedCompany.openaiModel,
         openaiTemperature: updatedCompany.openaiTemperature ? parseFloat(updatedCompany.openaiTemperature.toString()) : 0.7,
         openaiMaxTokens: updatedCompany.openaiMaxTokens,
@@ -6936,8 +6922,6 @@ if (ignoredNumbers !== undefined) {
 
                   for (const pdfUrl of coursePdfsToSend) {
                     try {
-                      console.log('📤 [COURSE-PDF] Sending PDF:', pdfUrl);
-
                       // Extract file path from URL
                       let filePath = pdfUrl;
                       try {
@@ -6947,8 +6931,13 @@ if (ignoredNumbers !== undefined) {
                         filePath = pdfUrl.replace(/^\//, '');
                       }
 
-                      // Full path on server
-                      const fullPath = path.join(process.cwd(), filePath);
+                      // Full path on server with path traversal protection
+                      const fullPath = path.resolve(process.cwd(), filePath);
+                      const uploadsDir = path.resolve(process.cwd(), 'uploads');
+                      if (!fullPath.startsWith(uploadsDir)) {
+                        console.error('[COURSE-PDF] Path traversal blocked');
+                        continue;
+                      }
 
                       if (!fs.existsSync(fullPath)) {
                         console.error('❌ [COURSE-PDF] File not found:', fullPath);
@@ -7702,7 +7691,7 @@ if (ignoredNumbers !== undefined) {
               const OpenAI = (await import('openai')).default;
 
               // Use company's OpenAI configuration
-              console.log('🔑 OpenAI API Key status:', company.openaiApiKey ? 'Configurada' : 'Não configurada');
+              // OpenAI API Key check
 
               if (!company.openaiApiKey) {
                 console.log('❌ Company does not have OpenAI API key configured');
@@ -9433,11 +9422,13 @@ Por favor, escolha um dos horários disponíveis acima.`;
                         filePath = fileUrl.replace(/^\//, '');
                       }
 
-                      console.log('📂 Caminho do arquivo:', filePath);
-
-                      // Caminho completo no servidor
-                      const fullPath = path.join(process.cwd(), filePath);
-                      console.log('📂 Caminho completo:', fullPath);
+                      // Caminho completo no servidor com proteção contra path traversal
+                      const fullPath = path.resolve(process.cwd(), filePath);
+                      const uploadsDir = path.resolve(process.cwd(), 'uploads');
+                      if (!fullPath.startsWith(uploadsDir)) {
+                        console.error('[COURSE-FILE] Path traversal blocked');
+                        continue;
+                      }
 
                       // Verificar se arquivo existe
                       if (!fs.existsSync(fullPath)) {
@@ -11340,17 +11331,6 @@ Obrigado pela preferência! 🙏`;
   });
 
   // Fix appointment date (temporary route)
-  app.post('/api/fix-appointment-date', async (req: any, res) => {
-    try {
-      await storage.updateAppointment(29, {
-        appointmentDate: new Date('2025-06-14')
-      });
-      res.json({ message: "Data do agendamento corrigida para 14/06/2025" });
-    } catch (error) {
-      console.error("Error fixing appointment date:", error);
-      res.status(500).json({ message: "Erro ao corrigir data" });
-    }
-  });
 
   app.post('/api/company/appointments', validateBody(createAppointmentSchema), async (req: any, res) => {
     try {
@@ -12593,7 +12573,7 @@ Obrigado pela preferência! 🙏`;
   });
 
   // Status API
-  app.get('/api/status', async (req, res) => {
+  app.get('/api/status', isAuthenticated, async (req, res) => {
     try {
       const statusList = await storage.getStatus();
       res.json(statusList);
@@ -12603,7 +12583,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.post('/api/status', async (req, res) => {
+  app.post('/api/status', isAuthenticated, async (req, res) => {
     try {
       const status = await storage.createStatus(req.body);
       res.status(201).json(status);
@@ -12613,7 +12593,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.put('/api/status/:id', async (req, res) => {
+  app.put('/api/status/:id', isAuthenticated, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const status = await storage.updateStatus(id, req.body);
@@ -12624,7 +12604,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.delete('/api/status/:id', async (req, res) => {
+  app.delete('/api/status/:id', isAuthenticated, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteStatus(id);
@@ -17396,38 +17376,7 @@ const broadcastEvent = (eventData: any) => {
   });
 
   // ===== PROFESSIONAL AUTHENTICATION ROUTES =====
-  
-  // Direct password reset for Magnus
-  app.post('/api/temp/fix-magnus-login', async (req, res) => {
-    try {
-      const bcrypt = await import('bcrypt');
-      
-      // Create a known working hash for testing
-      const testPassword = '12345678';
-      const workingHash = await bcrypt.hash(testPassword, 10);
-      
-      // Update Magnus password using storage
-      await storage.updateProfessional(5, { password: workingHash });
-      
-      // Verify the update worked
-      const updatedProfessional = await storage.getProfessionalByEmail('mag@gmail.com');
-      const verificationTest = await bcrypt.compare(testPassword, updatedProfessional.password);
-      
-      res.json({
-        success: true,
-        passwordUpdated: true,
-        verificationPassed: verificationTest,
-        professionalId: updatedProfessional.id,
-        name: updatedProfessional.name,
-        email: updatedProfessional.email
-      });
-      
-    } catch (error) {
-      console.error('Error fixing Magnus login:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-  
+
   // Professional login
   app.post('/api/auth/professional/login', loginLimiter, validateBody(professionalLoginSchema), async (req, res) => {
     try {

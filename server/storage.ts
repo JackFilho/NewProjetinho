@@ -526,9 +526,7 @@ export class DatabaseStorage implements IStorage {
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
       }).from(companies).where(eq(companies.email, email));
-      console.log('Database query result:', result);
       const [company] = result;
-      console.log('Company found:', company ? 'Yes' : 'No', company);
       return company;
     } catch (error) {
       console.error('Error in getCompanyByEmail:', error);
@@ -538,7 +536,7 @@ export class DatabaseStorage implements IStorage {
 
   async getCompanyByResetToken(token: string): Promise<Company | undefined> {
     try {
-      console.log('Looking for token:', token);
+      // Token lookup (value redacted from logs)
       const [company] = await db.select({
         id: companies.id,
         fantasyName: companies.fantasyName,
@@ -2920,13 +2918,13 @@ export class DatabaseStorage implements IStorage {
 
   async submitReview(token: string, rating: number, comment: string | null): Promise<{ success: boolean; message: string }> {
     try {
-      console.log('⭐ submitReview - Starting with token:', token, 'rating:', rating);
+      // submitReview starting (token redacted)
 
       // Get review invitation
       const [invitation] = await db.select().from(reviewInvitations)
         .where(eq(reviewInvitations.invitationToken, token));
 
-      console.log('⭐ submitReview - Invitation found:', invitation);
+      // Invitation found
 
       if (!invitation) {
         console.log('⭐ submitReview - Invitation not found');
@@ -2942,7 +2940,7 @@ export class DatabaseStorage implements IStorage {
       const [appointment] = await db.select().from(appointments)
         .where(eq(appointments.id, invitation.appointmentId));
 
-      console.log('⭐ submitReview - Appointment found:', appointment);
+      // Appointment found for review
 
       if (!appointment) {
         console.log('⭐ submitReview - Appointment not found');
