@@ -920,7 +920,7 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
   let availabilityText = 'DISPONIBILIDADE REAL DOS PROFISSIONAIS POR DATA:\n\n';
 
   for (const prof of professionals) {
-    if (!prof.active) continue;
+    if (!prof.active || prof.archived) continue;
 
     availabilityText += `${prof.name} (ID: ${prof.id}):\n`;
 
@@ -1329,7 +1329,7 @@ async function getSpecificDateAvailability(
   availabilityText += `📅 Data: ${dayName}, ${formatted}\n\n`;
 
   for (const prof of professionals) {
-    if (!prof.active) continue;
+    if (!prof.active || prof.archived) continue;
 
     availabilityText += `${prof.name} (ID: ${prof.id}):\n`;
 
@@ -7570,7 +7570,7 @@ if (ignoredNumbers !== undefined) {
 
               // Get available professionals and services for this company
               const professionals = await storage.getProfessionalsByCompany(company.id);
-              const activeProfessionals = professionals.filter(prof => prof.active);
+              const activeProfessionals = professionals.filter(prof => prof.active && !prof.archived);
               const availableProfessionals = activeProfessionals
                 .map(prof => `- ${prof.name}`)
                 .join('\n');
@@ -7581,29 +7581,21 @@ if (ignoredNumbers !== undefined) {
               const shouldAutoSelect = autoSelectEnabled && hasOnlyOneProfessional;
 
               const services = await storage.getServicesByCompany(company.id);
-              console.log('🔍 DEBUG - Todos os serviços do banco:', services.map(s => ({
-                id: s.id,
-                name: s.name,
-                professionalId: s.professionalId
-              })));
 
               // Detect if a professional was mentioned in the LAST USER message only
               const userMessages = conversationHistory.filter(m => m.role === 'user');
               const lastUserMessage = userMessages.length > 0 ? userMessages[userMessages.length - 1].content.toLowerCase() : '';
-              console.log('💬 DEBUG - Última mensagem do USUÁRIO:', lastUserMessage);
 
               let selectedProfessional = null;
 
               // Auto-select professional if enabled and only one exists
               if (shouldAutoSelect) {
                 selectedProfessional = activeProfessionals[0];
-                console.log(`✅ AUTO-SELECT: Profissional selecionado automaticamente: ${selectedProfessional.name} (ID: ${selectedProfessional.id})`);
               } else {
-                // Check if the last user message mentions a specific professional
-                for (const prof of professionals) {
+                // Check if the last user message mentions a specific professional (only active, non-archived)
+                for (const prof of activeProfessionals) {
                   if (lastUserMessage.includes(prof.name.toLowerCase())) {
                     selectedProfessional = prof;
-                    console.log(`🔍 Profissional detectado na última mensagem: ${prof.name} (ID: ${prof.id})`);
                     break;
                   }
                 }
@@ -7613,18 +7605,12 @@ if (ignoredNumbers !== undefined) {
               let filteredServices = services.filter(service => service.isActive !== false);
 
               if (selectedProfessional) {
-                console.log(`📋 DEBUG - Filtrando para profissional ${selectedProfessional.name} (ID: ${selectedProfessional.id})`);
-
                 // Show only services for this professional OR global services (professionalId = null)
                 filteredServices = filteredServices.filter(service => {
                   const isGlobal = !service.professionalId;
                   const isForProfessional = service.professionalId === selectedProfessional.id;
-                  console.log(`  - ${service.name}: professionalId=${service.professionalId}, isGlobal=${isGlobal}, isForProfessional=${isForProfessional}, incluído=${isGlobal || isForProfessional}`);
                   return isGlobal || isForProfessional;
                 });
-                console.log(`📋 Serviços filtrados para ${selectedProfessional.name}:`, filteredServices.map(s => s.name));
-              } else {
-                console.log('ℹ️ DEBUG - Nenhum profissional detectado, mostrando todos os serviços');
               }
 
               // Função auxiliar para formatar duração
@@ -12443,7 +12429,7 @@ Obrigado pela preferência! 🙏`;
       let skippedCount = 0;
 
       for (const prof of professionals) {
-        if (!prof.active) continue;
+        if (!prof.active || prof.archived) continue;
 
         // Check if already has schedules
         const existing = await storage.getProfessionalSchedules(prof.id);
@@ -13138,7 +13124,7 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
   let availabilityText = 'DISPONIBILIDADE REAL DOS PROFISSIONAIS POR DATA:\n\n';
 
   for (const prof of professionals) {
-    if (!prof.active) continue;
+    if (!prof.active || prof.archived) continue;
 
     availabilityText += `${prof.name} (ID: ${prof.id}):\n`;
 
@@ -13547,7 +13533,7 @@ async function getSpecificDateAvailability(
   availabilityText += `📅 Data: ${dayName}, ${formatted}\n\n`;
 
   for (const prof of professionals) {
-    if (!prof.active) continue;
+    if (!prof.active || prof.archived) continue;
 
     availabilityText += `${prof.name} (ID: ${prof.id}):\n`;
 
