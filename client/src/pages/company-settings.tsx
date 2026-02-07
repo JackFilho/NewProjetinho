@@ -530,7 +530,7 @@ export default function CompanySettings() {
     },
     onSuccess: () => {
       toast({
-        title: "Configurações do Asaas atualizadas",
+        title: "Configurações do Mercado Pago atualizadas",
         description: "As configurações do gateway de pagamento foram salvas com sucesso.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/company/auth/profile"] });
@@ -538,7 +538,7 @@ export default function CompanySettings() {
     onError: (error: any) => {
       toast({
         title: "Erro",
-        description: error.message || "Falha ao atualizar configurações do Asaas.",
+        description: error.message || "Falha ao atualizar configurações do Mercado Pago.",
         variant: "destructive",
       });
     },
@@ -1393,7 +1393,7 @@ export default function CompanySettings() {
             </TabsTrigger>
             <TabsTrigger value="asaas" className="flex items-center gap-2">
               <DollarSign className="w-4 h-4" />
-              Asaas
+              Mercado Pago
             </TabsTrigger>
           </TabsList>
 
@@ -3713,7 +3713,7 @@ export default function CompanySettings() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-                <h4 className="font-semibold text-green-900 mb-2">Sobre o Asaas</h4>
+                <h4 className="font-semibold text-green-900 mb-2">Sobre o Mercado Pago</h4>
                 <ul className="text-sm text-green-800 space-y-1">
                   <li>• Gateway de pagamento completo para sua empresa</li>
                   <li>• Aceite pagamentos via PIX, boleto e cartão de crédito</li>
@@ -3726,10 +3726,10 @@ export default function CompanySettings() {
               <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
                 <h4 className="font-semibold text-amber-900 mb-2">Configuração Necessária</h4>
                 <ul className="text-sm text-amber-800 space-y-1">
-                  <li>• Crie uma conta no Asaas (www.asaas.com)</li>
-                  <li>• Complete o cadastro e envie a documentação</li>
-                  <li>• Aguarde a aprovação da conta</li>
-                  <li>• Obtenha a chave de API no painel</li>
+                  <li>• Crie uma conta no Mercado Pago (www.mercadopago.com.br)</li>
+                  <li>• Complete o cadastro e verifique sua identidade</li>
+                  <li>• Acesse Seu negócio → Configurações → Credenciais</li>
+                  <li>• Obtenha o Access Token no painel</li>
                   <li>• Configure os webhooks conforme indicado acima</li>
                 </ul>
               </div>

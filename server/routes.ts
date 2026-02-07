@@ -10053,7 +10053,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                       // FLUXO NORMAL - CRIAR AGENDAMENTO
                       // ========================================
                       // Import payment functions (Mercado Pago)
-                      const { createPixPayment, createCardPayment, isPaymentEnabled, schedulePixExpirationCheck } = await import('./asaas-routes');
+                      const { createPixPayment, createCardPayment, isPaymentEnabled, schedulePixExpirationCheck } = await import('./mp-routes');
 
                       // Check if company has Asaas configured
                       const companyWithAsaas = await storage.getCompany(company.id);
@@ -10100,7 +10100,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             console.log('📋 Dados pendentes recuperados:', pendingPixData);
 
                             // Importar função Asaas
-                            const { createPixPayment: createAsaasPixPayment } = await import('./asaas-routes');
+                            const { createPixPayment: createAsaasPixPayment } = await import('./mp-routes');
 
                             // Criar cobrança PIX COM o CPF
                             const pixPaymentWithCpf = await createAsaasPixPayment(company.id, {
@@ -10741,7 +10741,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                   console.log('💳 Método de pagamento:', paymentMethod);
 
                   // Import payment functions (Mercado Pago)
-                  const { createPixPayment, createCardPayment, schedulePixExpirationCheck } = await import('./asaas-routes');
+                  const { createPixPayment, createCardPayment, schedulePixExpirationCheck } = await import('./mp-routes');
 
                   // Check if company has Asaas configured
                   const companyWithAsaas = await storage.getCompany(company.id);
@@ -17875,8 +17875,8 @@ const broadcastEvent = (eventData: any) => {
   });
 
 
-  // Register Asaas routes
-  const asaasRouter = await import('./asaas-routes');
+  // Register Mercado Pago routes
+  const asaasRouter = await import('./mp-routes');
   app.use(asaasRouter.default);
 
   // ===== TRAINING VIDEOS ROUTES =====

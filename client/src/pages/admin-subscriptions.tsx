@@ -167,7 +167,7 @@ export default function AdminSubscriptions() {
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
           <AlertDescription>
-            Erro ao carregar assinaturas. Verifique se as chaves do Asaas estão configuradas corretamente.
+            Erro ao carregar assinaturas. Verifique se as chaves do Mercado Pago estão configuradas corretamente.
           </AlertDescription>
         </Alert>
       </div>
@@ -217,7 +217,7 @@ export default function AdminSubscriptions() {
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">
-            Gerenciar Assinaturas Asaas
+            Gerenciar Assinaturas
           </h1>
           <p className="text-gray-600 mt-2">
             Status em tempo real de todas as assinaturas do sistema
@@ -350,7 +350,7 @@ export default function AdminSubscriptions() {
         <CardHeader>
           <CardTitle>Todas as Assinaturas</CardTitle>
           <CardDescription>
-            Lista completa de empresas com assinaturas no Asaas
+            Lista completa de empresas com assinaturas no Mercado Pago
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -435,7 +435,7 @@ export default function AdminSubscriptions() {
           <DialogHeader>
             <DialogTitle>Detalhes da Assinatura</DialogTitle>
             <DialogDescription>
-              Informações completas da assinatura no Asaas
+              Informações completas da assinatura no Mercado Pago
             </DialogDescription>
           </DialogHeader>
 
@@ -453,7 +453,7 @@ export default function AdminSubscriptions() {
                 </div>
 
                 <div>
-                  <h4 className="font-semibold mb-2">Informações do Asaas</h4>
+                  <h4 className="font-semibold mb-2">Informações do Mercado Pago</h4>
                   <div className="space-y-2 text-sm">
                     <p><strong>Customer ID:</strong> {selectedSubscription.asaasCustomerId || 'N/A'}</p>
                     <p><strong>Subscription ID:</strong> {selectedSubscription.asaasSubscriptionId || 'N/A'}</p>

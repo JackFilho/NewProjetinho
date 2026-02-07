@@ -357,7 +357,7 @@ export default function CompanySubscriptionManagement() {
             {subscription?.asaasData && (
               <div className="mt-4 pt-4 border-t">
                 <p className="text-xs text-gray-500">
-                  ID da Assinatura Asaas: {subscription.asaasData.id}
+                  ID da Assinatura: {subscription.asaasData.id}
                 </p>
                 {subscription.asaasData.description && (
                   <p className="text-xs text-gray-500 mt-1">
