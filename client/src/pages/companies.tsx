@@ -13,7 +13,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Building, Edit, Trash2, Search, CheckCircle, XCircle } from "lucide-react";
+import { Plus, Building, Edit, Trash2, Search, CheckCircle, XCircle, KeyRound } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { companySchema, companyProfileSchema, companyEditSchema } from "@/lib/validations";
 import { formatDocument } from "@/lib/validations";
@@ -185,6 +185,26 @@ export default function Companies() {
       toast({
         title: "Erro",
         description: error.message || "Falha ao atualizar status da empresa",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const resetFinancialPasswordMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return await apiRequest(`/api/companies/${id}/reset-financial-password`, "POST");
+    },
+    onSuccess: () => {
+      toast({
+        title: "Sucesso",
+        description: "Senha financeiro resetada! A empresa precisará criar uma nova senha.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Falha ao resetar senha financeiro",
         variant: "destructive",
       });
     },
@@ -882,6 +902,21 @@ export default function Companies() {
                           >
                             <Edit className="w-4 h-4" />
                           </Button>
+                          {(company.financialPasswordEnabled || company.financial_password_enabled) ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                if (confirm("Tem certeza que deseja resetar a senha financeiro desta empresa? Ela precisará criar uma nova senha.")) {
+                                  resetFinancialPasswordMutation.mutate(company.id);
+                                }
+                              }}
+                              disabled={resetFinancialPasswordMutation.isPending}
+                              title="Resetar senha financeiro"
+                            >
+                              <KeyRound className="w-4 h-4 text-orange-500" />
+                            </Button>
+                          ) : null}
                           <Button
                             variant="ghost"
                             size="sm"

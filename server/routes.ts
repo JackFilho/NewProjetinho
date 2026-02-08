@@ -18168,6 +18168,30 @@ const broadcastEvent = (eventData: any) => {
 
   // ============ FINANCIAL PASSWORD ENDPOINTS ============
 
+  // Admin: Reset financial password for a company
+  app.post('/api/companies/:id/reset-financial-password', isAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = parseInt(req.params.id);
+      if (isNaN(companyId)) {
+        return res.status(400).json({ message: "ID inválido" });
+      }
+
+      const company = await storage.getCompany(companyId);
+      if (!company) {
+        return res.status(404).json({ message: "Empresa não encontrada" });
+      }
+
+      await storage.updateCompany(companyId, {
+        financialPassword: null,
+      } as any);
+
+      res.json({ message: "Senha financeiro resetada com sucesso. A empresa precisará criar uma nova senha." });
+    } catch (error) {
+      console.error("Error resetting financial password:", error);
+      res.status(500).json({ message: "Erro ao resetar senha financeiro" });
+    }
+  });
+
   // Check financial password status
   app.get('/api/company/financial-password/status', isCompanyAuthenticated, async (req: any, res) => {
     try {
