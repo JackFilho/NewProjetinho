@@ -73,6 +73,7 @@ export const companyProfileSchema = z.object({
   planId: z.number().nullable().optional(),
   isActive: z.boolean().optional(),
   tourEnabled: z.boolean().optional(),
+  financialPasswordEnabled: z.boolean().optional(),
   password: z.string().optional(),
 });
 
@@ -91,6 +92,7 @@ export const companyEditSchema = z.object({
   planId: z.number().nullable().optional(),
   isActive: z.boolean().optional(),
   tourEnabled: z.boolean().optional(),
+  financialPasswordEnabled: z.boolean().optional(),
   password: z.string().optional(),
 });
 
@@ -161,6 +163,7 @@ export const companySchema = z.object({
   planId: z.number().min(1, "Plano é obrigatório"),
   isActive: z.boolean().default(true),
   tourEnabled: z.boolean().default(true),
+  financialPasswordEnabled: z.boolean().default(false),
 });
 
 export const planSchema = z.object({

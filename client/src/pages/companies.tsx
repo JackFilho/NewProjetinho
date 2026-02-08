@@ -58,6 +58,7 @@ export default function Companies() {
       planId: undefined,
       isActive: true,
       tourEnabled: true,
+      financialPasswordEnabled: false,
     },
   });
 
@@ -77,6 +78,7 @@ export default function Companies() {
       planId: null,
       isActive: true,
       tourEnabled: true,
+      financialPasswordEnabled: false,
       password: "", // Adicionar password com valor vazio
     },
   });
@@ -108,6 +110,9 @@ export default function Companies() {
       const payload = { ...data };
       if (payload.isActive !== undefined) {
         (payload as any).isActive = payload.isActive ? 1 : 0;
+      }
+      if (payload.financialPasswordEnabled !== undefined) {
+        (payload as any).financialPasswordEnabled = payload.financialPasswordEnabled ? 1 : 0;
       }
       await apiRequest(`/api/companies/${id}`, "PUT", payload);
     },
@@ -225,6 +230,8 @@ export default function Companies() {
       email: company.email || "",
       planId: company.planId || company.plan_id || null,
       isActive: Boolean(company.isActive || company.is_active),
+      tourEnabled: Boolean(company.tourEnabled ?? company.tour_enabled ?? true),
+      financialPasswordEnabled: Boolean(company.financialPasswordEnabled || company.financial_password_enabled),
       password: "", // Sempre iniciar com string vazia
     });
     setIsModalOpen(true);
@@ -493,6 +500,15 @@ export default function Companies() {
                   />
                   <Label htmlFor="tourEnabled">Tour guiado habilitado</Label>
                 </div>
+
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="financialPasswordEnabled"
+                    checked={editForm.watch("financialPasswordEnabled") ?? false}
+                    onCheckedChange={(checked) => editForm.setValue("financialPasswordEnabled", checked)}
+                  />
+                  <Label htmlFor="financialPasswordEnabled">Senha financeiro habilitada</Label>
+                </div>
               </div>
 
               <div className="flex justify-end space-x-4">
@@ -706,6 +722,15 @@ export default function Companies() {
                   onCheckedChange={(checked) => form.setValue("tourEnabled", checked)}
                 />
                 <Label htmlFor="tourEnabled">Tour guiado habilitado</Label>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="financialPasswordEnabledCreate"
+                  checked={form.watch("financialPasswordEnabled") ?? false}
+                  onCheckedChange={(checked) => form.setValue("financialPasswordEnabled", checked)}
+                />
+                <Label htmlFor="financialPasswordEnabledCreate">Senha financeiro habilitada</Label>
               </div>
 
               <div className="flex justify-end space-x-4">

@@ -98,6 +98,8 @@ export const companies = mysqlTable("companies", {
   asaasSubscriptionId: varchar("asaas_subscription_id", { length: 100 }),
   n8nWebhookUrl: varchar("n8n_webhook_url", { length: 500 }),
   n8nWebhookEnabled: boolean("n8n_webhook_enabled").default(false),
+  financialPasswordEnabled: int("financial_password_enabled").notNull().default(0),
+  financialPassword: varchar("financial_password", { length: 255 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
@@ -561,6 +563,7 @@ export const insertCompanySchema = createInsertSchema(companies).omit({
 }).extend({
   isActive: z.union([z.boolean(), z.number()]).transform(val => typeof val === 'boolean' ? (val ? 1 : 0) : val),
   tourEnabled: z.union([z.boolean(), z.number()]).transform(val => typeof val === 'boolean' ? (val ? 1 : 0) : val).default(1),
+  financialPasswordEnabled: z.union([z.boolean(), z.number()]).transform(val => typeof val === 'boolean' ? (val ? 1 : 0) : val).default(0),
 });
 
 export const insertPlanSchema = createInsertSchema(plans).omit({

@@ -18,6 +18,7 @@ import CompanyReviews from "@/pages/company-reviews";
 import CompanyMessages from "@/pages/company-messages";
 import CompanyFinancial from "@/pages/company-financial";
 import CompanyReports from "@/pages/company-reports";
+import FinancialPasswordGate from "@/components/financial-password-gate";
 import CompanySupport from "@/pages/company-support";
 import CompanySubscriptionManagement from "@/pages/company-subscription-management";
 import DashboardAppointments from "@/pages/dashboard-appointments";
@@ -125,17 +126,23 @@ function Router() {
       </Route>
       <Route path="/company/financial">
         <CompanyLayout>
-          <CompanyFinancial />
+          <FinancialPasswordGate>
+            <CompanyFinancial />
+          </FinancialPasswordGate>
         </CompanyLayout>
       </Route>
       <Route path="/company/reports">
         <CompanyLayout>
-          <CompanyReports />
+          <FinancialPasswordGate>
+            <CompanyReports />
+          </FinancialPasswordGate>
         </CompanyLayout>
       </Route>
       <Route path="/company/relatorios">
         <CompanyLayout>
-          <CompanyReports />
+          <FinancialPasswordGate>
+            <CompanyReports />
+          </FinancialPasswordGate>
         </CompanyLayout>
       </Route>
       <Route path="/company/configuracoes">

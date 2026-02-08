@@ -3977,7 +3977,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         daysRemaining: company.days_remaining,
         subscriptionStatus: company.subscription_status,
         trialExpiresAt: company.trial_expires_at,
-        planId: company.plan_id
+        planId: company.plan_id,
+        financialPasswordEnabled: company.financial_password_enabled
       }));
 
       res.json(formattedCompanies);
@@ -4058,7 +4059,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (typeof validatedData.isActive === 'boolean') {
         (validatedData as any).isActive = validatedData.isActive ? 1 : 0;
       }
-      
+
+      // Convert financialPasswordEnabled to number if it's a boolean
+      if (typeof validatedData.financialPasswordEnabled === 'boolean') {
+        (validatedData as any).financialPasswordEnabled = validatedData.financialPasswordEnabled ? 1 : 0;
+      }
+
       const company = await storage.updateCompany(id, validatedData);
       console.log('Updated company ID:', company?.id);
       res.json(company);
@@ -5423,7 +5429,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Get company info
       const companyResult = await db.execute(sql`
-        SELECT id, fantasy_name, document, address, google_maps_location, courses_description, courses_images, courses_pdfs, phone, zip_code, number, neighborhood, city, state, email, password, plan_id, plan_status, is_active, ai_agent_prompt, agent_inactivity_timeout, auto_select_professional, openai_api_key, openai_model, openai_temperature, openai_max_tokens, human_request_enabled, human_request_contact, human_request_message, human_request_keywords, human_request_timeout, course_notification_enabled, course_notification_contact, course_notification_message, course_notification_keywords, course_notification_timeout, ignored_numbers, birthday_message, reset_token, reset_token_expires, tour_enabled, trial_expires_at, trial_alert_shown, subscription_status, n8n_webhook_url, n8n_webhook_enabled, asaas_api_key, asaas_environment, asaas_enabled, created_at, updated_at
+        SELECT id, fantasy_name, document, address, google_maps_location, courses_description, courses_images, courses_pdfs, phone, zip_code, number, neighborhood, city, state, email, password, plan_id, plan_status, is_active, ai_agent_prompt, agent_inactivity_timeout, auto_select_professional, openai_api_key, openai_model, openai_temperature, openai_max_tokens, human_request_enabled, human_request_contact, human_request_message, human_request_keywords, human_request_timeout, course_notification_enabled, course_notification_contact, course_notification_message, course_notification_keywords, course_notification_timeout, ignored_numbers, birthday_message, reset_token, reset_token_expires, tour_enabled, trial_expires_at, trial_alert_shown, subscription_status, n8n_webhook_url, n8n_webhook_enabled, asaas_api_key, asaas_environment, asaas_enabled, financial_password_enabled, created_at, updated_at
         FROM companies WHERE id = ${companyId}
       `);
 
@@ -5484,6 +5490,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasAsaasApiKey: !!company.asaas_api_key,
         asaasEnvironment: company.asaas_environment,
         asaasEnabled: company.asaas_enabled === 1,
+        financialPasswordEnabled: company.financial_password_enabled === 1,
         createdAt: company.created_at,
         updatedAt: company.updated_at
       };
@@ -18156,6 +18163,101 @@ const broadcastEvent = (eventData: any) => {
     } catch (error: any) {
       console.error('Error fetching companies:', error);
       res.status(500).json({ message: 'Erro ao buscar empresas' });
+    }
+  });
+
+  // ============ FINANCIAL PASSWORD ENDPOINTS ============
+
+  // Check financial password status
+  app.get('/api/company/financial-password/status', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const company = await storage.getCompanyById(companyId);
+      if (!company) {
+        return res.status(404).json({ message: "Empresa não encontrada" });
+      }
+
+      res.json({
+        enabled: company.financialPasswordEnabled === 1,
+        hasPassword: !!company.financialPassword,
+        verified: !!req.session.financialPasswordVerified,
+      });
+    } catch (error) {
+      console.error("Error checking financial password status:", error);
+      res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
+  // Set financial password (first time setup)
+  app.post('/api/company/financial-password/set', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { password, confirmPassword } = req.body;
+
+      if (!password || password.length < 4) {
+        return res.status(400).json({ message: "Senha deve ter pelo menos 4 caracteres" });
+      }
+
+      if (password !== confirmPassword) {
+        return res.status(400).json({ message: "Senhas não coincidem" });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 12);
+
+      await storage.updateCompany(companyId, {
+        financialPassword: hashedPassword,
+      } as any);
+
+      // Mark as verified in session since they just set it
+      req.session.financialPasswordVerified = true;
+
+      res.json({ message: "Senha financeiro definida com sucesso" });
+    } catch (error) {
+      console.error("Error setting financial password:", error);
+      res.status(500).json({ message: "Erro ao definir senha financeiro" });
+    }
+  });
+
+  // Verify financial password
+  app.post('/api/company/financial-password/verify', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { password } = req.body;
+
+      if (!password) {
+        return res.status(400).json({ message: "Senha é obrigatória" });
+      }
+
+      const company = await storage.getCompanyById(companyId);
+      if (!company || !company.financialPassword) {
+        return res.status(400).json({ message: "Senha financeiro não configurada" });
+      }
+
+      const isValid = await bcrypt.compare(password, company.financialPassword);
+
+      if (!isValid) {
+        return res.status(401).json({ message: "Senha financeiro incorreta" });
+      }
+
+      // Store verification in session
+      req.session.financialPasswordVerified = true;
+
+      res.json({ message: "Senha verificada com sucesso", verified: true });
+    } catch (error) {
+      console.error("Error verifying financial password:", error);
+      res.status(500).json({ message: "Erro ao verificar senha financeiro" });
     }
   });
 

@@ -420,6 +420,8 @@ export class DatabaseStorage implements IStorage {
       asaasApiKey: companies.asaasApiKey,
       asaasEnvironment: companies.asaasEnvironment,
       asaasEnabled: companies.asaasEnabled,
+      financialPasswordEnabled: companies.financialPasswordEnabled,
+      financialPassword: companies.financialPassword,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).orderBy(desc(companies.createdAt));
@@ -475,6 +477,8 @@ export class DatabaseStorage implements IStorage {
       asaasApiKey: companies.asaasApiKey,
       asaasEnvironment: companies.asaasEnvironment,
       asaasEnabled: companies.asaasEnabled,
+      financialPasswordEnabled: companies.financialPasswordEnabled,
+      financialPassword: companies.financialPassword,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.id, id));
@@ -641,6 +645,8 @@ export class DatabaseStorage implements IStorage {
       asaasApiKey: companies.asaasApiKey,
       asaasEnvironment: companies.asaasEnvironment,
       asaasEnabled: companies.asaasEnabled,
+      financialPasswordEnabled: companies.financialPasswordEnabled,
+      financialPassword: companies.financialPassword,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.email, companyData.email));
@@ -3343,6 +3349,8 @@ Obrigado pela preferência! 🙏`;
       trialExpiresAt: companies.trialExpiresAt,
       trialAlertShown: companies.trialAlertShown,
       subscriptionStatus: companies.subscriptionStatus,
+      financialPasswordEnabled: companies.financialPasswordEnabled,
+      financialPassword: companies.financialPassword,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies);
@@ -3626,6 +3634,8 @@ Obrigado pela preferência! 🙏`;
       subscriptionStatus: companies.subscriptionStatus,
       n8nWebhookUrl: companies.n8nWebhookUrl,
       n8nWebhookEnabled: companies.n8nWebhookEnabled,
+      financialPasswordEnabled: companies.financialPasswordEnabled,
+      financialPassword: companies.financialPassword,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.id, companyId));
