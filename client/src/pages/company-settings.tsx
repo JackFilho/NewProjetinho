@@ -391,10 +391,12 @@ export default function CompanySettings() {
     defaultValues: {
       birthdayMessage: "",
       aiAgentPrompt: "",
+      logoUrl: "",
     },
     values: company ? {
       birthdayMessage: company.birthdayMessage || "",
       aiAgentPrompt: company.aiAgentPrompt || "",
+      logoUrl: company.logoUrl || "",
     } : undefined,
   });
 
@@ -1306,6 +1308,7 @@ export default function CompanySettings() {
         companySettingsForm.reset({
           birthdayMessage: data.birthdayMessage || "",
           aiAgentPrompt: data.aiAgentPrompt || "",
+          logoUrl: data.logoUrl || "",
         });
       }
       toast({
@@ -2089,6 +2092,80 @@ export default function CompanySettings() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
+                <Building2 className="w-5 h-5" />
+                Logo da Empresa
+              </CardTitle>
+              <CardDescription>
+                Defina a logo personalizada da sua empresa que será exibida no menu lateral do sistema
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Form {...companySettingsForm}>
+                <form onSubmit={companySettingsForm.handleSubmit(onCompanySettingsSubmit)} className="space-y-6">
+                  <FormField
+                    control={companySettingsForm.control}
+                    name="logoUrl"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Ou insira uma URL da imagem:</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="https://exemplo.com/sua-logo.png"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                        <div className="text-sm text-gray-500">
+                          <p>• Insira a URL de uma imagem para usar como logo da sua empresa</p>
+                          <p>• Formatos recomendados: PNG, JPG, SVG</p>
+                          <p>• A logo será exibida no menu lateral do sistema</p>
+                          <p>• Caso não definida, será utilizada a logo padrão do sistema</p>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+
+                  {companySettingsForm.watch("logoUrl") && (
+                    <div className="flex items-center gap-4 p-4 border rounded-lg bg-gray-50">
+                      <span className="text-sm text-gray-600">Pré-visualização:</span>
+                      <img
+                        src={companySettingsForm.watch("logoUrl")}
+                        alt="Logo preview"
+                        className="w-[165px] h-auto rounded object-contain max-h-[60px]"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                        onLoad={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'block';
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="submit"
+                      disabled={updateCompanySettingsMutation.isPending}
+                      className="min-w-[140px]"
+                    >
+                      {updateCompanySettingsMutation.isPending ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          Salvando...
+                        </>
+                      ) : (
+                        "Salvar Configurações"
+                      )}
+                    </Button>
+                  </div>
+                </form>
+              </Form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
                 <Gift className="w-5 h-5" />
                 Mensagem de Aniversário
               </CardTitle>
@@ -2123,8 +2200,8 @@ export default function CompanySettings() {
                   />
 
                   <div className="flex justify-end">
-                    <Button 
-                      type="submit" 
+                    <Button
+                      type="submit"
                       disabled={updateCompanySettingsMutation.isPending}
                       className="min-w-[140px]"
                     >

@@ -422,6 +422,7 @@ export class DatabaseStorage implements IStorage {
       asaasEnabled: companies.asaasEnabled,
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
+      logoUrl: companies.logoUrl,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).orderBy(desc(companies.createdAt));
@@ -479,6 +480,7 @@ export class DatabaseStorage implements IStorage {
       asaasEnabled: companies.asaasEnabled,
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
+      logoUrl: companies.logoUrl,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.id, id));
@@ -647,6 +649,7 @@ export class DatabaseStorage implements IStorage {
       asaasEnabled: companies.asaasEnabled,
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
+      logoUrl: companies.logoUrl,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.email, companyData.email));
@@ -3351,6 +3354,7 @@ Obrigado pela preferência! 🙏`;
       subscriptionStatus: companies.subscriptionStatus,
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
+      logoUrl: companies.logoUrl,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies);
@@ -3636,6 +3640,7 @@ Obrigado pela preferência! 🙏`;
       n8nWebhookEnabled: companies.n8nWebhookEnabled,
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
+      logoUrl: companies.logoUrl,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.id, companyId));

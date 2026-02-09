@@ -133,14 +133,17 @@ function SidebarContent({ onLinkClick }: { onLinkClick?: () => void }) {
     item.permission === null || hasPermission(item.permission)
   );
 
+  // Prioriza logo da empresa; se não tiver, usa a logo global do admin
+  const displayLogoUrl = company?.logoUrl || publicSettings?.logoUrl;
+
   if (isLoading) {
     return (
       <div className="flex h-full flex-col">
         <div className="border-b p-6 flex items-center justify-center">
-          {publicSettings?.logoUrl ? (
-            <img 
-              src={publicSettings.logoUrl} 
-              alt="Logo" 
+          {displayLogoUrl ? (
+            <img
+              src={displayLogoUrl}
+              alt="Logo"
               className="w-[165px] h-auto rounded object-contain"
             />
           ) : (
@@ -159,10 +162,10 @@ function SidebarContent({ onLinkClick }: { onLinkClick?: () => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="border-b p-6 flex items-center justify-center">
-        {publicSettings?.logoUrl ? (
-          <img 
-            src={publicSettings.logoUrl} 
-            alt="Logo" 
+        {displayLogoUrl ? (
+          <img
+            src={displayLogoUrl}
+            alt="Logo"
             className="w-[165px] h-auto rounded object-contain"
           />
         ) : (

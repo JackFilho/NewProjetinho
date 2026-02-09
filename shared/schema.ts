@@ -100,6 +100,7 @@ export const companies = mysqlTable("companies", {
   n8nWebhookEnabled: boolean("n8n_webhook_enabled").default(false),
   financialPasswordEnabled: int("financial_password_enabled").notNull().default(0),
   financialPassword: varchar("financial_password", { length: 255 }),
+  logoUrl: varchar("logo_url", { length: 500 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
