@@ -113,13 +113,13 @@ export const createAppointmentSchema = z.object({
   clientPhone: z.string().min(8, "Telefone do cliente é obrigatório").max(20),
   appointmentDate: dateSchema,
   appointmentTime: timeSchema,
-  status: z.enum(["agendado", "confirmado", "cancelado", "concluido", "remarcado"]).optional().default("agendado"),
+  status: z.string().max(50).optional().default("Pendente"),
   notes: z.string().max(2000).optional().nullable(),
   clientEmail: z.string().email().max(255).optional().nullable().or(z.literal("")),
 });
 
 export const updateAppointmentStatusSchema = z.object({
-  status: z.enum(["agendado", "confirmado", "cancelado", "concluido", "remarcado"]),
+  status: z.string().min(1).max(50),
 });
 
 export const updateAppointmentPriceSchema = z.object({
