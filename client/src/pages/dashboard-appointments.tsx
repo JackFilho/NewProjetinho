@@ -1058,7 +1058,7 @@ export default function DashboardAppointments() {
                                     {clients.map((client) => (
                                       <CommandItem
                                         key={client.id}
-                                        value={client.name}
+                                        value={`${client.name} ${client.phone || ''}`}
                                         onSelect={() => {
                                           field.onChange(client.id);
                                           form.setValue('clientName', client.name);
@@ -1070,7 +1070,12 @@ export default function DashboardAppointments() {
                                         <Check
                                           className={`mr-2 h-4 w-4 ${field.value === client.id ? "opacity-100" : "opacity-0"}`}
                                         />
-                                        {client.name}
+                                        <div className="flex flex-col">
+                                          <span>{client.name}</span>
+                                          {client.phone && (
+                                            <span className="text-xs text-muted-foreground">{client.phone}</span>
+                                          )}
+                                        </div>
                                       </CommandItem>
                                     ))}
                                   </CommandGroup>
