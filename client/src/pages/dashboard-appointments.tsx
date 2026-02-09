@@ -11,7 +11,9 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ChevronLeft, ChevronRight, Calendar, Plus, List, Grid3X3, Kanban, Eye, Edit2 as Edit, Star, Trash2, X } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { ChevronLeft, ChevronRight, Calendar, Plus, List, Grid3X3, Kanban, Eye, Edit2 as Edit, Star, Trash2, X, ChevronsUpDown, Check } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -104,6 +106,7 @@ export default function DashboardAppointments() {
   const [isAppointmentDetailsOpen, setIsAppointmentDetailsOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [clientComboboxOpen, setClientComboboxOpen] = useState(false);
   const [isDayAppointmentsOpen, setIsDayAppointmentsOpen] = useState(false);
   const [selectedDayAppointments, setSelectedDayAppointments] = useState<Appointment[]>([]);
   const [selectedDayDate, setSelectedDayDate] = useState<Date | null>(null);
@@ -1030,31 +1033,51 @@ export default function DashboardAppointments() {
                       <FormItem>
                         <FormLabel>Nome do Cliente</FormLabel>
                         <div className="flex gap-2">
-                          <FormControl className="flex-1">
-                            <Select
-                              value={field.value?.toString()}
-                              onValueChange={(value) => {
-                                field.onChange(parseInt(value));
-                                const selectedClient = clients.find(c => c.id === parseInt(value));
-                                if (selectedClient) {
-                                  form.setValue('clientName', selectedClient.name);
-                                  form.setValue('clientPhone', selectedClient.phone || '');
-                                  form.setValue('clientEmail', selectedClient.email || '');
-                                }
-                              }}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Selecione um cliente" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {clients.map((client) => (
-                                  <SelectItem key={client.id} value={client.id.toString()}>
-                                    {client.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </FormControl>
+                          <Popover open={clientComboboxOpen} onOpenChange={setClientComboboxOpen}>
+                            <PopoverTrigger asChild>
+                              <FormControl className="flex-1">
+                                <Button
+                                  variant="outline"
+                                  role="combobox"
+                                  aria-expanded={clientComboboxOpen}
+                                  className="w-full justify-between font-normal"
+                                >
+                                  {field.value
+                                    ? clients.find(c => c.id === field.value)?.name || "Selecione um cliente"
+                                    : "Selecione um cliente"}
+                                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                </Button>
+                              </FormControl>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                              <Command>
+                                <CommandInput placeholder="Buscar cliente..." />
+                                <CommandList>
+                                  <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
+                                  <CommandGroup>
+                                    {clients.map((client) => (
+                                      <CommandItem
+                                        key={client.id}
+                                        value={client.name}
+                                        onSelect={() => {
+                                          field.onChange(client.id);
+                                          form.setValue('clientName', client.name);
+                                          form.setValue('clientPhone', client.phone || '');
+                                          form.setValue('clientEmail', client.email || '');
+                                          setClientComboboxOpen(false);
+                                        }}
+                                      >
+                                        <Check
+                                          className={`mr-2 h-4 w-4 ${field.value === client.id ? "opacity-100" : "opacity-0"}`}
+                                        />
+                                        {client.name}
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
                           <Button
                             type="button"
                             variant="outline"
