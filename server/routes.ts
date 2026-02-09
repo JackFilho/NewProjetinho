@@ -4670,6 +4670,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Company logo upload endpoint
+  app.post('/api/company/upload/logo', isCompanyAuthenticated, logoUpload.single('logo'), validateUploadContent(IMAGE_MIMES), async (req: any, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "Nenhum arquivo foi enviado" });
+      }
+
+      const host = req.get('host');
+      const protocol = req.protocol;
+      const fileUrl = `${protocol}://${host}/uploads/${req.file.filename}`;
+
+      res.json({
+        url: fileUrl,
+        filename: req.file.filename,
+        originalName: req.file.originalname,
+        size: req.file.size
+      });
+    } catch (error) {
+      console.error("Error uploading company logo:", error);
+      res.status(500).json({ message: "Erro ao fazer upload do logo" });
+    }
+  });
+
   // Favicon upload endpoint
   app.post('/api/upload/favicon', isAuthenticated, logoUpload.single('favicon'), validateUploadContent(IMAGE_MIMES), async (req, res) => {
     try {

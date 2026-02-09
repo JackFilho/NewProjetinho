@@ -95,6 +95,68 @@ export default function CompanySettings() {
   const queryClient = useQueryClient();
   const { company } = useCompanyAuth();
 
+  // Company logo upload states
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string>("");
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLogoFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      if (!file.type.startsWith('image/')) {
+        toast({
+          title: "Tipo de arquivo inválido",
+          description: "Por favor, selecione uma imagem.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        toast({
+          title: "Arquivo muito grande",
+          description: "O arquivo deve ter no máximo 5MB.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setLogoFile(file);
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setLogoPreview(e.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const uploadCompanyLogo = async (): Promise<string | null> => {
+    if (!logoFile) return null;
+    const formData = new FormData();
+    formData.append('logo', logoFile);
+    try {
+      const response = await fetch('/api/company/upload/logo', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error('Falha no upload do logo');
+      }
+      const result = await response.json();
+      return result.url;
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const removeCompanyLogo = () => {
+    setLogoFile(null);
+    setLogoPreview("");
+    companySettingsForm.setValue("logoUrl", "");
+    if (logoInputRef.current) {
+      logoInputRef.current.value = "";
+    }
+  };
+
   // Company data loaded effect (logging removed for security)
   useEffect(() => {
     if (company) {
@@ -1299,10 +1361,27 @@ export default function CompanySettings() {
 
   const updateCompanySettingsMutation = useMutation({
     mutationFn: async (data: CompanySettingsData) => {
+      // Se tiver um arquivo de logo selecionado, faz upload primeiro
+      if (logoFile) {
+        try {
+          const uploadedUrl = await uploadCompanyLogo();
+          if (uploadedUrl) {
+            data.logoUrl = uploadedUrl;
+          }
+        } catch (error) {
+          throw new Error("Falha ao fazer upload do logo");
+        }
+      }
       return await apiRequest("/api/company/settings-update", "PUT", data);
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/company/auth/profile"] });
+      // Limpar estado de upload
+      setLogoFile(null);
+      setLogoPreview("");
+      if (logoInputRef.current) {
+        logoInputRef.current.value = "";
+      }
       // Update form with saved values
       if (data) {
         companySettingsForm.reset({
@@ -2107,40 +2186,82 @@ export default function CompanySettings() {
                     name="logoUrl"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Ou insira uma URL da imagem:</FormLabel>
+                        <FormLabel>Logo da Empresa</FormLabel>
                         <FormControl>
-                          <Input
-                            placeholder="https://exemplo.com/sua-logo.png"
-                            {...field}
-                          />
+                          <div className="space-y-4">
+                            {/* Preview do logo atual */}
+                            {(logoPreview || field.value) && (
+                              <div className="flex items-center gap-4 p-4 border rounded-lg bg-gray-50">
+                                <div className="relative">
+                                  <img
+                                    src={logoPreview || field.value || ""}
+                                    alt="Logo atual"
+                                    className="h-12 w-auto max-w-[150px] object-contain rounded border bg-white px-2"
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="destructive"
+                                    size="sm"
+                                    onClick={removeCompanyLogo}
+                                    className="absolute -top-2 -right-2 h-6 w-6 rounded-full p-0"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                                <div className="flex-1">
+                                  <p className="text-sm font-medium">Logo atual</p>
+                                  <p className="text-xs text-gray-500">
+                                    {logoFile ? logoFile.name : "Logo configurado"}
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Área de upload */}
+                            <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-gray-400 transition-colors">
+                              <input
+                                ref={logoInputRef}
+                                type="file"
+                                accept="image/*"
+                                onChange={handleLogoFileSelect}
+                                className="hidden"
+                                id="company-logo-upload"
+                              />
+                              <label htmlFor="company-logo-upload" className="cursor-pointer">
+                                <div className="mx-auto flex flex-col items-center">
+                                  <Upload className="w-8 h-8 text-gray-400 mb-2" />
+                                  <p className="text-sm font-medium text-gray-700 mb-1">
+                                    Clique para selecionar uma imagem
+                                  </p>
+                                  <p className="text-xs text-gray-500">
+                                    PNG, JPG, GIF até 5MB
+                                  </p>
+                                </div>
+                              </label>
+                            </div>
+
+                            {/* Campo de URL alternativo */}
+                            <div className="space-y-2">
+                              <Label className="text-sm text-gray-600">
+                                Ou insira uma URL da imagem:
+                              </Label>
+                              <Input
+                                placeholder="https://exemplo.com/sua-logo.png"
+                                {...field}
+                                className="text-sm"
+                              />
+                            </div>
+
+                            <div className="text-sm text-gray-500">
+                              <p>• A logo será exibida no menu lateral do sistema</p>
+                              <p>• Caso não definida, será utilizada a logo padrão do sistema</p>
+                            </div>
+                          </div>
                         </FormControl>
                         <FormMessage />
-                        <div className="text-sm text-gray-500">
-                          <p>• Insira a URL de uma imagem para usar como logo da sua empresa</p>
-                          <p>• Formatos recomendados: PNG, JPG, SVG</p>
-                          <p>• A logo será exibida no menu lateral do sistema</p>
-                          <p>• Caso não definida, será utilizada a logo padrão do sistema</p>
-                        </div>
                       </FormItem>
                     )}
                   />
-
-                  {companySettingsForm.watch("logoUrl") && (
-                    <div className="flex items-center gap-4 p-4 border rounded-lg bg-gray-50">
-                      <span className="text-sm text-gray-600">Pré-visualização:</span>
-                      <img
-                        src={companySettingsForm.watch("logoUrl")}
-                        alt="Logo preview"
-                        className="w-[165px] h-auto rounded object-contain max-h-[60px]"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
-                        onLoad={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'block';
-                        }}
-                      />
-                    </div>
-                  )}
 
                   <div className="flex justify-end">
                     <Button
