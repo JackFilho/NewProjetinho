@@ -657,7 +657,7 @@ function needsAvailabilityInfo(messageText: string, conversationHistory: any[]):
     // (números, confirmações, datas, etc.)
     const looksLikeSchedulingResponse = /\d{1,2}[:\h]?\d{0,2}/.test(messageText) || // Horários
                                         /\d{1,2}\/\d{1,2}/.test(messageText) || // Datas
-                                        /\b(sim|ok|confirmo|confirma|confirmar|confirmado|combinado|pode ser|tudo certo|tá bom|ta bom|com certeza|claro|positivo|afirmativo)\b/i.test(messageText);
+                                        /\b(sim|ok|confirmo|confirma|confirmar|confirmado|combinado|pode ser|tudo certo|tudo correto|tá bom|ta bom|com certeza|claro|positivo|afirmativo)\b/i.test(messageText);
 
     return looksLikeSchedulingResponse;
   }
@@ -2115,7 +2115,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
     // 🔄 DETECTAR MÚLTIPLOS AGENDAMENTOS
     // ========================================
     // Método 1: Marcadores numéricos (1️⃣, 2️⃣, etc.)
-    const numericMarkers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '①', '②', '③', '④', '⑤'];
+    const numericMarkers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟', '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
     const foundNumericMarkers = numericMarkers.filter(marker => messageToExtractFrom.includes(marker));
 
     // Método 2: Contar ocorrências de campos-chave (👤 Nome:, 🕐 Horário:)
@@ -2145,7 +2145,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
 
       if (hasMultipleByMarkers) {
         // Dividir por marcadores numéricos
-        const splitPattern = /(?=1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|①|②|③|④|⑤)/;
+        const splitPattern = /(?=1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|7️⃣|8️⃣|9️⃣|🔟|①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩)/;
         appointmentBlocks = messageToExtractFrom.split(splitPattern).filter(isValidAppointmentBlock);
         console.log('   - Método de divisão: marcadores numéricos');
       } else {
@@ -7411,7 +7411,7 @@ if (ignoredNumbers !== undefined) {
                 // Se o regex não reconhecer, o fallback com IA será acionado automaticamente.
                 // ================================================================
                 const normalizedMessage = messageText.toLowerCase().trim();
-                const isSimpleConfirmation = /\b(sim|ok|confirmo|confirma|confirmar|confirmado|combinado|pode ser|tudo certo|tá bom|ta bom|com certeza|claro|positivo|afirmativo)\b/i.test(normalizedMessage);
+                const isSimpleConfirmation = /\b(sim|ok|confirmo|confirma|confirmar|confirmado|combinado|pode ser|tudo certo|tudo correto|tá bom|ta bom|com certeza|claro|positivo|afirmativo)\b/i.test(normalizedMessage);
 
                 // Special case: if user is responding with payment method choice (PIX or CARTÃO)
                 const normalizedPaymentResponse = messageText.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '');
@@ -8053,21 +8053,28 @@ INSTRUÇÕES ADICIONAIS:
 - Lembre-se do que já foi discutido anteriormente na conversa
 
 ═══════════════════════════════════════════════════════════════════
-🎯 MÚLTIPLOS AGENDAMENTOS (DUAS OU MAIS PESSOAS)
+🎯 MÚLTIPLOS AGENDAMENTOS (DUAS OU MAIS PESSOAS - SEM LIMITE!)
 ═══════════════════════════════════════════════════════════════════
 
-Quando o cliente quiser agendar para MÚLTIPLAS PESSOAS (ex: "quero agendar para mim e minha amiga", "dois horários", "para minha mãe e eu"), siga estas regras:
+Quando o cliente quiser agendar para MÚLTIPLAS PESSOAS (ex: "quero agendar para mim e minha amiga", "três horários", "para minha mãe, eu e minha irmã", "para 4 pessoas"), siga estas regras:
 
-1. COLETE OS DADOS DE CADA PESSOA SEPARADAMENTE:
+⚠️ IMPORTANTE: O sistema suporta agendamento para QUALQUER QUANTIDADE de pessoas (2, 3, 4, 5, 6... quantas forem necessárias). NÃO limite a 2 pessoas!
+
+1. IDENTIFIQUE QUANTAS PESSOAS serão agendadas
+   - Pode ser 2, 3, 4, 5 ou mais pessoas
+   - Pergunte quantas pessoas se não ficar claro
+
+2. COLETE OS DADOS DE CADA PESSOA SEPARADAMENTE:
    - Nome de cada pessoa
    - Serviço desejado (pode ser o mesmo ou diferente)
    - Horário para cada um (DEVE ser horários diferentes!)
 
-2. NO RESUMO DE CONFIRMAÇÃO, USE SEMPRE O FORMATO COM NÚMEROS:
-   - Use 1️⃣, 2️⃣, 3️⃣, etc. para separar cada agendamento
+3. NO RESUMO DE CONFIRMAÇÃO, USE SEMPRE O FORMATO COM NÚMEROS:
+   - Use 1️⃣, 2️⃣, 3️⃣, 4️⃣, 5️⃣, 6️⃣, 7️⃣, 8️⃣, 9️⃣, 🔟 para separar cada agendamento
    - CADA agendamento DEVE ter seus próprios dados completos
+   - Use TANTOS marcadores numéricos quantas pessoas houver
 
-3. FORMATO OBRIGATÓRIO DO RESUMO:
+4. FORMATO OBRIGATÓRIO DO RESUMO (exemplo com 3 pessoas):
    "Perfeito! Vou confirmar os dados para os agendamentos:
 
    1️⃣
@@ -8084,44 +8091,55 @@ Quando o cliente quiser agendar para MÚLTIPLAS PESSOAS (ex: "quero agendar para
    📅 Data: [dia da semana], [data]
    🕐 Horário: [horário 2]
 
+   3️⃣
+   👤 Nome: [nome da pessoa 3]
+   🏢 Profissional: [profissional]
+   💼 Serviço: [serviço]
+   📅 Data: [dia da semana], [data]
+   🕐 Horário: [horário 3]
+
    Está tudo correto? Responda SIM para confirmar os agendamentos ou me informe se precisa alterar algo."
 
 ⚠️ REGRAS IMPORTANTES:
-- SEMPRE use os emojis numéricos (1️⃣, 2️⃣) para separar cada agendamento
+- SEMPRE use os emojis numéricos (1️⃣, 2️⃣, 3️⃣, etc.) para separar CADA agendamento
 - NUNCA coloque dois agendamentos sem o separador numérico
 - Cada bloco DEVE ter todos os campos: Nome, Profissional, Serviço, Data, Horário
-- Os horários DEVEM ser diferentes para cada pessoa (ex: 10:00 e 10:40)
+- Os horários DEVEM ser diferentes para cada pessoa
+- Para 3+ pessoas: continue a sequência (3️⃣, 4️⃣, 5️⃣...) com o mesmo formato
 
 ⚠️ FLUXO PARA MÚLTIPLAS PESSOAS (PASSO A PASSO):
-1. Pergunte os serviços (ex: "Qual serviço para você e qual para sua mãe?")
-2. Pergunte a data UMA VEZ SÓ (ex: "Qual dia vocês preferem?")
-3. Use [MOSTRAR_HORARIOS_LIVRES] com a SOMA das durações dos serviços de todas as pessoas
-   - Ex: Pessoa 1 quer serviço de 20min + Pessoa 2 quer serviço de 60min = use duração de 80min
-   - Isso garante que só serão oferecidos horários onde CABEM AMBOS os agendamentos consecutivos
-4. Pergunte o horário da PRIMEIRA pessoa (ex: "Qual horário você prefere?")
-5. AGUARDE a resposta
-6. Após a primeira pessoa escolher, CALCULE o horário da segunda pessoa automaticamente:
-   - O horário da segunda pessoa é IMEDIATAMENTE APÓS o término do primeiro
-   - Ex: Se primeira escolheu 10:00 (serviço de 20min) → segunda será às 10:20
-   - Diga: "Perfeito! Então você fica às 10:00 e sua mãe logo em seguida às 10:20. Tudo certo?"
-7. Por fim, colete os NOMES de cada pessoa
+1. Identifique QUANTAS pessoas serão agendadas
+2. Pergunte os serviços de TODAS as pessoas (ex: "Qual serviço para cada um de vocês?")
+3. Pergunte a data UMA VEZ SÓ (ex: "Qual dia vocês preferem?")
+4. Use [MOSTRAR_HORARIOS_LIVRES] com a SOMA das durações dos serviços de TODAS as pessoas
+   - Ex: Pessoa 1 (20min) + Pessoa 2 (60min) + Pessoa 3 (30min) = use duração de 110min
+   - Isso garante que só serão oferecidos horários onde CABEM TODOS os agendamentos consecutivos
+5. Pergunte o horário da PRIMEIRA pessoa (ex: "Qual horário você prefere?")
+6. AGUARDE a resposta
+7. Após a primeira pessoa escolher, CALCULE os horários de TODAS as outras pessoas automaticamente:
+   - Pessoa 2 = horário pessoa 1 + duração serviço pessoa 1
+   - Pessoa 3 = horário pessoa 2 + duração serviço pessoa 2
+   - Pessoa N = horário pessoa (N-1) + duração serviço pessoa (N-1)
+   - Ex: Se primeira escolheu 10:00 (serviço de 20min) → segunda às 10:20 (serviço de 60min) → terceira às 11:20
+   - Diga: "Perfeito! Então [pessoa1] fica às 10:00, [pessoa2] às 10:20 e [pessoa3] às 11:20. Tudo certo?"
+8. Por fim, colete os NOMES de cada pessoa
 
 ⚠️ VERIFICAÇÃO DE ESPAÇO OBRIGATÓRIA:
-- ANTES de confirmar, verifique se há espaço para AMBOS os serviços consecutivos
-- Calcule: horário_pessoa1 + duração_serviço1 + duração_serviço2 = horário_término_total
+- ANTES de confirmar, verifique se há espaço para TODOS os serviços consecutivos
+- Calcule: horário_pessoa1 + duração_serviço1 + duração_serviço2 + ... + duração_serviçoN = horário_término_total
 - Se o horário_término_total conflita com outro agendamento, o horário NÃO serve
-- Ex: Pessoa 1 às 10:00 (20min) + Pessoa 2 (60min) = término às 11:20
-      Se tem alguém às 10:50, esse horário NÃO funciona! Ofereça outro.
+- Ex: Pessoa 1 às 10:00 (20min) + Pessoa 2 (60min) + Pessoa 3 (30min) = término às 11:50
+      Se tem alguém às 11:30, esse horário NÃO funciona! Ofereça outro.
 
 ⚠️ HORÁRIOS CONSECUTIVOS OBRIGATÓRIOS:
 - Por se tratar de MÚLTIPLO AGENDAMENTO, as pessoas querem ser atendidas em SEQUÊNCIA
-- A segunda pessoa NÃO escolhe o horário - ela fica AUTOMATICAMENTE no horário seguinte
-- Apenas confirme: "Você às [horário1] e [pessoa2] às [horário1 + duração]. Pode ser?"
+- APENAS a primeira pessoa escolhe o horário - todas as demais ficam AUTOMATICAMENTE nos horários seguintes
+- Apenas confirme listando todos os horários calculados
 
 ⚠️ NÃO REPITA:
 - NÃO pergunte a data novamente para cada pessoa
-- NÃO use [MOSTRAR_HORARIOS_LIVRES] duas vezes
-- NÃO ofereça escolha de horário para a segunda pessoa - é automático/consecutivo
+- NÃO use [MOSTRAR_HORARIOS_LIVRES] mais de uma vez
+- NÃO ofereça escolha de horário para nenhuma pessoa além da primeira - é automático/consecutivo
 
 ═══════════════════════════════════════════════════════════════════
 
@@ -8179,7 +8197,8 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               const confirmationPatterns = [
                 /^(sim|s|ok|confirmo|confirmar|confirmado)$/i,
                 /^(sim|ok),?\s*(pode|por favor|obrigado|está correto|confirmo)?$/i,
-                /^(está correto|tudo certo|pode confirmar|confirmo sim)$/i
+                /^(está correto|tudo certo|tudo correto|pode confirmar|confirmo sim)$/i,
+                /^sim,?\s*(tudo correto|tudo certo|tudo)$/i
               ];
 
               const isUserConfirming = confirmationPatterns.some(pattern =>
@@ -9820,7 +9839,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 const confirmationPatterns = [
                   /^(sim|s|ok|confirmo|confirmar|confirmado)$/i,
                   /^(sim|ok),?\s*(pode|por favor|obrigado|está correto|confirmo)?$/i,
-                  /^(está correto|tudo certo|pode confirmar|confirmo sim)$/i
+                  /^(está correto|tudo certo|tudo correto|pode confirmar|confirmo sim)$/i,
+                  /^sim,?\s*(tudo correto|tudo certo|tudo)$/i
                 ];
 
                 const isConfirmationResponse = confirmationPatterns.some(pattern =>
@@ -13917,7 +13937,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
     // 🔄 DETECTAR MÚLTIPLOS AGENDAMENTOS
     // ========================================
     // Método 1: Marcadores numéricos (1️⃣, 2️⃣, etc.)
-    const numericMarkers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '①', '②', '③', '④', '⑤'];
+    const numericMarkers = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟', '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
     const foundNumericMarkers = numericMarkers.filter(marker => messageToExtractFrom.includes(marker));
 
     // Método 2: Contar ocorrências de campos-chave (👤 Nome:, 🕐 Horário:)
@@ -13947,7 +13967,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
 
       if (hasMultipleByMarkers) {
         // Dividir por marcadores numéricos
-        const splitPattern = /(?=1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|①|②|③|④|⑤)/;
+        const splitPattern = /(?=1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|7️⃣|8️⃣|9️⃣|🔟|①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩)/;
         appointmentBlocks = messageToExtractFrom.split(splitPattern).filter(isValidAppointmentBlock);
         console.log('   - Método de divisão: marcadores numéricos');
       } else {

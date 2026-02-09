@@ -730,7 +730,7 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
         trimmed: messageText?.trim(),
         lowercase: messageText?.toLowerCase().trim(),
         isSIM: messageText?.toLowerCase().trim() === 'sim',
-        matchesSIMPattern: /\b(sim|ok|confirmo)\b/i.test(messageText?.toLowerCase().trim() || '')
+        matchesSIMPattern: /\b(sim|ok|confirmo|tudo correto|tudo certo)\b/i.test(messageText?.toLowerCase().trim() || '')
       });
 
       if (messageText) {
@@ -782,7 +782,7 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
               .sort((a, b) => new Date(b.lastMessageAt || 0).getTime() - new Date(a.lastMessageAt || 0).getTime());
             
             // Special case: if user is sending a simple confirmation, find conversation with AI confirmation
-            const isSimpleConfirmation = /^(sim|ok|confirmo)$/i.test(messageText.toLowerCase().trim());
+            const isSimpleConfirmation = /^(sim|ok|confirmo|tudo correto|tudo certo|sim tudo correto|sim tudo certo|sim tudo)$/i.test(messageText.toLowerCase().trim());
             
             if (isSimpleConfirmation && phoneConversations.length > 0) {
               // Look for conversation with recent AI confirmation message
@@ -1142,7 +1142,7 @@ INSTRUÇÕES OBRIGATÓRIAS:
             console.log('🔍 Verificando conversa para dados de agendamento...');
             
             // Check if this is a confirmation response (SIM/OK) after AI summary
-            const isConfirmationResponse = /\b(sim|ok|confirmo)\b/i.test(messageText.toLowerCase().trim());
+            const isConfirmationResponse = /\b(sim|ok|confirmo|tudo correto|tudo certo)\b/i.test(messageText.toLowerCase().trim());
 
             console.log('🔍 Verificando se é confirmação:', {
               messageText: messageText,
@@ -2447,7 +2447,7 @@ function needsAvailabilityInfo(messageText: string, conversationHistory: any[]):
     // (números, confirmações, datas, etc.)
     const looksLikeSchedulingResponse = /\d{1,2}[:\h]?\d{0,2}/.test(messageText) || // Horários
                                         /\d{1,2}\/\d{1,2}/.test(messageText) || // Datas
-                                        /\b(sim|ok|confirma|confirmo)\b/i.test(messageText);
+                                        /\b(sim|ok|confirma|confirmo|tudo certo|tudo correto)\b/i.test(messageText);
 
     return looksLikeSchedulingResponse;
   }
@@ -4269,7 +4269,7 @@ const broadcastEvent = (eventData: any) => {
           trimmed: messageText?.trim(),
           lowercase: messageText?.toLowerCase().trim(),
           isSIM: messageText?.toLowerCase().trim() === 'sim',
-          matchesSIMPattern: /\b(sim|ok|confirmo)\b/i.test(messageText?.toLowerCase().trim() || '')
+          matchesSIMPattern: /\b(sim|ok|confirmo|tudo correto|tudo certo)\b/i.test(messageText?.toLowerCase().trim() || '')
         });
 
         if (messageText) {
@@ -4321,7 +4321,7 @@ const broadcastEvent = (eventData: any) => {
                 .sort((a, b) => new Date(b.lastMessageAt || 0).getTime() - new Date(a.lastMessageAt || 0).getTime());
             
               // Special case: if user is sending a simple confirmation, find conversation with AI confirmation
-              const isSimpleConfirmation = /^(sim|ok|confirmo)$/i.test(messageText.toLowerCase().trim());
+              const isSimpleConfirmation = /^(sim|ok|confirmo|tudo correto|tudo certo|sim tudo correto|sim tudo certo|sim tudo)$/i.test(messageText.toLowerCase().trim());
             
               if (isSimpleConfirmation && phoneConversations.length > 0) {
                 // Look for conversation with recent AI confirmation message
@@ -4672,7 +4672,7 @@ INSTRUÇÕES OBRIGATÓRIAS:
               console.log('🔍 Verificando conversa para dados de agendamento...');
             
               // Check if this is a confirmation response (SIM/OK) after AI summary
-              const isConfirmationResponse = /\b(sim|ok|confirmo)\b/i.test(messageText.toLowerCase().trim());
+              const isConfirmationResponse = /\b(sim|ok|confirmo|tudo correto|tudo certo)\b/i.test(messageText.toLowerCase().trim());
 
               console.log('🔍 Verificando se é confirmação:', {
                 messageText: messageText,
@@ -5820,7 +5820,7 @@ function needsAvailabilityInfo(messageText: string, conversationHistory: any[]):
     // (números, confirmações, datas, etc.)
     const looksLikeSchedulingResponse = /\d{1,2}[:\h]?\d{0,2}/.test(messageText) || // Horários
                                         /\d{1,2}\/\d{1,2}/.test(messageText) || // Datas
-                                        /\b(sim|ok|confirma|confirmo)\b/i.test(messageText);
+                                        /\b(sim|ok|confirma|confirmo|tudo certo|tudo correto)\b/i.test(messageText);
 
     return looksLikeSchedulingResponse;
   }
@@ -7642,7 +7642,7 @@ const broadcastEvent = (eventData: any) => {
           trimmed: messageText?.trim(),
           lowercase: messageText?.toLowerCase().trim(),
           isSIM: messageText?.toLowerCase().trim() === 'sim',
-          matchesSIMPattern: /\b(sim|ok|confirmo)\b/i.test(messageText?.toLowerCase().trim() || '')
+          matchesSIMPattern: /\b(sim|ok|confirmo|tudo correto|tudo certo)\b/i.test(messageText?.toLowerCase().trim() || '')
         });
 
         if (messageText) {
@@ -7694,7 +7694,7 @@ const broadcastEvent = (eventData: any) => {
                 .sort((a, b) => new Date(b.lastMessageAt || 0).getTime() - new Date(a.lastMessageAt || 0).getTime());
             
               // Special case: if user is sending a simple confirmation, find conversation with AI confirmation
-              const isSimpleConfirmation = /^(sim|ok|confirmo)$/i.test(messageText.toLowerCase().trim());
+              const isSimpleConfirmation = /^(sim|ok|confirmo|tudo correto|tudo certo|sim tudo correto|sim tudo certo|sim tudo)$/i.test(messageText.toLowerCase().trim());
             
               if (isSimpleConfirmation && phoneConversations.length > 0) {
                 // Look for conversation with recent AI confirmation message
@@ -8045,7 +8045,7 @@ INSTRUÇÕES OBRIGATÓRIAS:
               console.log('🔍 Verificando conversa para dados de agendamento...');
             
               // Check if this is a confirmation response (SIM/OK) after AI summary
-              const isConfirmationResponse = /\b(sim|ok|confirmo)\b/i.test(messageText.toLowerCase().trim());
+              const isConfirmationResponse = /\b(sim|ok|confirmo|tudo correto|tudo certo)\b/i.test(messageText.toLowerCase().trim());
 
               console.log('🔍 Verificando se é confirmação:', {
                 messageText: messageText,
