@@ -657,7 +657,7 @@ function needsAvailabilityInfo(messageText: string, conversationHistory: any[]):
     // (números, confirmações, datas, etc.)
     const looksLikeSchedulingResponse = /\d{1,2}[:\h]?\d{0,2}/.test(messageText) || // Horários
                                         /\d{1,2}\/\d{1,2}/.test(messageText) || // Datas
-                                        /\b(sim|ok|confirma|confirmo)\b/i.test(messageText);
+                                        /\b(sim|ok|confirmo|confirma|confirmar|confirmado|certo|isso|pode|quero|bora|vamos|perfeito|combinado|fechado|beleza|ótimo|otimo|massa|show|top|blz|tá bom|ta bom|pode ser|tudo certo|com certeza|claro)\b/i.test(messageText);
 
     return looksLikeSchedulingResponse;
   }
@@ -7366,8 +7366,24 @@ if (ignoredNumbers !== undefined) {
                   .filter(conv => conv.phoneNumber === phoneNumber)
                   .sort((a, b) => new Date(b.lastMessageAt || 0).getTime() - new Date(a.lastMessageAt || 0).getTime());
                 
-                // Special case: if user is sending a simple confirmation, find conversation with AI confirmation
-                const isSimpleConfirmation = /^(sim|ok|confirmo)$/i.test(messageText.toLowerCase().trim());
+                // ================================================================
+                // DETECÇÃO DE CONFIRMAÇÃO DE AGENDAMENTO
+                // ================================================================
+                // Este regex detecta se o cliente está confirmando um agendamento.
+                // Usa \b (word boundary) para encontrar a palavra em qualquer posição da frase.
+                //
+                // COMO ADICIONAR NOVAS VARIAÇÕES:
+                // Se um cliente confirmar de uma forma não reconhecida, adicione a palavra/frase
+                // dentro do grupo (|nova_palavra|outra_frase) no regex abaixo.
+                // Exemplos de confirmações que já foram adicionadas por clientes reais:
+                // - "sim tudo certo" (contém "sim" e "certo")
+                // - "ok, tudo certo" (contém "ok" e "certo")
+                // - "sim, confirmo" (contém "sim" e "confirmo")
+                //
+                // Se o regex não reconhecer, o fallback com IA será acionado automaticamente.
+                // ================================================================
+                const normalizedMessage = messageText.toLowerCase().trim();
+                const isSimpleConfirmation = /\b(sim|ok|confirmo|confirma|confirmar|confirmado|certo|isso|pode|quero|bora|vamos|perfeito|combinado|fechado|beleza|ótimo|otimo|massa|show|top|blz|tá bom|ta bom|tá ótimo|ta otimo|pode ser|tudo certo|tudo bem|com certeza|claro|positivo|afirmativo)\b/i.test(normalizedMessage);
 
                 // Special case: if user is responding with payment method choice (PIX or CARTÃO)
                 const normalizedPaymentResponse = messageText.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '');
@@ -7380,13 +7396,72 @@ if (ignoredNumbers !== undefined) {
                   console.log('💳 Detectada resposta de forma de pagamento:', chosenPaymentMethod);
                 }
 
-                if (isSimpleConfirmation && phoneConversations.length > 0) {
+                // ================================================================
+                // FALLBACK COM IA: Se o regex não reconhecer como confirmação,
+                // usa a IA para interpretar a intenção da mensagem.
+                // Isso só é acionado quando:
+                // 1. O regex NÃO reconheceu a mensagem como confirmação
+                // 2. Existe uma conversa recente com resumo de agendamento pendente
+                // Assim reduz custos, pois a IA só é chamada quando necessário.
+                // ================================================================
+                let confirmationDetected = isSimpleConfirmation;
+
+                if (!confirmationDetected && phoneConversations.length > 0 && company.openaiApiKey) {
+                  // Verificar se há uma conversa com resumo de agendamento aguardando confirmação
+                  const hasAwaitingConfirmation = await (async () => {
+                    for (const conv of phoneConversations) {
+                      const recentMessages = await storage.getMessagesByConversation(conv.id);
+                      const lastAiMessage = recentMessages.filter(m => m.role === 'assistant')[0];
+                      if (lastAiMessage && (
+                        lastAiMessage.content.includes('Confirma') ||
+                        lastAiMessage.content.includes('confirma') ||
+                        lastAiMessage.content.includes('📅') ||
+                        lastAiMessage.content.includes('Serviço:') ||
+                        lastAiMessage.content.includes('Data:')
+                      )) {
+                        return true;
+                      }
+                    }
+                    return false;
+                  })();
+
+                  if (hasAwaitingConfirmation) {
+                    try {
+                      console.log('🤖 Regex não reconheceu - usando IA como fallback para detectar confirmação...');
+                      const OpenAI = (await import('openai')).default;
+                      const openaiForConfirmation = new OpenAI({ apiKey: company.openaiApiKey });
+                      const confirmationCheck = await openaiForConfirmation.chat.completions.create({
+                        model: 'gpt-4o-mini',
+                        messages: [
+                          {
+                            role: 'system',
+                            content: 'Você é um classificador de intenção. Responda APENAS "SIM" ou "NAO". Nada mais.'
+                          },
+                          {
+                            role: 'user',
+                            content: `A seguinte mensagem de um cliente é uma confirmação/concordância com algo que foi proposto? Mensagem: "${normalizedMessage}"`
+                          }
+                        ],
+                        max_tokens: 5,
+                        temperature: 0
+                      });
+                      const aiAnswer = confirmationCheck.choices[0]?.message?.content?.trim().toUpperCase() || '';
+                      confirmationDetected = aiAnswer.includes('SIM');
+                      console.log(`🤖 IA respondeu: "${aiAnswer}" → confirmação: ${confirmationDetected}`);
+                    } catch (aiError) {
+                      console.error('❌ Erro no fallback de IA para confirmação:', aiError);
+                      // Em caso de erro, não bloquear o fluxo
+                    }
+                  }
+                }
+
+                if (confirmationDetected && phoneConversations.length > 0) {
                   // Look for conversation with recent AI confirmation message
                   for (const conv of phoneConversations) {
                     const recentMessages = await storage.getMessagesByConversation(conv.id);
                     // Query retorna DESC, então [0] é a mais recente
                     const lastAiMessage = recentMessages.filter(m => m.role === 'assistant')[0];
-                    
+
                     if (lastAiMessage && lastAiMessage.content.includes('confirmado')) {
                       conversation = conv;
                       console.log('✅ Encontrada conversa com confirmação da IA ID:', conversation.id);
@@ -7394,7 +7469,7 @@ if (ignoredNumbers !== undefined) {
                     }
                   }
                 }
-                
+
                 // If not found or not a confirmation, use most recent
                 if (!conversation && phoneConversations.length > 0) {
                   conversation = phoneConversations[0];
