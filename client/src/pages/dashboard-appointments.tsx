@@ -268,6 +268,20 @@ export default function DashboardAppointments() {
     mutationFn: async (data: AppointmentFormData) => {
       const selectedService = services.find(s => s.id === data.serviceId);
       const selectedStatus = statuses.find(s => s.id === data.statusId);
+
+      // Map status name to server enum value
+      const statusNameMap: Record<string, string> = {
+        'pendente': 'agendado',
+        'agendado': 'agendado',
+        'confirmado': 'confirmado',
+        'cancelado': 'cancelado',
+        'concluido': 'concluido',
+        'concluído': 'concluido',
+        'remarcado': 'remarcado',
+      };
+      const statusName = (selectedStatus?.name || '').toLowerCase();
+      const mappedStatus = statusNameMap[statusName] || 'agendado';
+
       const response = await fetch('/api/company/appointments', {
         method: 'POST',
         headers: {
@@ -277,7 +291,7 @@ export default function DashboardAppointments() {
           ...data,
           duration: selectedService?.duration || 60,
           totalPrice: selectedService?.price || 0,
-          status: selectedStatus?.name || 'Pendente',
+          status: mappedStatus,
         }),
         credentials: 'include',
       });
