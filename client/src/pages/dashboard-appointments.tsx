@@ -1181,26 +1181,11 @@ export default function DashboardAppointments() {
                         <FormItem>
                           <FormLabel>Horário</FormLabel>
                           <FormControl>
-                            <Select
-                              value={field.value}
-                              onValueChange={(value) => field.onChange(value)}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="--:--" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {Array.from({ length: 28 }, (_, i) => {
-                                  const hour = Math.floor(i / 2) + 8;
-                                  const minute = (i % 2) * 30;
-                                  const timeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-                                  return (
-                                    <SelectItem key={timeString} value={timeString}>
-                                      {timeString}
-                                    </SelectItem>
-                                  );
-                                })}
-                              </SelectContent>
-                            </Select>
+                            <Input
+                              type="time"
+                              {...field}
+                              placeholder="HH:MM"
+                            />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
