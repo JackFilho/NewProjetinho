@@ -657,7 +657,7 @@ function needsAvailabilityInfo(messageText: string, conversationHistory: any[]):
     // (números, confirmações, datas, etc.)
     const looksLikeSchedulingResponse = /\d{1,2}[:\h]?\d{0,2}/.test(messageText) || // Horários
                                         /\d{1,2}\/\d{1,2}/.test(messageText) || // Datas
-                                        /\b(sim|ok|confirmo|confirma|confirmar|confirmado|certo|isso|pode|quero|bora|vamos|perfeito|combinado|fechado|beleza|ótimo|otimo|massa|show|top|blz|tá bom|ta bom|pode ser|tudo certo|com certeza|claro)\b/i.test(messageText);
+                                        /\b(sim|ok|confirmo|confirma|confirmar|confirmado|combinado|pode ser|tudo certo|tá bom|ta bom|com certeza|claro|positivo|afirmativo)\b/i.test(messageText);
 
     return looksLikeSchedulingResponse;
   }
@@ -7383,7 +7383,7 @@ if (ignoredNumbers !== undefined) {
                 // Se o regex não reconhecer, o fallback com IA será acionado automaticamente.
                 // ================================================================
                 const normalizedMessage = messageText.toLowerCase().trim();
-                const isSimpleConfirmation = /\b(sim|ok|confirmo|confirma|confirmar|confirmado|certo|isso|pode|quero|bora|vamos|perfeito|combinado|fechado|beleza|ótimo|otimo|massa|show|top|blz|tá bom|ta bom|tá ótimo|ta otimo|pode ser|tudo certo|tudo bem|com certeza|claro|positivo|afirmativo)\b/i.test(normalizedMessage);
+                const isSimpleConfirmation = /\b(sim|ok|confirmo|confirma|confirmar|confirmado|combinado|pode ser|tudo certo|tá bom|ta bom|com certeza|claro|positivo|afirmativo)\b/i.test(normalizedMessage);
 
                 // Special case: if user is responding with payment method choice (PIX or CARTÃO)
                 const normalizedPaymentResponse = messageText.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '');
