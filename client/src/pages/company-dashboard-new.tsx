@@ -162,13 +162,33 @@ export default function CompanyDashboardNew() {
       return {
         name,
         value,
-        percentage,
+        percentage: parseFloat(percentage),
         displayName: `${name} (${percentage}%)`,
         color: service?.color || '#8884d8'
       };
     });
 
-    return chartData.sort((a, b) => b.value - a.value);
+    const sorted = chartData.sort((a, b) => b.value - a.value);
+
+    // Agrupar serviços com menos de 2% em "Outros" quando há muitos serviços
+    if (sorted.length > 6) {
+      const main = sorted.filter(item => item.percentage >= 2);
+      const others = sorted.filter(item => item.percentage < 2);
+      if (others.length > 0) {
+        const othersValue = others.reduce((sum, item) => sum + item.value, 0);
+        const othersPercentage = total > 0 ? ((othersValue / total) * 100).toFixed(1) : '0';
+        main.push({
+          name: 'Outros',
+          value: othersValue,
+          percentage: parseFloat(othersPercentage),
+          displayName: `Outros (${othersPercentage}%)`,
+          color: '#9CA3AF'
+        });
+      }
+      return main;
+    }
+
+    return sorted;
   };
 
   // Calcular dados mensais de receita para o gráfico
@@ -576,39 +596,52 @@ export default function CompanyDashboardNew() {
               <MoreHorizontal className="w-5 h-5" />
             </button>
           </div>
-          <div className="h-80">
+          <div>
             {servicesData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={servicesData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={100}
-                    paddingAngle={2}
-                    dataKey="value"
-                  >
-                    {servicesData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Legend
-                    verticalAlign="bottom"
-                    height={36}
-                    formatter={(value, entry) => {
-                      const data = servicesData.find(item => item.name === value);
-                      return (
-                        <span style={{ color: entry.color }}>
-                          {data?.displayName || value}
+              <>
+                <div className="h-56">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={servicesData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={85}
+                        paddingAngle={2}
+                        dataKey="value"
+                      >
+                        {servicesData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(value: number, name: string) => {
+                          const data = servicesData.find(item => item.name === name);
+                          return [`${value} atendimentos (${data?.percentage}%)`, name];
+                        }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="max-h-28 overflow-y-auto mt-2 px-1">
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 justify-center">
+                    {servicesData.map((item, index) => (
+                      <div key={index} className="flex items-center gap-1 text-xs whitespace-nowrap">
+                        <span
+                          className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+                          style={{ backgroundColor: item.color }}
+                        />
+                        <span className="text-gray-600 truncate max-w-[160px]" title={item.displayName}>
+                          {item.displayName}
                         </span>
-                      );
-                    }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
             ) : (
-              <div className="h-full flex items-center justify-center">
+              <div className="h-56 flex items-center justify-center">
                 <span className="text-gray-500">Nenhum serviço concluído</span>
               </div>
             )}
