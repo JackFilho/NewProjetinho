@@ -3233,8 +3233,8 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
     };
 
     try {
-      broadcastEvent(appointmentNotification);
-      console.log('✅ Broadcast notification sent for appointment type:', appointmentNotification?.type);
+      broadcastEvent(appointmentNotification, companyId);
+      console.log('✅ Broadcast notification sent for appointment type:', appointmentNotification?.type, 'companyId:', companyId);
     } catch (broadcastError) {
       console.error('⚠️ Broadcast error:', broadcastError);
     }
@@ -3823,7 +3823,7 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
       // Get professional name for notification
       const professional = await storage.getProfessional(appointmentData.professionalId);
       
-      // Broadcast new appointment event to all connected clients
+      // Broadcast new appointment event only to connections of the same company
       broadcastEvent({
         type: 'new_appointment',
         appointment: {
@@ -3834,7 +3834,7 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
           appointmentDate: appointmentData.appointmentDate,
           appointmentTime: appointmentData.appointmentTime
         }
-      });
+      }, companyId);
 
     } catch (parseError) {
       console.error('❌ Error parsing extracted appointment data:', parseError);
@@ -3852,15 +3852,18 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
   }
 }
 
-// Store SSE connections
-const sseConnections = new Set<any>();
+// Store SSE connections with companyId for multi-tenant isolation
+const sseConnections = new Map<any, number>();
 
-// Function to broadcast events to all connected clients
-const broadcastEvent = (eventData: any) => {
+// Function to broadcast events only to connections of the same company
+const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
   const data = JSON.stringify(eventData);
-  sseConnections.forEach((res) => {
+  sseConnections.forEach((companyId, res) => {
     try {
-      res.write(`data: ${data}\n\n`);
+      // Only send to connections of the same company
+      if (!targetCompanyId || companyId === targetCompanyId) {
+        res.write(`data: ${data}\n\n`);
+      }
     } catch (error) {
       // Remove dead connections
       sseConnections.delete(res);
@@ -3985,8 +3988,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
 
-  // SSE endpoint for real-time updates
-  app.get('/api/events', (req, res) => {
+  // SSE endpoint for real-time updates (requires company authentication via session)
+  app.get('/api/events', (req: any, res) => {
+    const companyId = req.session?.companyId;
+    if (!companyId) {
+      return res.status(401).json({ message: 'Não autenticado' });
+    }
+
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -3995,9 +4003,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       'Access-Control-Allow-Headers': 'Cache-Control'
     });
 
-    // Add connection to store
-    sseConnections.add(res);
-    console.log(`📡 New SSE connection added. Total connections: ${sseConnections.size}`);
+    // Add connection to store with companyId for tenant isolation
+    sseConnections.set(res, companyId);
+    console.log(`📡 New SSE connection added for company ${companyId}. Total connections: ${sseConnections.size}`);
 
     // Send initial connection confirmation
     res.write('data: {"type":"connection_established","message":"SSE connected successfully"}\n\n');
@@ -4016,7 +4024,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     req.on('close', () => {
       clearInterval(keepAlive);
       sseConnections.delete(res);
-      console.log(`📡 SSE connection closed. Remaining connections: ${sseConnections.size}`);
+      console.log(`📡 SSE connection closed for company ${companyId}. Remaining connections: ${sseConnections.size}`);
     });
   });
 
@@ -10227,12 +10235,12 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           const cancelResult = await cancelAppointmentById(appointmentToCancel.id, company.id);
                           console.log('✅ Resultado do cancelamento:', cancelResult);
 
-                          // Broadcast cancellation event for real-time updates
+                          // Broadcast cancellation event for real-time updates (filtered by company)
                           broadcastEvent({
                             type: 'cancelled_appointment',
                             appointmentId: appointmentToCancel.id,
                             companyId: company.id
-                          });
+                          }, company.id);
 
                           // The cancelResult.message already contains the success message
                           // No need to call createAppointmentFromAIConfirmation
@@ -15106,8 +15114,8 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
     };
 
     try {
-      broadcastEvent(appointmentNotification);
-      console.log('✅ Broadcast notification sent for appointment type:', appointmentNotification?.type);
+      broadcastEvent(appointmentNotification, companyId);
+      console.log('✅ Broadcast notification sent for appointment type:', appointmentNotification?.type, 'companyId:', companyId);
     } catch (broadcastError) {
       console.error('⚠️ Broadcast error:', broadcastError);
     }
@@ -15696,7 +15704,7 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
       // Get professional name for notification
       const professional = await storage.getProfessional(appointmentData.professionalId);
       
-      // Broadcast new appointment event to all connected clients
+      // Broadcast new appointment event only to connections of the same company
       broadcastEvent({
         type: 'new_appointment',
         appointment: {
@@ -15707,7 +15715,7 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
           appointmentDate: appointmentData.appointmentDate,
           appointmentTime: appointmentData.appointmentTime
         }
-      });
+      }, companyId);
 
     } catch (parseError) {
       console.error('❌ Error parsing extracted appointment data:', parseError);
@@ -15725,15 +15733,18 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
   }
 }
 
-// Store SSE connections
-const sseConnections = new Set<any>();
+// Store SSE connections with companyId for multi-tenant isolation
+const sseConnections = new Map<any, number>();
 
-// Function to broadcast events to all connected clients
-const broadcastEvent = (eventData: any) => {
+// Function to broadcast events only to connections of the same company
+const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
   const data = JSON.stringify(eventData);
-  sseConnections.forEach((res) => {
+  sseConnections.forEach((companyId, res) => {
     try {
-      res.write(`data: ${data}\n\n`);
+      // Only send to connections of the same company
+      if (!targetCompanyId || companyId === targetCompanyId) {
+        res.write(`data: ${data}\n\n`);
+      }
     } catch (error) {
       // Remove dead connections
       sseConnections.delete(res);
