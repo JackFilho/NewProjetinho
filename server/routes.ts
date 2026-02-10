@@ -1990,7 +1990,7 @@ function extractDataFromAppointmentBlock(blockText: string): any {
     }
   }
 
-  // Extract time - com fallbacks para formato livre
+  // Extract time - com fallbacks para formato livre e horários truncados
   const timeMatch = blockText.match(/🕐\s*Horário:\s*(\d{1,2}:\d{2})/i) ||
                    blockText.match(/Horário:\s*(\d{1,2}:\d{2})/i) ||
                    blockText.match(/Hora:\s*(\d{1,2}:\d{2})/i) ||
@@ -1998,7 +1998,24 @@ function extractDataFromAppointmentBlock(blockText: string): any {
                    blockText.match(/(?:às|as)\s+(\d{1,2}:\d{2})/i) ||
                    // Fallback: HH:MM solto no texto (apenas se não for data)
                    blockText.match(/(?:^|[^\d\/])(\d{1,2}:\d{2})(?:[^\d]|$)/);
-  if (timeMatch) data.time = timeMatch[1].trim();
+  if (timeMatch) {
+    data.time = timeMatch[1].trim();
+  } else {
+    // Fallback para horários TRUNCADOS: "12:" ou "9:" (IA cortou os minutos)
+    const truncatedTimeMatch = blockText.match(/🕐\s*Horário:\s*(\d{1,2}):\s*$/im) ||
+                               blockText.match(/Horário:\s*(\d{1,2}):\s*$/im) ||
+                               blockText.match(/🕐\s*Horário:\s*(\d{1,2}):\s*(?:\n|,)/i) ||
+                               blockText.match(/Horário:\s*(\d{1,2}):\s*(?:\n|,)/i) ||
+                               // Horário sem minutos: "Horário: 12" ou "às 12"
+                               blockText.match(/🕐\s*Horário:\s*(\d{1,2})\s*$/im) ||
+                               blockText.match(/Horário:\s*(\d{1,2})\s*$/im) ||
+                               blockText.match(/(?:às|as)\s+(\d{1,2})\s*(?:\n|,|$)/i);
+    if (truncatedTimeMatch) {
+      const hour = truncatedTimeMatch[1].padStart(2, '0');
+      data.time = `${hour}:00`;
+      console.log(`⚠️ Horário truncado detectado "${truncatedTimeMatch[0].trim()}" → normalizado para ${data.time}`);
+    }
+  }
 
   return data;
 }
@@ -2155,7 +2172,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
         const hasNameLabel = /Nome:/i.test(trimmed);
         const hasNameAfterMarker = /(?:1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|7️⃣|8️⃣|9️⃣|🔟|①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩)\s*[A-ZÀ-Ÿ][a-záéíóúâêôãõüç]/i.test(trimmed);
         const hasName = hasNameLabel || hasNameAfterMarker;
-        const hasDateOrTime = /Data:/i.test(trimmed) || /Horário:/i.test(trimmed) || /\d{1,2}:\d{2}/.test(trimmed) || /às\s+\d{1,2}:\d{2}/i.test(trimmed);
+        const hasDateOrTime = /Data:/i.test(trimmed) || /Horário:/i.test(trimmed) || /\d{1,2}:\d{2}/.test(trimmed) || /\d{1,2}:\s*$/.test(trimmed) || /às\s+\d{1,2}/i.test(trimmed);
         return !!trimmed && hasName && hasDateOrTime;
       };
 
@@ -2354,14 +2371,27 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
 
       // Extract time
       const timePatterns = [
-        /🕐\s*Horário:\s*(\d{2}:\d{2})/i,
-        /Horário:\s*(\d{2}:\d{2})/i,
+        /🕐\s*Horário:\s*(\d{1,2}:\d{2})/i,
+        /Horário:\s*(\d{1,2}:\d{2})/i,
       ];
       for (const pattern of timePatterns) {
         const match = summaryText.match(pattern);
         if (match) {
           data.time = match[1].trim();
           break;
+        }
+      }
+
+      // Fallback para horários TRUNCADOS: "12:" ou "12" (IA cortou os minutos)
+      if (!data.time) {
+        const truncatedMatch = summaryText.match(/🕐\s*Horário:\s*(\d{1,2}):\s*(?:\n|,|$)/im) ||
+                               summaryText.match(/Horário:\s*(\d{1,2}):\s*(?:\n|,|$)/im) ||
+                               summaryText.match(/🕐\s*Horário:\s*(\d{1,2})\s*(?:\n|,|$)/im) ||
+                               summaryText.match(/Horário:\s*(\d{1,2})\s*(?:\n|,|$)/im);
+        if (truncatedMatch) {
+          const hour = truncatedMatch[1].padStart(2, '0');
+          data.time = `${hour}:00`;
+          console.log(`⚠️ Horário truncado detectado → normalizado para ${data.time}`);
         }
       }
 
@@ -14015,7 +14045,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
         const hasNameLabel = /Nome:/i.test(trimmed);
         const hasNameAfterMarker = /(?:1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|7️⃣|8️⃣|9️⃣|🔟|①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩)\s*[A-ZÀ-Ÿ][a-záéíóúâêôãõüç]/i.test(trimmed);
         const hasName = hasNameLabel || hasNameAfterMarker;
-        const hasDateOrTime = /Data:/i.test(trimmed) || /Horário:/i.test(trimmed) || /\d{1,2}:\d{2}/.test(trimmed) || /às\s+\d{1,2}:\d{2}/i.test(trimmed);
+        const hasDateOrTime = /Data:/i.test(trimmed) || /Horário:/i.test(trimmed) || /\d{1,2}:\d{2}/.test(trimmed) || /\d{1,2}:\s*$/.test(trimmed) || /às\s+\d{1,2}/i.test(trimmed);
         return !!trimmed && hasName && hasDateOrTime;
       };
 
@@ -14214,14 +14244,27 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
 
       // Extract time
       const timePatterns = [
-        /🕐\s*Horário:\s*(\d{2}:\d{2})/i,
-        /Horário:\s*(\d{2}:\d{2})/i,
+        /🕐\s*Horário:\s*(\d{1,2}:\d{2})/i,
+        /Horário:\s*(\d{1,2}:\d{2})/i,
       ];
       for (const pattern of timePatterns) {
         const match = summaryText.match(pattern);
         if (match) {
           data.time = match[1].trim();
           break;
+        }
+      }
+
+      // Fallback para horários TRUNCADOS: "12:" ou "12" (IA cortou os minutos)
+      if (!data.time) {
+        const truncatedMatch = summaryText.match(/🕐\s*Horário:\s*(\d{1,2}):\s*(?:\n|,|$)/im) ||
+                               summaryText.match(/Horário:\s*(\d{1,2}):\s*(?:\n|,|$)/im) ||
+                               summaryText.match(/🕐\s*Horário:\s*(\d{1,2})\s*(?:\n|,|$)/im) ||
+                               summaryText.match(/Horário:\s*(\d{1,2})\s*(?:\n|,|$)/im);
+        if (truncatedMatch) {
+          const hour = truncatedMatch[1].padStart(2, '0');
+          data.time = `${hour}:00`;
+          console.log(`⚠️ Horário truncado detectado → normalizado para ${data.time}`);
         }
       }
 
