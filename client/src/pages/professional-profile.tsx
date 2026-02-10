@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { queryClient } from "@/lib/queryClient";
 import { ArrowLeft, User, Mail, Phone, Key, LogOut, Edit, Check, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -141,6 +142,8 @@ export default function ProfessionalProfile() {
   const handleLogout = async () => {
     try {
       await fetch("/api/auth/professional/logout", { method: "POST" });
+      // Clear React Query cache to prevent cross-user data leak
+      queryClient.clear();
       toast({ title: "Logout realizado com sucesso" });
       setLocation("/profissional/login");
     } catch (error) {

@@ -3995,11 +3995,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(401).json({ message: 'Não autenticado' });
     }
 
+    const origin = req.headers.origin || req.headers.host || '';
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Headers': 'Cache-Control'
     });
 
@@ -4854,11 +4856,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Usuário inativo" });
       }
 
-      req.session.adminId = admin.id;
-      req.session.adminUsername = admin.username;
-      
-      const { password: _, ...adminData } = admin;
-      res.json({ message: "Login realizado com sucesso", admin: adminData });
+      // Regenerate session to prevent session fixation attacks
+      const adminToReturn = admin;
+      req.session.regenerate((err: any) => {
+        if (err) {
+          console.error("Error regenerating session:", err);
+          return res.status(500).json({ message: "Erro interno do servidor" });
+        }
+        req.session.adminId = adminToReturn.id;
+        req.session.adminUsername = adminToReturn.username;
+
+        const { password: _, ...adminData } = adminToReturn;
+        res.json({ message: "Login realizado com sucesso", admin: adminData });
+      });
     } catch (error) {
       console.error("Error during admin login:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
@@ -5090,14 +5100,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Credenciais inválidas" });
       }
 
-      req.session.companyId = company.id;
-      res.json({ 
-        message: "Login realizado com sucesso",
-        company: {
-          id: company.id,
-          fantasyName: company.fantasyName,
-          email: company.email
+      // Regenerate session to prevent session fixation attacks
+      const companyToReturn = company;
+      req.session.regenerate((err: any) => {
+        if (err) {
+          console.error("Error regenerating session:", err);
+          return res.status(500).json({ message: "Erro interno do servidor" });
         }
+        req.session.companyId = companyToReturn.id;
+        res.json({
+          message: "Login realizado com sucesso",
+          company: {
+            id: companyToReturn.id,
+            fantasyName: companyToReturn.fantasyName,
+            email: companyToReturn.email
+          }
+        });
       });
     } catch (error) {
       console.error("Company login error:", error);
@@ -5411,14 +5429,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log('Company inactive but not suspended - allowing login (trial period)');
       }
 
-      req.session.companyId = company.id;
-      res.json({
-        message: "Login realizado com sucesso",
-        company: {
-          id: company.id,
-          fantasyName: company.fantasyName,
-          email: company.email
+      // Regenerate session to prevent session fixation attacks
+      const companyToReturn = company;
+      req.session.regenerate((err: any) => {
+        if (err) {
+          console.error("Error regenerating session:", err);
+          return res.status(500).json({ message: "Erro interno do servidor" });
         }
+        req.session.companyId = companyToReturn.id;
+        res.json({
+          message: "Login realizado com sucesso",
+          company: {
+            id: companyToReturn.id,
+            fantasyName: companyToReturn.fantasyName,
+            email: companyToReturn.email
+          }
+        });
       });
     } catch (error) {
       console.error("Company login error:", error);
@@ -11538,7 +11564,7 @@ Obrigado pela preferência! 🙏`;
 
   // Fix appointment date (temporary route)
 
-  app.post('/api/company/appointments', validateBody(createAppointmentSchema), async (req: any, res) => {
+  app.post('/api/company/appointments', isCompanyAuthenticated, validateBody(createAppointmentSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -11557,10 +11583,16 @@ Obrigado pela preferência! 🙏`;
         clientEmail
       } = req.body;
 
-      // Get service details for duration and price
+      // Get service details for duration and price - verify belongs to same company
       const service = await storage.getService(serviceId);
-      if (!service) {
+      if (!service || service.companyId !== companyId) {
         return res.status(400).json({ message: "Serviço não encontrado" });
+      }
+
+      // Verify professional belongs to same company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(400).json({ message: "Profissional não encontrado" });
       }
 
       // Create/find client
@@ -11734,7 +11766,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.patch('/api/company/appointments/:id', async (req: any, res) => {
+  app.patch('/api/company/appointments/:id', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -11742,19 +11774,27 @@ Obrigado pela preferência! 🙏`;
       }
 
       const id = parseInt(req.params.id);
+
+      // Verify appointment belongs to company
+      const existingAppointment = await storage.getAppointment(id);
+      if (!existingAppointment || existingAppointment.companyId !== companyId) {
+        return res.status(404).json({ message: "Agendamento não encontrado" });
+      }
+
       console.log('📋 Updating appointment ID:', id, '- fields:', Object.keys(req.body).join(', '));
-      
+
       // Process the update data
       const updateData: any = {};
-      
+
       if (req.body.serviceId) {
         updateData.serviceId = parseInt(req.body.serviceId);
-        // Get service details for pricing
+        // Get service details for pricing - verify service belongs to same company
         const service = await storage.getService(updateData.serviceId);
-        if (service) {
-          updateData.duration = service.duration;
-          updateData.totalPrice = String(service.price);
+        if (!service || service.companyId !== companyId) {
+          return res.status(400).json({ message: "Serviço não encontrado" });
         }
+        updateData.duration = service.duration;
+        updateData.totalPrice = String(service.price);
       }
       
       if (req.body.professionalId) {
@@ -12234,7 +12274,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.delete('/api/company/services/:id', async (req: any, res) => {
+  app.delete('/api/company/services/:id', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12242,6 +12282,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const id = parseInt(req.params.id);
+
+      // Verify service belongs to company
+      const existingService = await storage.getService(id);
+      if (!existingService || existingService.companyId !== companyId) {
+        return res.status(404).json({ message: "Serviço não encontrado" });
+      }
+
       await storage.deleteService(id);
       res.json({ message: "Serviço excluído com sucesso" });
     } catch (error) {
@@ -12292,6 +12339,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const id = parseInt(req.params.id);
+
+      // Verify professional belongs to company
+      const existingProfessional = await storage.getProfessional(id);
+      if (!existingProfessional || existingProfessional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
       const professional = await storage.updateProfessional(id, req.body);
       res.json(professional);
     } catch (error) {
@@ -12300,7 +12354,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.delete('/api/company/professionals/:id', async (req: any, res) => {
+  app.delete('/api/company/professionals/:id', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12308,6 +12362,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const id = parseInt(req.params.id);
+
+      // Verify professional belongs to company
+      const existingProfessional = await storage.getProfessional(id);
+      if (!existingProfessional || existingProfessional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
       await storage.deleteProfessional(id);
       res.json({ message: "Profissional excluído com sucesso" });
     } catch (error) {
@@ -12365,7 +12426,7 @@ Obrigado pela preferência! 🙏`;
   });
 
   // Professional Breaks API
-  app.get('/api/company/professionals/:professionalId/breaks', async (req: any, res) => {
+  app.get('/api/company/professionals/:professionalId/breaks', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12373,6 +12434,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
       const breaks = await storage.getProfessionalBreaks(professionalId);
       res.json(breaks);
     } catch (error) {
@@ -12381,7 +12449,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.post('/api/company/professionals/:professionalId/breaks', async (req: any, res) => {
+  app.post('/api/company/professionals/:professionalId/breaks', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12389,6 +12457,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
       const { dayOfWeek, startTime, endTime } = req.body;
 
       if (!dayOfWeek || !startTime || !endTime) {
@@ -12409,11 +12484,19 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.delete('/api/company/professionals/:professionalId/breaks/:breakId', async (req: any, res) => {
+  app.delete('/api/company/professionals/:professionalId/breaks/:breakId', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
         return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
       }
 
       const breakId = parseInt(req.params.breakId);
@@ -12426,7 +12509,7 @@ Obrigado pela preferência! 🙏`;
   });
 
   // Professional Days Off API
-  app.get('/api/company/professionals/:professionalId/days-off', async (req: any, res) => {
+  app.get('/api/company/professionals/:professionalId/days-off', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12434,6 +12517,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
       const daysOff = await storage.getProfessionalDaysOff(professionalId);
       res.json(daysOff);
     } catch (error) {
@@ -12442,7 +12532,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.post('/api/company/professionals/:professionalId/days-off', async (req: any, res) => {
+  app.post('/api/company/professionals/:professionalId/days-off', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12450,6 +12540,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
       const { dateOff, reason } = req.body;
 
       if (!dateOff) {
@@ -12477,11 +12574,19 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.delete('/api/company/professionals/:professionalId/days-off/:dayOffId', async (req: any, res) => {
+  app.delete('/api/company/professionals/:professionalId/days-off/:dayOffId', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
         return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
       }
 
       const dayOffId = parseInt(req.params.dayOffId);
@@ -12494,7 +12599,7 @@ Obrigado pela preferência! 🙏`;
   });
 
   // Professional Exceptional Schedules API
-  app.get('/api/company/professionals/:professionalId/exceptional-schedules', async (req: any, res) => {
+  app.get('/api/company/professionals/:professionalId/exceptional-schedules', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12502,6 +12607,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
       const exceptionalSchedules = await storage.getProfessionalExceptionalSchedules(professionalId);
       res.json(exceptionalSchedules);
     } catch (error) {
@@ -12510,7 +12622,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.post('/api/company/professionals/:professionalId/exceptional-schedules', async (req: any, res) => {
+  app.post('/api/company/professionals/:professionalId/exceptional-schedules', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12518,6 +12630,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
       const { exceptionDate, startTime, endTime, reason } = req.body;
 
       if (!exceptionDate || !startTime || !endTime) {
@@ -12550,11 +12669,19 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.delete('/api/company/professionals/:professionalId/exceptional-schedules/:scheduleId', async (req: any, res) => {
+  app.delete('/api/company/professionals/:professionalId/exceptional-schedules/:scheduleId', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
         return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
       }
 
       const scheduleId = parseInt(req.params.scheduleId);
@@ -12571,7 +12698,7 @@ Obrigado pela preferência! 🙏`;
   });
 
   // Professional Schedules API (individual hours per day)
-  app.get('/api/company/professionals/:professionalId/schedules', async (req: any, res) => {
+  app.get('/api/company/professionals/:professionalId/schedules', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12579,6 +12706,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
       const schedules = await storage.getProfessionalSchedules(professionalId);
       res.json(schedules);
     } catch (error) {
@@ -12587,7 +12721,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.post('/api/company/professionals/:professionalId/schedules', async (req: any, res) => {
+  app.post('/api/company/professionals/:professionalId/schedules', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12595,6 +12729,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
       const { dayOfWeek, startTime, endTime, isEnabled } = req.body;
 
       if (dayOfWeek === undefined || !startTime || !endTime) {
@@ -12616,11 +12757,19 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.delete('/api/company/professionals/:professionalId/schedules/:scheduleId', async (req: any, res) => {
+  app.delete('/api/company/professionals/:professionalId/schedules/:scheduleId', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
         return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
       }
 
       const scheduleId = parseInt(req.params.scheduleId);
@@ -12737,11 +12886,19 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.put('/api/company/clients/:id', validateBody(updateClientSchema), async (req: any, res) => {
+  app.put('/api/company/clients/:id', isCompanyAuthenticated, validateBody(updateClientSchema), async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
         return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const id = parseInt(req.params.id);
+
+      // Verify client belongs to company
+      const existingClient = await storage.getClient(id);
+      if (!existingClient || existingClient.companyId !== companyId) {
+        return res.status(404).json({ message: "Cliente não encontrado" });
       }
 
       // Clean up empty fields to prevent MySQL errors
@@ -12753,7 +12910,6 @@ Obrigado pela preferência! 🙏`;
         notes: req.body.notes === '' ? null : req.body.notes,
       };
 
-      const id = parseInt(req.params.id);
       const client = await storage.updateClient(id, clientData);
       res.json(client);
     } catch (error) {
@@ -12762,7 +12918,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.delete('/api/company/clients/:id', async (req: any, res) => {
+  app.delete('/api/company/clients/:id', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12770,6 +12926,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const id = parseInt(req.params.id);
+
+      // Verify client belongs to company
+      const existingClient = await storage.getClient(id);
+      if (!existingClient || existingClient.companyId !== companyId) {
+        return res.status(404).json({ message: "Cliente não encontrado" });
+      }
+
       await storage.deleteClient(id);
       res.json({ message: "Cliente excluído com sucesso" });
     } catch (error) {
@@ -12853,7 +13016,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.put('/api/company/birthday-messages/:id', async (req: any, res) => {
+  app.put('/api/company/birthday-messages/:id', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12861,6 +13024,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const id = parseInt(req.params.id);
+
+      // Verify birthday message belongs to company
+      const existingMessage = await storage.getBirthdayMessage(id);
+      if (!existingMessage || existingMessage.companyId !== companyId) {
+        return res.status(404).json({ message: "Mensagem não encontrada" });
+      }
+
       const message = await storage.updateBirthdayMessage(id, req.body);
       res.json(message);
     } catch (error) {
@@ -12869,7 +13039,7 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  app.delete('/api/company/birthday-messages/:id', async (req: any, res) => {
+  app.delete('/api/company/birthday-messages/:id', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       if (!companyId) {
@@ -12877,6 +13047,13 @@ Obrigado pela preferência! 🙏`;
       }
 
       const id = parseInt(req.params.id);
+
+      // Verify birthday message belongs to company
+      const existingMessage = await storage.getBirthdayMessage(id);
+      if (!existingMessage || existingMessage.companyId !== companyId) {
+        return res.status(404).json({ message: "Mensagem não encontrada" });
+      }
+
       await storage.deleteBirthdayMessage(id);
       res.json({ message: "Mensagem de aniversário excluída com sucesso" });
     } catch (error) {
@@ -17682,20 +17859,27 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         return res.status(401).json({ message: "Profissional inativo" });
       }
 
-      // Create session
-      req.session.professionalId = professional.id;
-      req.session.companyId = professional.companyId;
-      req.session.professionalName = professional.name;
-      req.session.professionalEmail = professional.email;
-
-      res.json({
-        message: "Login realizado com sucesso",
-        professional: {
-          id: professional.id,
-          name: professional.name,
-          email: professional.email,
-          companyId: professional.companyId
+      // Regenerate session to prevent session fixation attacks
+      const profToReturn = professional;
+      req.session.regenerate((err: any) => {
+        if (err) {
+          console.error("Error regenerating session:", err);
+          return res.status(500).json({ message: "Erro interno do servidor" });
         }
+        req.session.professionalId = profToReturn.id;
+        req.session.companyId = profToReturn.companyId;
+        req.session.professionalName = profToReturn.name;
+        req.session.professionalEmail = profToReturn.email;
+
+        res.json({
+          message: "Login realizado com sucesso",
+          professional: {
+            id: profToReturn.id,
+            name: profToReturn.name,
+            email: profToReturn.email,
+            companyId: profToReturn.companyId
+          }
+        });
       });
     } catch (error) {
       console.error("Error in professional login:", error);
@@ -17710,6 +17894,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         console.error("Error destroying session:", err);
         return res.status(500).json({ message: "Erro ao fazer logout" });
       }
+      res.clearCookie('connect.sid');
       res.json({ message: "Logout realizado com sucesso" });
     });
   });

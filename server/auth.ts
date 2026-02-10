@@ -1,5 +1,8 @@
 import session from "express-session";
+import createMemoryStore from "memorystore";
 import type { Express, RequestHandler } from "express";
+
+const MemoryStore = createMemoryStore(session);
 
 export function getSession() {
   const sessionSecret = process.env.SESSION_SECRET;
@@ -10,6 +13,9 @@ export function getSession() {
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
+    store: new MemoryStore({
+      checkPeriod: 86400000, // prune expired entries every 24h
+    }),
     cookie: {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -42,6 +48,11 @@ export const isCompanyAuthenticated: RequestHandler = async (req: any, res, next
     const companyId = req.session.companyId;
     if (!companyId) {
       return res.status(401).json({ message: "Não autenticado" });
+    }
+
+    // Reject professional sessions from accessing company-admin endpoints
+    if (req.session.professionalId) {
+      return res.status(403).json({ message: "Acesso negado. Use o painel da empresa." });
     }
 
     // Buscar dados da empresa para verificar status

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { queryClient as globalQueryClient } from "@/lib/queryClient";
 import { TrendingUp, Clock, Calendar as CalendarIcon, CalendarDays, User, MoreHorizontal, LogOut, Menu, Edit, ChevronLeft, ChevronRight, Check, ChevronsUpDown, DollarSign } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useGlobalTheme } from "@/hooks/use-global-theme";
@@ -437,6 +438,8 @@ export default function ProfessionalDashboard() {
   const handleLogout = async () => {
     try {
       await fetch("/api/auth/professional/logout", { method: "POST" });
+      // Clear React Query cache to prevent cross-user data leak
+      globalQueryClient.clear();
       toast({ title: "Logout realizado com sucesso" });
       setLocation("/profissional/login");
     } catch (error) {
