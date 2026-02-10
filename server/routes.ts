@@ -1957,17 +1957,26 @@ function extractDataFromAppointmentBlock(blockText: string): any {
 
   // Extract service
   const serviceMatch = blockText.match(/💼\s*Serviço:\s*(.+?)(?:\n|$)/i) ||
-                      blockText.match(/Serviço:\s*(.+?)(?:\n|$)/i);
+                      blockText.match(/Serviço:\s*(.+?)(?:\n|$)/i) ||
+                      blockText.match(/✂️\s*Serviço:\s*(.+?)(?:\n|$)/i);
   if (serviceMatch) data.service = serviceMatch[1].trim();
 
-  // Extract name
+  // Extract name - com fallbacks para formato livre
   const nameMatch = blockText.match(/👤\s*Nome:\s*(.+?)(?:\n|$)/i) ||
-                   blockText.match(/Nome:\s*(.+?)(?:\n|$)/i);
+                   blockText.match(/Nome:\s*(.+?)(?:\n|$)/i) ||
+                   // Fallback: nome após marcador numérico (ex: "1️⃣ Everton às 09:00")
+                   blockText.match(/(?:1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|7️⃣|8️⃣|9️⃣|🔟|①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩)\s*([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)\s+(?:às|as|–|-|:|\d)/i) ||
+                   // Fallback: nome após marcador sem "às" (ex: "1️⃣ Everton")
+                   blockText.match(/(?:1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|7️⃣|8️⃣|9️⃣|🔟|①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩)\s*([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i);
   if (nameMatch) data.clientName = nameMatch[1].trim();
 
   // Extract professional
   const profMatch = blockText.match(/🏢\s*Profissional:\s*(.+?)(?:\n|$)/i) ||
-                   blockText.match(/Profissional:\s*(.+?)(?:\n|$)/i);
+                   blockText.match(/Profissional:\s*(.+?)(?:\n|$)/i) ||
+                   blockText.match(/👨‍💼\s*Profissional:\s*(.+?)(?:\n|$)/i) ||
+                   // Fallback: "com o profissional X" ou "com X"
+                   blockText.match(/com\s+(?:o\s+)?profissional\s+([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i) ||
+                   blockText.match(/todos\s+com\s+(?:o\s+)?(?:profissional\s+)?([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+)/i);
   if (profMatch) data.professional = profMatch[1].trim();
 
   // Extract date
@@ -1981,9 +1990,14 @@ function extractDataFromAppointmentBlock(blockText: string): any {
     }
   }
 
-  // Extract time
+  // Extract time - com fallbacks para formato livre
   const timeMatch = blockText.match(/🕐\s*Horário:\s*(\d{1,2}:\d{2})/i) ||
-                   blockText.match(/Horário:\s*(\d{1,2}:\d{2})/i);
+                   blockText.match(/Horário:\s*(\d{1,2}:\d{2})/i) ||
+                   blockText.match(/Hora:\s*(\d{1,2}:\d{2})/i) ||
+                   // Fallback: "às HH:MM" ou "as HH:MM"
+                   blockText.match(/(?:às|as)\s+(\d{1,2}:\d{2})/i) ||
+                   // Fallback: HH:MM solto no texto (apenas se não for data)
+                   blockText.match(/(?:^|[^\d\/])(\d{1,2}:\d{2})(?:[^\d]|$)/);
   if (timeMatch) data.time = timeMatch[1].trim();
 
   return data;
@@ -2137,11 +2151,34 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       // Função auxiliar para validar se um bloco tem dados mínimos de agendamento
       const isValidAppointmentBlock = (block: string): boolean => {
         const trimmed = block.trim();
-        // Bloco válido deve ter Nome E (Data ou Horário)
-        const hasName = /Nome:/i.test(trimmed);
-        const hasDateOrTime = /Data:/i.test(trimmed) || /Horário:/i.test(trimmed) || /\d{1,2}:\d{2}/.test(trimmed);
+        // Bloco válido deve ter Nome (label OU nome próprio após marcador) E (Data ou Horário ou HH:MM)
+        const hasNameLabel = /Nome:/i.test(trimmed);
+        const hasNameAfterMarker = /(?:1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|7️⃣|8️⃣|9️⃣|🔟|①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩)\s*[A-ZÀ-Ÿ][a-záéíóúâêôãõüç]/i.test(trimmed);
+        const hasName = hasNameLabel || hasNameAfterMarker;
+        const hasDateOrTime = /Data:/i.test(trimmed) || /Horário:/i.test(trimmed) || /\d{1,2}:\d{2}/.test(trimmed) || /às\s+\d{1,2}:\d{2}/i.test(trimmed);
         return !!trimmed && hasName && hasDateOrTime;
       };
+
+      // Extrair data do header (texto completo) para propagar aos blocos sem data
+      let headerDate = '';
+      const headerDateMatch = messageToExtractFrom.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
+      if (headerDateMatch) {
+        const hDateParts = headerDateMatch[1].split('/');
+        if (hDateParts.length === 3) {
+          headerDate = `${hDateParts[0].padStart(2, '0')}/${hDateParts[1].padStart(2, '0')}/${hDateParts[2]}`;
+        }
+      }
+
+      // Extrair profissional do texto geral (ex: "todos com o profissional Estevão")
+      let headerProfessional = '';
+      const headerProfMatch = messageToExtractFrom.match(/todos\s+com\s+(?:o\s+)?(?:profissional\s+)?([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i) ||
+                              messageToExtractFrom.match(/com\s+(?:o\s+)?profissional\s+([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i);
+      if (headerProfMatch) {
+        headerProfessional = headerProfMatch[1].trim();
+      }
+
+      console.log('📅 Data do header para propagação:', headerDate || 'não encontrada');
+      console.log('👤 Profissional do header:', headerProfessional || 'não encontrado');
 
       if (hasMultipleByMarkers) {
         // Dividir por marcadores numéricos
@@ -2166,8 +2203,20 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
 
         const blockData = extractDataFromAppointmentBlock(block);
 
+        // Propagar data do header se o bloco não tem data própria
+        if (!blockData.date && headerDate) {
+          blockData.date = headerDate;
+          console.log(`📅 Data propagada do header: ${headerDate}`);
+        }
+
+        // Propagar profissional do header se o bloco não tem profissional
+        if (!blockData.professional && headerProfessional) {
+          blockData.professional = headerProfessional;
+          console.log(`👤 Profissional propagado do header: ${headerProfessional}`);
+        }
+
         if (blockData.clientName && blockData.date && blockData.time) {
-          console.log(`✅ Dados extraídos - date: ${blockData.date}, time: ${blockData.time}, hasClient: ${!!blockData.clientName}`);
+          console.log(`✅ Dados extraídos - date: ${blockData.date}, time: ${blockData.time}, client: ${blockData.clientName}, prof: ${blockData.professional || 'N/A'}`);
 
           const singleAppointmentId = await createSingleAppointmentFromExtractedData(
             companyId,
@@ -2185,6 +2234,9 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
           }
         } else {
           console.log(`⚠️ Dados incompletos no bloco ${i + 1}:`, blockData);
+          console.log(`   - clientName: ${blockData.clientName || 'FALTANDO'}`);
+          console.log(`   - date: ${blockData.date || 'FALTANDO'}`);
+          console.log(`   - time: ${blockData.time || 'FALTANDO'}`);
         }
       }
 
@@ -13959,11 +14011,34 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       // Função auxiliar para validar se um bloco tem dados mínimos de agendamento
       const isValidAppointmentBlock = (block: string): boolean => {
         const trimmed = block.trim();
-        // Bloco válido deve ter Nome E (Data ou Horário)
-        const hasName = /Nome:/i.test(trimmed);
-        const hasDateOrTime = /Data:/i.test(trimmed) || /Horário:/i.test(trimmed) || /\d{1,2}:\d{2}/.test(trimmed);
+        // Bloco válido deve ter Nome (label OU nome próprio após marcador) E (Data ou Horário ou HH:MM)
+        const hasNameLabel = /Nome:/i.test(trimmed);
+        const hasNameAfterMarker = /(?:1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|7️⃣|8️⃣|9️⃣|🔟|①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩)\s*[A-ZÀ-Ÿ][a-záéíóúâêôãõüç]/i.test(trimmed);
+        const hasName = hasNameLabel || hasNameAfterMarker;
+        const hasDateOrTime = /Data:/i.test(trimmed) || /Horário:/i.test(trimmed) || /\d{1,2}:\d{2}/.test(trimmed) || /às\s+\d{1,2}:\d{2}/i.test(trimmed);
         return !!trimmed && hasName && hasDateOrTime;
       };
+
+      // Extrair data do header (texto completo) para propagar aos blocos sem data
+      let headerDate = '';
+      const headerDateMatch = messageToExtractFrom.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
+      if (headerDateMatch) {
+        const hDateParts = headerDateMatch[1].split('/');
+        if (hDateParts.length === 3) {
+          headerDate = `${hDateParts[0].padStart(2, '0')}/${hDateParts[1].padStart(2, '0')}/${hDateParts[2]}`;
+        }
+      }
+
+      // Extrair profissional do texto geral (ex: "todos com o profissional Estevão")
+      let headerProfessional = '';
+      const headerProfMatch = messageToExtractFrom.match(/todos\s+com\s+(?:o\s+)?(?:profissional\s+)?([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i) ||
+                              messageToExtractFrom.match(/com\s+(?:o\s+)?profissional\s+([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i);
+      if (headerProfMatch) {
+        headerProfessional = headerProfMatch[1].trim();
+      }
+
+      console.log('📅 Data do header para propagação:', headerDate || 'não encontrada');
+      console.log('👤 Profissional do header:', headerProfessional || 'não encontrado');
 
       if (hasMultipleByMarkers) {
         // Dividir por marcadores numéricos
@@ -13988,8 +14063,20 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
 
         const blockData = extractDataFromAppointmentBlock(block);
 
+        // Propagar data do header se o bloco não tem data própria
+        if (!blockData.date && headerDate) {
+          blockData.date = headerDate;
+          console.log(`📅 Data propagada do header: ${headerDate}`);
+        }
+
+        // Propagar profissional do header se o bloco não tem profissional
+        if (!blockData.professional && headerProfessional) {
+          blockData.professional = headerProfessional;
+          console.log(`👤 Profissional propagado do header: ${headerProfessional}`);
+        }
+
         if (blockData.clientName && blockData.date && blockData.time) {
-          console.log(`✅ Dados extraídos - date: ${blockData.date}, time: ${blockData.time}, hasClient: ${!!blockData.clientName}`);
+          console.log(`✅ Dados extraídos - date: ${blockData.date}, time: ${blockData.time}, client: ${blockData.clientName}, prof: ${blockData.professional || 'N/A'}`);
 
           const singleAppointmentId = await createSingleAppointmentFromExtractedData(
             companyId,
@@ -14007,6 +14094,9 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
           }
         } else {
           console.log(`⚠️ Dados incompletos no bloco ${i + 1}:`, blockData);
+          console.log(`   - clientName: ${blockData.clientName || 'FALTANDO'}`);
+          console.log(`   - date: ${blockData.date || 'FALTANDO'}`);
+          console.log(`   - time: ${blockData.time || 'FALTANDO'}`);
         }
       }
 
