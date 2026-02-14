@@ -8719,14 +8719,47 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
               // FIM DA PRÉ-VALIDAÇÃO
               // ========================================
 
-              const completion = await openai.chat.completions.create({
+              // ========================================
+              // PRÉ-PROCESSAMENTO: Detectar confirmação de cancelamento ANTES da IA
+              // Evita que a IA interprete "Sim" como novo agendamento quando o
+              // contexto é de cancelamento/remarcação
+              // ========================================
+              const lastAssistantMsgPreCheck = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
+              const isCancelContext = lastAssistantMsgPreCheck.includes('Confirma o cancelamento?') ||
+                                     lastAssistantMsgPreCheck.includes('SIM* para cancelar') ||
+                                     lastAssistantMsgPreCheck.includes('SIM para cancelar') ||
+                                     lastAssistantMsgPreCheck.includes('deseja cancelar o agendamento') ||
+                                     lastAssistantMsgPreCheck.includes('deseja cancelar seu agendamento') ||
+                                     lastAssistantMsgPreCheck.includes('cancelar o agendamento atual');
+              const isConfirmingCancel = isUserConfirming && isCancelContext;
+
+              if (isConfirmingCancel) {
+                console.log('🚫 PRÉ-PROCESSAMENTO: "Sim" detectado em contexto de cancelamento - desviando da IA');
+                // Não chamar a IA - o processamento de cancelamento abaixo vai tratar
+              }
+
+              // Detectar também "Não" em contexto de cancelamento para não confundir a IA
+              const isDecliningCancel = isCancelContext && /^(não|nao|n|no|cancela não|cancela nao|não quero|nao quero)$/i.test(messageText.toLowerCase().trim());
+
+              if (isDecliningCancel) {
+                console.log('🚫 PRÉ-PROCESSAMENTO: "Não" detectado em contexto de cancelamento');
+                // Limpar PENDING_CANCEL_ID se existir
+                await pool.execute(
+                  `DELETE FROM messages WHERE conversation_id = ? AND content LIKE '%[PENDING_CANCEL_ID:%'`,
+                  [conversation.id]
+                );
+              }
+
+              const completion = !isConfirmingCancel ? await openai.chat.completions.create({
                 model: company.openaiModel || 'gpt-4o-mini',
                 messages: messages,
                 temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7,
                 max_tokens: company.openaiMaxTokens || 180,
-              });
+              }) : null;
 
-              let aiResponse = completion.choices[0]?.message?.content || 'Desculpe, não consegui processar sua mensagem.';
+              let aiResponse = isConfirmingCancel
+                ? '' // Será preenchido pelo processamento de cancelamento abaixo
+                : (completion?.choices[0]?.message?.content || 'Desculpe, não consegui processar sua mensagem.');
 
               // Process special commands for appointment management
               console.log('🔍 Checking for special commands in AI response...');
@@ -9076,7 +9109,12 @@ Confirma o cancelamento? Responda *SIM* para cancelar ou *NÃO* para manter o ag
               // ========================================
               const isConfirmingSIM = messageText.match(/^(sim|s|ok|confirmo|confirmar)$/i);
               const lastAssistantMsg = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
-              const isAskingCancelConfirmation = lastAssistantMsg.includes('Confirma o cancelamento?') || lastAssistantMsg.includes('SIM* para cancelar');
+              const isAskingCancelConfirmation = lastAssistantMsg.includes('Confirma o cancelamento?') ||
+                                                 lastAssistantMsg.includes('SIM* para cancelar') ||
+                                                 lastAssistantMsg.includes('SIM para cancelar') ||
+                                                 lastAssistantMsg.includes('deseja cancelar o agendamento') ||
+                                                 lastAssistantMsg.includes('deseja cancelar seu agendamento') ||
+                                                 lastAssistantMsg.includes('cancelar o agendamento atual');
 
               console.log('🔍 DEBUG CANCELAMENTO:');
               console.log('   - Mensagem do usuário:', messageText);
@@ -9121,6 +9159,17 @@ Seu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é 
                   // FALLBACK: Tentar extrair dados da mensagem de confirmação
                   console.log('⚠️ PENDING_CANCEL_ID não encontrado, tentando fallback...');
 
+                  // Verificar se o contexto é de remarcação (agente perguntou se quer cancelar, sem listar agendamentos ainda)
+                  const isRescheduleContext = lastAssistantMsg.includes('cancelar o agendamento atual') ||
+                                              lastAssistantMsg.includes('deseja cancelar o agendamento') ||
+                                              lastAssistantMsg.includes('deseja cancelar seu agendamento');
+
+                  if (isRescheduleContext && !lastAssistantMsg.includes('Confirma o cancelamento?')) {
+                    // Contexto de remarcação: listar agendamentos para o cliente escolher qual cancelar
+                    console.log('📋 Contexto de remarcação detectado - listando agendamentos para cancelar...');
+                    const appointmentsList = await listClientAppointmentsNumbered(phoneNumber, company.id, 'cancelar');
+                    aiResponse = appointmentsList;
+                  } else {
                   // Extrair dados da mensagem de confirmação anterior
                   // Formato esperado: "📅 Segunda, 07/02/2026 às 10:40" e "💼 Serviço | 👤 Profissional"
                   const dateMatch = lastAssistantMsg.match(/📅\s+[^,]+,\s+(\d{2}\/\d{2}\/\d{4})\s+às\s+(\d{1,2}:\d{2})/);
@@ -9184,6 +9233,7 @@ Seu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é 
                     console.log('❌ Fallback: Dados insuficientes na mensagem');
                     aiResponse = `❌ Ocorreu um erro ao processar o cancelamento. Por favor, tente novamente desde o início.`;
                   }
+                  } // fecha o else do isRescheduleContext
                 }
               }
 
