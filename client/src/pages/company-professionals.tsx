@@ -155,14 +155,6 @@ function ExceptionBreaksSection({ professionalId, scheduleId }: { professionalId
     },
   });
 
-  // Generate time options (same as parent)
-  const timeOptions: string[] = [];
-  for (let h = 0; h < 24; h++) {
-    for (let m = 0; m < 60; m += 15) {
-      timeOptions.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
-    }
-  }
-
   return (
     <div className="mt-2 pt-2 border-t border-blue-200">
       <div className="flex items-center space-x-1 mb-1.5">
@@ -192,27 +184,19 @@ function ExceptionBreaksSection({ professionalId, scheduleId }: { professionalId
 
       {/* Formulário para adicionar pausa */}
       <div className="flex items-center gap-1">
-        <Select value={newBreak.startTime} onValueChange={(v) => setNewBreak(prev => ({ ...prev, startTime: v }))}>
-          <SelectTrigger className="w-[65px] h-7 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {timeOptions.map((time) => (
-              <SelectItem key={time} value={time}>{time}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Input
+          type="time"
+          value={newBreak.startTime}
+          onChange={(e) => setNewBreak(prev => ({ ...prev, startTime: e.target.value }))}
+          className="w-[90px] h-7 text-xs"
+        />
         <span className="text-gray-500 text-xs">-</span>
-        <Select value={newBreak.endTime} onValueChange={(v) => setNewBreak(prev => ({ ...prev, endTime: v }))}>
-          <SelectTrigger className="w-[65px] h-7 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {timeOptions.map((time) => (
-              <SelectItem key={time} value={time}>{time}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Input
+          type="time"
+          value={newBreak.endTime}
+          onChange={(e) => setNewBreak(prev => ({ ...prev, endTime: e.target.value }))}
+          className="w-[90px] h-7 text-xs"
+        />
         <Button
           type="button"
           size="sm"
@@ -1481,37 +1465,19 @@ export default function CompanyProfessionals() {
 
                               {/* Formulário para adicionar nova pausa */}
                               <div className="flex items-center flex-wrap gap-1 sm:gap-2">
-                                <Select
+                                <Input
+                                  type="time"
                                   value={newBreaks[day.key]?.startTime || '12:00'}
-                                  onValueChange={(value) => updateNewBreak(day.key, 'startTime', value)}
-                                >
-                                  <SelectTrigger className="w-[65px] sm:w-[80px] h-7 sm:h-9 text-xs sm:text-sm">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {timeOptions.map((time) => (
-                                      <SelectItem key={time} value={time}>
-                                        {time}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                  onChange={(e) => updateNewBreak(day.key, 'startTime', e.target.value)}
+                                  className="w-[90px] sm:w-[100px] h-7 sm:h-9 text-xs sm:text-sm"
+                                />
                                 <span className="text-gray-500 text-xs sm:text-sm">-</span>
-                                <Select
+                                <Input
+                                  type="time"
                                   value={newBreaks[day.key]?.endTime || '13:00'}
-                                  onValueChange={(value) => updateNewBreak(day.key, 'endTime', value)}
-                                >
-                                  <SelectTrigger className="w-[65px] sm:w-[80px] h-7 sm:h-9 text-xs sm:text-sm">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {timeOptions.map((time) => (
-                                      <SelectItem key={time} value={time}>
-                                        {time}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                  onChange={(e) => updateNewBreak(day.key, 'endTime', e.target.value)}
+                                  className="w-[90px] sm:w-[100px] h-7 sm:h-9 text-xs sm:text-sm"
+                                />
                                 <Button
                                   type="button"
                                   size="sm"
