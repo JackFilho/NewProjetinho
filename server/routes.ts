@@ -635,7 +635,7 @@ function needsAvailabilityInfo(messageText: string, conversationHistory: any[]):
     'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado', 'sabado', 'domingo',
     'amanhã', 'amanha', 'hoje', 'semana', 'próximo', 'proximo', 'próxima', 'proxima',
     'livre', 'ocupado', 'atende', 'trabalha', 'funciona', 'aberto',
-    'remarcar', 'mudar', 'trocar', 'alterar'
+    'mudar', 'trocar', 'alterar'
   ];
 
   // Se a mensagem contém qualquer palavra-chave de agendamento
@@ -8333,6 +8333,100 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 console.log(`👨‍💼 Found ${humanMessages.length} human intervention message(s) in context`);
                 humanMessages.forEach((m, i) => {
                   console.log(`  ${i + 1}. ${m.content.substring(0, 100)}...`);
+                });
+              }
+
+              // ========================================
+              // 🔄 INTERCEPTAÇÃO DE CANCELAMENTO/REAGENDAMENTO
+              // Detecta keywords antes da IA para forçar o fluxo correto
+              // ========================================
+              const lowerMsg = messageText.toLowerCase().trim();
+              const cancelKeywords = ['cancelar', 'desmarcar', 'não vou poder ir', 'preciso cancelar', 'não vou conseguir ir', 'não vou mais', 'quero desmarcar', 'preciso desmarcar'];
+              const rescheduleKeywords = ['remarcar', 'reagendar', 'alterar horário', 'alterar horario', 'mudar data', 'trocar horário', 'trocar horario', 'mudar horário', 'mudar horario', 'adiar'];
+              const hasCancelKeyword = cancelKeywords.some(kw => lowerMsg.includes(kw));
+              const hasRescheduleKeyword = rescheduleKeywords.some(kw => lowerMsg.includes(kw));
+
+              let interceptedResponse: string | null = null;
+
+              if (hasCancelKeyword && !hasRescheduleKeyword) {
+                // Cancelamento direto - listar agendamentos
+                console.log('🚫 INTERCEPTAÇÃO: Keyword de cancelamento detectada - disparando fluxo de cancelamento');
+                const appointmentsList = await listClientAppointmentsNumbered(phoneNumber, company.id, 'cancelar');
+                interceptedResponse = appointmentsList;
+              } else if (hasRescheduleKeyword) {
+                // Reagendamento - listar agendamentos para cancelar primeiro
+                console.log('🔄 INTERCEPTAÇÃO: Keyword de reagendamento detectada - disparando fluxo de cancelamento para remarcar');
+                const appointmentsList = await listClientAppointmentsNumbered(phoneNumber, company.id, 'cancelar');
+                interceptedResponse = `Para reagendar, é necessário cancelar o agendamento atual e fazer um novo.\n\n${appointmentsList}`;
+              }
+
+              if (interceptedResponse) {
+                // Salvar mensagem do usuário
+                await storage.createMessage({
+                  conversationId: conversation.id,
+                  role: 'user',
+                  content: messageText,
+                  messageType: 'text',
+                  delivered: true,
+                  timestamp: new Date(),
+                });
+
+                // Formatar telefone para Evolution API
+                let formattedPhoneIntercept = phoneNumber.replace(/\D/g, '');
+                if (!formattedPhoneIntercept.startsWith('55') && formattedPhoneIntercept.length >= 10) {
+                  formattedPhoneIntercept = '55' + formattedPhoneIntercept;
+                }
+
+                // Enviar via Evolution API (usando mesmas variáveis do fluxo normal)
+                const correctedApiUrlIntercept = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+
+                // Enviar presença "digitando" e aguardar
+                await sendTypingPresence(correctedApiUrlIntercept, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneIntercept, 2000);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+
+                try {
+                  const sendResponse = await fetch(`${correctedApiUrlIntercept}/message/sendText/${instanceName}`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'apikey': globalSettings.evolutionApiGlobalKey!,
+                    },
+                    body: JSON.stringify({
+                      number: formattedPhoneIntercept,
+                      text: interceptedResponse,
+                    }),
+                  });
+
+                  if (sendResponse.ok) {
+                    console.log(`✅ [INTERCEPTAÇÃO] Resposta enviada para ${phoneNumber}`);
+                  } else {
+                    console.error(`❌ [INTERCEPTAÇÃO] Falha ao enviar mensagem: Status ${sendResponse.status}`);
+                  }
+                } catch (error) {
+                  console.error('❌ Erro ao enviar mensagem interceptada:', error);
+                }
+
+                // Salvar resposta no banco
+                await storage.createMessage({
+                  conversationId: conversation.id,
+                  role: 'assistant',
+                  content: interceptedResponse,
+                  messageType: 'text',
+                  delivered: true,
+                  timestamp: new Date(),
+                });
+
+                // Liberar lock e retornar
+                const lockKeyIntercept = `${company.id}:${instanceName}:${phoneNumber}`;
+                if (processingLocks.has(lockKeyIntercept)) {
+                  processingLocks.delete(lockKeyIntercept);
+                }
+
+                return res.status(200).json({
+                  received: true,
+                  processed: true,
+                  intercepted: true,
+                  message: hasCancelKeyword ? 'Fluxo de cancelamento disparado' : 'Fluxo de reagendamento disparado'
                 });
               }
 
