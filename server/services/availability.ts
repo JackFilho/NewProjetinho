@@ -247,8 +247,13 @@ export async function getAvailableSlots(
     }
 
     // 6. Buscar pausas do dia
+    const dayOfWeekKeyMap: { [key: number]: string } = {
+      0: 'domingo', 1: 'segunda', 2: 'terca', 3: 'quarta',
+      4: 'quinta', 5: 'sexta', 6: 'sabado'
+    };
+    const dayKey = dayOfWeekKeyMap[dayOfWeek];
     const allBreaks = await storage.getProfessionalBreaks(professionalId);
-    const dayBreaks = allBreaks.filter(b => Number(b.dayOfWeek) === dayOfWeek);
+    const dayBreaks = allBreaks.filter(b => b.dayOfWeek === dayKey);
     const breaksInfo: BreakInfo[] = dayBreaks.map(b => ({
       start: b.startTime,
       end: b.endTime

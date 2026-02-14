@@ -1655,6 +1655,11 @@ async function getAvailableTimesForService(
     // Determinar dia da semana (0 = domingo, 1 = segunda, etc.)
     const date = new Date(dateStr + 'T00:00:00');
     const dayOfWeek = date.getDay();
+    const dayOfWeekKeyMap: { [key: number]: string } = {
+      0: 'domingo', 1: 'segunda', 2: 'terca', 3: 'quarta',
+      4: 'quinta', 5: 'sexta', 6: 'sabado'
+    };
+    const dayOfWeekKey = dayOfWeekKeyMap[dayOfWeek];
 
     // Verificar se há horário excepcional para esta data específica
     let workStartTime: string;
@@ -1773,7 +1778,7 @@ async function getAvailableTimesForService(
       // Verificar se está em horário de pausa
       let isBreakTime = false;
       for (const brk of professionalBreaks) {
-        if (brk.dayOfWeek === dayOfWeek) {
+        if (brk.dayOfWeek === dayOfWeekKey) {
           const [brkStartHour, brkStartMin] = brk.startTime.split(':').map(Number);
           const [brkEndHour, brkEndMin] = brk.endTime.split(':').map(Number);
           const brkStartMinutes = brkStartHour * 60 + brkStartMin;
