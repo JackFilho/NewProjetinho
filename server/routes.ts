@@ -8351,7 +8351,36 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 pattern.test(messageText.toLowerCase().trim())
               );
 
-              if (isUserConfirming) {
+              // ========================================
+              // VERIFICAR CONTEXTO DE CANCELAMENTO ANTES da pré-validação de agendamento
+              // Evita que "Sim" em contexto de cancelamento/remarcação seja tratado
+              // como confirmação de agendamento (que causa conflito de horário)
+              // ========================================
+              const lastAssistantMsgPreCheck = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
+              const isCancelContext = lastAssistantMsgPreCheck.includes('Confirma o cancelamento?') ||
+                                     lastAssistantMsgPreCheck.includes('SIM* para cancelar') ||
+                                     lastAssistantMsgPreCheck.includes('SIM para cancelar') ||
+                                     lastAssistantMsgPreCheck.includes('deseja cancelar o agendamento') ||
+                                     lastAssistantMsgPreCheck.includes('deseja cancelar seu agendamento') ||
+                                     lastAssistantMsgPreCheck.includes('deseja cancelar o seu agendamento') ||
+                                     lastAssistantMsgPreCheck.includes('cancelar o agendamento atual') ||
+                                     lastAssistantMsgPreCheck.includes('Qual agendamento você deseja cancelar') ||
+                                     (lastAssistantMsgPreCheck.includes('cancelar') && lastAssistantMsgPreCheck.includes('Posso prosseguir')) ||
+                                     (lastAssistantMsgPreCheck.includes('cancelar') && lastAssistantMsgPreCheck.includes('prosseguir'));
+              const isConfirmingCancel = isUserConfirming && isCancelContext;
+
+              // Detectar "Não" em contexto de cancelamento
+              const isDecliningCancel = isCancelContext && /^(não|nao|n|no|cancela não|cancela nao|não quero|nao quero)$/i.test(messageText.toLowerCase().trim());
+
+              if (isDecliningCancel) {
+                console.log('🚫 PRÉ-PROCESSAMENTO: "Não" detectado em contexto de cancelamento');
+                await pool.execute(
+                  `DELETE FROM messages WHERE conversation_id = ? AND content LIKE '%[PENDING_CANCEL_ID:%'`,
+                  [conversation.id]
+                );
+              }
+
+              if (isUserConfirming && !isConfirmingCancel) {
                 console.log('==================================================');
                 console.log('🔍 PRÉ-VALIDAÇÃO: Cliente confirmou com SIM/OK');
                 console.log('==================================================');
@@ -8719,37 +8748,6 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
               // FIM DA PRÉ-VALIDAÇÃO
               // ========================================
 
-              // ========================================
-              // PRÉ-PROCESSAMENTO: Detectar confirmação de cancelamento ANTES da IA
-              // Evita que a IA interprete "Sim" como novo agendamento quando o
-              // contexto é de cancelamento/remarcação
-              // ========================================
-              const lastAssistantMsgPreCheck = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
-              const isCancelContext = lastAssistantMsgPreCheck.includes('Confirma o cancelamento?') ||
-                                     lastAssistantMsgPreCheck.includes('SIM* para cancelar') ||
-                                     lastAssistantMsgPreCheck.includes('SIM para cancelar') ||
-                                     lastAssistantMsgPreCheck.includes('deseja cancelar o agendamento') ||
-                                     lastAssistantMsgPreCheck.includes('deseja cancelar seu agendamento') ||
-                                     lastAssistantMsgPreCheck.includes('cancelar o agendamento atual');
-              const isConfirmingCancel = isUserConfirming && isCancelContext;
-
-              if (isConfirmingCancel) {
-                console.log('🚫 PRÉ-PROCESSAMENTO: "Sim" detectado em contexto de cancelamento - desviando da IA');
-                // Não chamar a IA - o processamento de cancelamento abaixo vai tratar
-              }
-
-              // Detectar também "Não" em contexto de cancelamento para não confundir a IA
-              const isDecliningCancel = isCancelContext && /^(não|nao|n|no|cancela não|cancela nao|não quero|nao quero)$/i.test(messageText.toLowerCase().trim());
-
-              if (isDecliningCancel) {
-                console.log('🚫 PRÉ-PROCESSAMENTO: "Não" detectado em contexto de cancelamento');
-                // Limpar PENDING_CANCEL_ID se existir
-                await pool.execute(
-                  `DELETE FROM messages WHERE conversation_id = ? AND content LIKE '%[PENDING_CANCEL_ID:%'`,
-                  [conversation.id]
-                );
-              }
-
               const completion = !isConfirmingCancel ? await openai.chat.completions.create({
                 model: company.openaiModel || 'gpt-4o-mini',
                 messages: messages,
@@ -9114,7 +9112,11 @@ Confirma o cancelamento? Responda *SIM* para cancelar ou *NÃO* para manter o ag
                                                  lastAssistantMsg.includes('SIM para cancelar') ||
                                                  lastAssistantMsg.includes('deseja cancelar o agendamento') ||
                                                  lastAssistantMsg.includes('deseja cancelar seu agendamento') ||
-                                                 lastAssistantMsg.includes('cancelar o agendamento atual');
+                                                 lastAssistantMsg.includes('deseja cancelar o seu agendamento') ||
+                                                 lastAssistantMsg.includes('cancelar o agendamento atual') ||
+                                                 lastAssistantMsg.includes('Qual agendamento você deseja cancelar') ||
+                                                 (lastAssistantMsg.includes('cancelar') && lastAssistantMsg.includes('Posso prosseguir')) ||
+                                                 (lastAssistantMsg.includes('cancelar') && lastAssistantMsg.includes('prosseguir'));
 
               console.log('🔍 DEBUG CANCELAMENTO:');
               console.log('   - Mensagem do usuário:', messageText);
