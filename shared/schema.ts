@@ -333,6 +333,16 @@ export const professionalExceptionalSchedules = mysqlTable("professional_excepti
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
 
+// Professional exception breaks table - breaks/pauses for exceptional schedule dates
+export const professionalExceptionBreaks = mysqlTable("professional_exception_breaks", {
+  id: serial("id").primaryKey(),
+  exceptionalScheduleId: int("exceptional_schedule_id").notNull(),
+  startTime: varchar("start_time", { length: 10 }).notNull(), // HH:MM format
+  endTime: varchar("end_time", { length: 10 }).notNull(), // HH:MM format
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
 // Professional schedules table - individual working hours for each day of the week
 export const professionalSchedules = mysqlTable("professional_schedules", {
   id: serial("id").primaryKey(),
@@ -625,6 +635,12 @@ export const insertProfessionalExceptionalScheduleSchema = createInsertSchema(pr
   updatedAt: true,
 });
 
+export const insertProfessionalExceptionBreakSchema = createInsertSchema(professionalExceptionBreaks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const insertAppointmentSchema = createInsertSchema(appointments).omit({
   id: true,
   createdAt: true,
@@ -743,6 +759,8 @@ export type ProfessionalDayOff = typeof professionalDaysOff.$inferSelect;
 export type InsertProfessionalDayOff = z.infer<typeof insertProfessionalDayOffSchema>;
 export type ProfessionalExceptionalSchedule = typeof professionalExceptionalSchedules.$inferSelect;
 export type InsertProfessionalExceptionalSchedule = z.infer<typeof insertProfessionalExceptionalScheduleSchema>;
+export type ProfessionalExceptionBreak = typeof professionalExceptionBreaks.$inferSelect;
+export type InsertProfessionalExceptionBreak = z.infer<typeof insertProfessionalExceptionBreakSchema>;
 export type Appointment = typeof appointments.$inferSelect;
 export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;
 export type Status = typeof status.$inferSelect;

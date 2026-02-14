@@ -10,6 +10,7 @@ import {
   services,
   professionals,
   professionalBreaks,
+  professionalExceptionBreaks,
   professionalDaysOff,
   professionalExceptionalSchedules,
   professionalSchedules,
@@ -47,6 +48,8 @@ import {
   type InsertProfessionalDayOff,
   type ProfessionalExceptionalSchedule,
   type InsertProfessionalExceptionalSchedule,
+  type ProfessionalExceptionBreak,
+  type InsertProfessionalExceptionBreak,
   type ProfessionalSchedule,
   type InsertProfessionalSchedule,
   type Appointment,
@@ -235,6 +238,11 @@ export interface IStorage {
   getProfessionalBreaksByDay(professionalId: number, dayOfWeek: string): Promise<ProfessionalBreak[]>;
   createProfessionalBreak(breakData: InsertProfessionalBreak): Promise<ProfessionalBreak>;
   deleteProfessionalBreak(id: number): Promise<void>;
+
+  // Professional exception breaks operations
+  getExceptionBreaks(exceptionalScheduleId: number): Promise<ProfessionalExceptionBreak[]>;
+  createExceptionBreak(breakData: InsertProfessionalExceptionBreak): Promise<ProfessionalExceptionBreak>;
+  deleteExceptionBreak(id: number): Promise<void>;
 
   // Professional days off operations
   getProfessionalDaysOff(professionalId: number): Promise<ProfessionalDayOff[]>;
@@ -1371,6 +1379,43 @@ export class DatabaseStorage implements IStorage {
       await db.delete(professionalBreaks).where(eq(professionalBreaks.id, id));
     } catch (error: any) {
       console.error("Error deleting professional break:", error);
+      throw error;
+    }
+  }
+
+  // Professional exception breaks operations
+  async getExceptionBreaks(exceptionalScheduleId: number): Promise<ProfessionalExceptionBreak[]> {
+    try {
+      const result = await db.select()
+        .from(professionalExceptionBreaks)
+        .where(eq(professionalExceptionBreaks.exceptionalScheduleId, exceptionalScheduleId))
+        .orderBy(professionalExceptionBreaks.startTime);
+      return result;
+    } catch (error: any) {
+      console.error("Error getting exception breaks:", error);
+      return [];
+    }
+  }
+
+  async createExceptionBreak(breakData: InsertProfessionalExceptionBreak): Promise<ProfessionalExceptionBreak> {
+    try {
+      const result = await db.insert(professionalExceptionBreaks).values(breakData);
+      const insertedId = result[0].insertId;
+      const newBreak = await db.select()
+        .from(professionalExceptionBreaks)
+        .where(eq(professionalExceptionBreaks.id, insertedId));
+      return newBreak[0];
+    } catch (error: any) {
+      console.error("Error creating exception break:", error);
+      throw error;
+    }
+  }
+
+  async deleteExceptionBreak(id: number): Promise<void> {
+    try {
+      await db.delete(professionalExceptionBreaks).where(eq(professionalExceptionBreaks.id, id));
+    } catch (error: any) {
+      console.error("Error deleting exception break:", error);
       throw error;
     }
   }

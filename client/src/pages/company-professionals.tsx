@@ -70,6 +70,15 @@ interface ProfessionalExceptionalSchedule {
   updatedAt?: string;
 }
 
+interface ProfessionalExceptionBreak {
+  id: number;
+  exceptionalScheduleId: number;
+  startTime: string;
+  endTime: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 const createProfessionalSchema = z.object({
   name: z.string().min(1, "Nome é obrigatório"),
   email: z.string().min(1, "Email é obrigatório").email("Email inválido"),
@@ -99,6 +108,126 @@ const updateProfessionalSchema = z.object({
 });
 
 type ProfessionalFormData = z.infer<typeof updateProfessionalSchema>;
+
+// Sub-componente para gerenciar pausas de um horário excepcional específico
+function ExceptionBreaksSection({ professionalId, scheduleId }: { professionalId: number; scheduleId: number }) {
+  const queryClient = useQueryClient();
+  const [newBreak, setNewBreak] = useState({ startTime: '12:00', endTime: '13:00' });
+
+  const { data: breaks = [] } = useQuery<ProfessionalExceptionBreak[]>({
+    queryKey: ['/api/company/professionals', professionalId, 'exception-breaks', scheduleId],
+    queryFn: async () => {
+      const response = await fetch(`/api/company/professionals/${professionalId}/exceptional-schedules/${scheduleId}/breaks`);
+      if (!response.ok) throw new Error('Erro ao buscar pausas');
+      return response.json();
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: { startTime: string; endTime: string }) => {
+      const response = await fetch(`/api/company/professionals/${professionalId}/exceptional-schedules/${scheduleId}/breaks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) throw new Error('Erro ao criar pausa');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['/api/company/professionals', professionalId, 'exception-breaks', scheduleId],
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (breakId: number) => {
+      const response = await fetch(`/api/company/professionals/${professionalId}/exceptional-schedules/${scheduleId}/breaks/${breakId}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) throw new Error('Erro ao excluir pausa');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['/api/company/professionals', professionalId, 'exception-breaks', scheduleId],
+      });
+    },
+  });
+
+  // Generate time options (same as parent)
+  const timeOptions: string[] = [];
+  for (let h = 0; h < 24; h++) {
+    for (let m = 0; m < 60; m += 15) {
+      timeOptions.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+    }
+  }
+
+  return (
+    <div className="mt-2 pt-2 border-t border-blue-200">
+      <div className="flex items-center space-x-1 mb-1.5">
+        <Coffee className="h-3 w-3 text-orange-500" />
+        <span className="text-xs font-medium text-gray-600">Pausas</span>
+      </div>
+
+      {/* Lista de pausas existentes */}
+      {breaks.length > 0 && (
+        <div className="space-y-1 mb-1.5">
+          {breaks.map((brk) => (
+            <div key={brk.id} className="flex items-center justify-between bg-orange-50 rounded px-2 py-1">
+              <span className="text-xs text-gray-700">{brk.startTime} - {brk.endTime}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-5 w-5 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                onClick={() => deleteMutation.mutate(brk.id)}
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Formulário para adicionar pausa */}
+      <div className="flex items-center gap-1">
+        <Select value={newBreak.startTime} onValueChange={(v) => setNewBreak(prev => ({ ...prev, startTime: v }))}>
+          <SelectTrigger className="w-[65px] h-7 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {timeOptions.map((time) => (
+              <SelectItem key={time} value={time}>{time}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <span className="text-gray-500 text-xs">-</span>
+        <Select value={newBreak.endTime} onValueChange={(v) => setNewBreak(prev => ({ ...prev, endTime: v }))}>
+          <SelectTrigger className="w-[65px] h-7 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {timeOptions.map((time) => (
+              <SelectItem key={time} value={time}>{time}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs text-orange-600 border-orange-300 hover:bg-orange-50 px-2"
+          onClick={() => createMutation.mutate({ startTime: newBreak.startTime, endTime: newBreak.endTime })}
+          disabled={createMutation.isPending}
+        >
+          <Plus className="h-3 w-3 mr-1" />
+          Pausa
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export default function CompanyProfessionals() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -294,6 +423,9 @@ export default function CompanyProfessionals() {
     endTime: '',
     reason: ''
   });
+
+  // State for new exception break times (keyed by schedule id)
+  const [newExceptionBreaks, setNewExceptionBreaks] = useState<{[key: number]: {startTime: string, endTime: string}}>({});
 
   const form = useForm<ProfessionalFormData>({
     resolver: zodResolver(updateProfessionalSchema),
@@ -733,6 +865,76 @@ export default function CompanyProfessionals() {
       professionalId: editingProfessional.id,
       scheduleId,
     });
+  };
+
+  // Mutation to create an exception break
+  const createExceptionBreakMutation = useMutation({
+    mutationFn: async (data: { professionalId: number; scheduleId: number; startTime: string; endTime: string }) => {
+      const response = await fetch(`/api/company/professionals/${data.professionalId}/exceptional-schedules/${data.scheduleId}/breaks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          startTime: data.startTime,
+          endTime: data.endTime,
+        }),
+      });
+      if (!response.ok) throw new Error('Erro ao criar pausa');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['/api/company/professionals', editingProfessional?.id, 'exception-breaks'],
+      });
+    },
+  });
+
+  // Mutation to delete an exception break
+  const deleteExceptionBreakMutation = useMutation({
+    mutationFn: async (data: { professionalId: number; scheduleId: number; breakId: number }) => {
+      const response = await fetch(`/api/company/professionals/${data.professionalId}/exceptional-schedules/${data.scheduleId}/breaks/${data.breakId}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) throw new Error('Erro ao excluir pausa');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['/api/company/professionals', editingProfessional?.id, 'exception-breaks'],
+      });
+    },
+  });
+
+  // Helper to add an exception break
+  const handleAddExceptionBreak = (scheduleId: number) => {
+    if (!editingProfessional?.id) return;
+    const breakTime = newExceptionBreaks[scheduleId] || { startTime: '12:00', endTime: '13:00' };
+    createExceptionBreakMutation.mutate({
+      professionalId: editingProfessional.id,
+      scheduleId,
+      startTime: breakTime.startTime,
+      endTime: breakTime.endTime,
+    });
+  };
+
+  // Helper to delete an exception break
+  const handleDeleteExceptionBreak = (scheduleId: number, breakId: number) => {
+    if (!editingProfessional?.id) return;
+    deleteExceptionBreakMutation.mutate({
+      professionalId: editingProfessional.id,
+      scheduleId,
+      breakId,
+    });
+  };
+
+  // Helper to update new exception break time
+  const updateNewExceptionBreak = (scheduleId: number, field: 'startTime' | 'endTime', value: string) => {
+    setNewExceptionBreaks(prev => ({
+      ...prev,
+      [scheduleId]: {
+        ...(prev[scheduleId] || { startTime: '12:00', endTime: '13:00' }),
+        [field]: value,
+      }
+    }));
   };
 
   // Helper to delete a day off
@@ -1455,23 +1657,29 @@ export default function CompanyProfessionals() {
                               year: 'numeric'
                             });
                             return (
-                              <div key={schedule.id} className="flex items-center justify-between bg-blue-50 rounded-md px-2 sm:px-4 py-2 sm:py-3">
-                                <div className="flex-1 min-w-0">
-                                  <span className="text-xs sm:text-sm font-medium text-gray-900 capitalize block truncate">{dateFormatted}</span>
-                                  <span className="text-xs sm:text-sm text-gray-700 block">
-                                    {schedule.startTime} às {schedule.endTime}
-                                    {schedule.reason && <span className="text-gray-500 ml-1">({schedule.reason})</span>}
-                                  </span>
+                              <div key={schedule.id} className="bg-blue-50 rounded-md px-2 sm:px-4 py-2 sm:py-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex-1 min-w-0">
+                                    <span className="text-xs sm:text-sm font-medium text-gray-900 capitalize block truncate">{dateFormatted}</span>
+                                    <span className="text-xs sm:text-sm text-gray-700 block">
+                                      {schedule.startTime} às {schedule.endTime}
+                                      {schedule.reason && <span className="text-gray-500 ml-1">({schedule.reason})</span>}
+                                    </span>
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 w-7 sm:h-8 sm:w-8 p-0 text-blue-500 hover:text-blue-700 hover:bg-blue-100 flex-shrink-0 ml-2"
+                                    onClick={() => handleDeleteExceptionalSchedule(schedule.id)}
+                                  >
+                                    <Trash2 className="h-3 w-3 sm:h-4 sm:w-4" />
+                                  </Button>
                                 </div>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-7 w-7 sm:h-8 sm:w-8 p-0 text-blue-500 hover:text-blue-700 hover:bg-blue-100 flex-shrink-0 ml-2"
-                                  onClick={() => handleDeleteExceptionalSchedule(schedule.id)}
-                                >
-                                  <Trash2 className="h-3 w-3 sm:h-4 sm:w-4" />
-                                </Button>
+                                <ExceptionBreaksSection
+                                  professionalId={editingProfessional!.id}
+                                  scheduleId={schedule.id}
+                                />
                               </div>
                             );
                           })}

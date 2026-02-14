@@ -1138,8 +1138,13 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
         workEnd = daySchedule.endTime;
       }
 
-      // Get breaks for this specific day
-      const dayBreaks = professionalBreaks.filter(brk => brk.dayOfWeek === day.dayKey);
+      // Get breaks for this specific day (exception breaks or regular day-of-week breaks)
+      let dayBreaks: { startTime: string; endTime: string }[] = [];
+      if (isExceptional && exceptionalSchedule) {
+        dayBreaks = await storage.getExceptionBreaks(exceptionalSchedule.id);
+      } else {
+        dayBreaks = professionalBreaks.filter(brk => brk.dayOfWeek === day.dayKey);
+      }
 
       // Find appointments for this specific date
       const dayAppointments = existingAppointments.filter(apt => {
@@ -1366,20 +1371,36 @@ async function getSpecificDateAvailability(
       continue;
     }
 
-    // Check if professional has schedule for this day
-    const daySchedule = professionalSchedules.find(s => s.dayOfWeek === dayOfWeek && s.isEnabled);
-    if (!daySchedule) {
-      availabilityText += `  ❌ NÃO TRABALHA NESTE DIA DA SEMANA\n\n`;
-      continue;
-    }
+    // Check if there's an exceptional schedule for this specific date
+    const exceptionalSchedules = await storage.getProfessionalExceptionalSchedulesByDateRange(prof.id, targetDate, targetDate);
+    let workStart: string;
+    let workEnd: string;
+    let isExceptionalDay = false;
 
-    const workStart = daySchedule.startTime;
-    const workEnd = daySchedule.endTime;
+    if (exceptionalSchedules.length > 0) {
+      workStart = exceptionalSchedules[0].startTime;
+      workEnd = exceptionalSchedules[0].endTime;
+      isExceptionalDay = true;
+    } else {
+      // Check if professional has schedule for this day
+      const daySchedule = professionalSchedules.find(s => s.dayOfWeek === dayOfWeek && s.isEnabled);
+      if (!daySchedule) {
+        availabilityText += `  ❌ NÃO TRABALHA NESTE DIA DA SEMANA\n\n`;
+        continue;
+      }
+      workStart = daySchedule.startTime;
+      workEnd = daySchedule.endTime;
+    }
 
     availabilityText += `  ✅ Horário de trabalho: ${workStart} às ${workEnd}\n`;
 
-    // Get breaks for this specific day
-    const dayBreaks = professionalBreaks.filter(brk => brk.dayOfWeek === dayKey);
+    // Get breaks for this specific day (exception breaks or regular day-of-week breaks)
+    let dayBreaks: { startTime: string; endTime: string }[] = [];
+    if (isExceptionalDay && exceptionalSchedules.length > 0) {
+      dayBreaks = await storage.getExceptionBreaks(exceptionalSchedules[0].id);
+    } else {
+      dayBreaks = professionalBreaks.filter(brk => brk.dayOfWeek === dayKey);
+    }
 
     // Get appointments for this specific date
     const dayAppointments = existingAppointments.filter(apt => {
@@ -1775,21 +1796,25 @@ async function getAvailableTimesForService(
         }
       }
 
-      // Verificar se está em horário de pausa
+      // Verificar se está em horário de pausa (excepcional ou regular)
       let isBreakTime = false;
-      for (const brk of professionalBreaks) {
-        if (brk.dayOfWeek === dayOfWeekKey) {
-          const [brkStartHour, brkStartMin] = brk.startTime.split(':').map(Number);
-          const [brkEndHour, brkEndMin] = brk.endTime.split(':').map(Number);
-          const brkStartMinutes = brkStartHour * 60 + brkStartMin;
-          const brkEndMinutes = brkEndHour * 60 + brkEndMin;
+      let breaksToCheck: { startTime: string; endTime: string }[] = [];
+      if (professionalExceptionalSchedules.length > 0) {
+        breaksToCheck = await storage.getExceptionBreaks(professionalExceptionalSchedules[0].id);
+      } else {
+        breaksToCheck = professionalBreaks.filter(brk => brk.dayOfWeek === dayOfWeekKey);
+      }
+      for (const brk of breaksToCheck) {
+        const [brkStartHour, brkStartMin] = brk.startTime.split(':').map(Number);
+        const [brkEndHour, brkEndMin] = brk.endTime.split(':').map(Number);
+        const brkStartMinutes = brkStartHour * 60 + brkStartMin;
+        const brkEndMinutes = brkEndHour * 60 + brkEndMin;
 
-          const newEndMinutes = currentTimeMinutes + serviceDuration;
+        const newEndMinutes = currentTimeMinutes + serviceDuration;
 
-          if ((currentTimeMinutes < brkEndMinutes) && (newEndMinutes > brkStartMinutes)) {
-            isBreakTime = true;
-            break;
-          }
+        if ((currentTimeMinutes < brkEndMinutes) && (newEndMinutes > brkStartMinutes)) {
+          isBreakTime = true;
+          break;
         }
       }
 
@@ -12702,6 +12727,97 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
+  // Professional Exception Breaks API (breaks/pauses for exceptional schedules)
+  app.get('/api/company/professionals/:professionalId/exceptional-schedules/:scheduleId/breaks', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
+      const scheduleId = parseInt(req.params.scheduleId);
+      const breaks = await storage.getExceptionBreaks(scheduleId);
+      res.json(breaks);
+    } catch (error) {
+      console.error("Error fetching exception breaks:", error);
+      res.status(500).json({ message: "Erro ao buscar pausas do horário excepcional" });
+    }
+  });
+
+  app.post('/api/company/professionals/:professionalId/exceptional-schedules/:scheduleId/breaks', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
+      const scheduleId = parseInt(req.params.scheduleId);
+      const { startTime, endTime } = req.body;
+
+      if (!startTime || !endTime) {
+        return res.status(400).json({ message: "Hora início e hora fim são obrigatórios" });
+      }
+
+      const newBreak = await storage.createExceptionBreak({
+        exceptionalScheduleId: scheduleId,
+        startTime,
+        endTime,
+      });
+
+      // Clear availability cache after adding exception break
+      clearAvailabilityCache(companyId);
+
+      res.status(201).json(newBreak);
+    } catch (error) {
+      console.error("Error creating exception break:", error);
+      res.status(500).json({ message: "Erro ao criar pausa do horário excepcional" });
+    }
+  });
+
+  app.delete('/api/company/professionals/:professionalId/exceptional-schedules/:scheduleId/breaks/:breakId', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const professionalId = parseInt(req.params.professionalId);
+
+      // Verify professional belongs to company
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(404).json({ message: "Profissional não encontrado" });
+      }
+
+      const breakId = parseInt(req.params.breakId);
+      await storage.deleteExceptionBreak(breakId);
+
+      // Clear availability cache after deleting exception break
+      clearAvailabilityCache(companyId);
+
+      res.json({ message: "Pausa do horário excepcional excluída com sucesso" });
+    } catch (error) {
+      console.error("Error deleting exception break:", error);
+      res.status(500).json({ message: "Erro ao excluir pausa do horário excepcional" });
+    }
+  });
+
   // Professional Schedules API (individual hours per day)
   app.get('/api/company/professionals/:professionalId/schedules', isCompanyAuthenticated, async (req: any, res) => {
     try {
@@ -13744,8 +13860,13 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
         workEnd = daySchedule.endTime;
       }
 
-      // Get breaks for this specific day
-      const dayBreaks = professionalBreaks.filter(brk => brk.dayOfWeek === day.dayKey);
+      // Get breaks for this specific day (exception breaks or regular day-of-week breaks)
+      let dayBreaks: { startTime: string; endTime: string }[] = [];
+      if (isExceptional && exceptionalSchedule) {
+        dayBreaks = await storage.getExceptionBreaks(exceptionalSchedule.id);
+      } else {
+        dayBreaks = professionalBreaks.filter(brk => brk.dayOfWeek === day.dayKey);
+      }
 
       // Find appointments for this specific date
       const dayAppointments = existingAppointments.filter(apt => {
@@ -13972,20 +14093,36 @@ async function getSpecificDateAvailability(
       continue;
     }
 
-    // Check if professional has schedule for this day
-    const daySchedule = professionalSchedules.find(s => s.dayOfWeek === dayOfWeek && s.isEnabled);
-    if (!daySchedule) {
-      availabilityText += `  ❌ NÃO TRABALHA NESTE DIA DA SEMANA\n\n`;
-      continue;
-    }
+    // Check if there's an exceptional schedule for this specific date
+    const exceptionalSchedules = await storage.getProfessionalExceptionalSchedulesByDateRange(prof.id, targetDate, targetDate);
+    let workStart: string;
+    let workEnd: string;
+    let isExceptionalDay = false;
 
-    const workStart = daySchedule.startTime;
-    const workEnd = daySchedule.endTime;
+    if (exceptionalSchedules.length > 0) {
+      workStart = exceptionalSchedules[0].startTime;
+      workEnd = exceptionalSchedules[0].endTime;
+      isExceptionalDay = true;
+    } else {
+      // Check if professional has schedule for this day
+      const daySchedule = professionalSchedules.find(s => s.dayOfWeek === dayOfWeek && s.isEnabled);
+      if (!daySchedule) {
+        availabilityText += `  ❌ NÃO TRABALHA NESTE DIA DA SEMANA\n\n`;
+        continue;
+      }
+      workStart = daySchedule.startTime;
+      workEnd = daySchedule.endTime;
+    }
 
     availabilityText += `  ✅ Horário de trabalho: ${workStart} às ${workEnd}\n`;
 
-    // Get breaks for this specific day
-    const dayBreaks = professionalBreaks.filter(brk => brk.dayOfWeek === dayKey);
+    // Get breaks for this specific day (exception breaks or regular day-of-week breaks)
+    let dayBreaks: { startTime: string; endTime: string }[] = [];
+    if (isExceptionalDay && exceptionalSchedules.length > 0) {
+      dayBreaks = await storage.getExceptionBreaks(exceptionalSchedules[0].id);
+    } else {
+      dayBreaks = professionalBreaks.filter(brk => brk.dayOfWeek === dayKey);
+    }
 
     // Get appointments for this specific date
     const dayAppointments = existingAppointments.filter(apt => {
