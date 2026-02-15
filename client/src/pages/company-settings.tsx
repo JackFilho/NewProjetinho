@@ -1936,27 +1936,34 @@ export default function CompanySettings() {
                     id="n8n-webhook-url"
                     type="url"
                     placeholder="https://seu-n8n.com/webhook/agendamentos"
-                    value={company?.n8nWebhookUrl || ''}
-                    onChange={(e) => {
-                      const newValue = e.target.value;
-                      // Debounce save
-                      const timeout = setTimeout(() => {
-                        fetch('/api/company/n8n-webhook', {
-                          method: 'PUT',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            n8nWebhookUrl: newValue,
-                            n8nWebhookEnabled: company.n8nWebhookEnabled
-                          })
-                        }).then(() => {
+                    defaultValue={company?.n8nWebhookUrl || ''}
+                    key={company?.n8nWebhookUrl || 'empty'}
+                    onBlur={(e) => {
+                      const newValue = e.target.value.trim();
+                      if (newValue === (company?.n8nWebhookUrl || '')) return;
+                      fetch('/api/company/n8n-webhook', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          n8nWebhookUrl: newValue,
+                          n8nWebhookEnabled: company.n8nWebhookEnabled
+                        })
+                      }).then(async (res) => {
+                        if (res.ok) {
                           queryClient.invalidateQueries({ queryKey: ['/api/company/auth/profile'] });
-                        }).catch(err => console.error('Erro ao atualizar webhook n8n'));
-                      }, 1000);
-                      return () => clearTimeout(timeout);
+                          toast({ title: "URL salva!", description: "Webhook N8N atualizado com sucesso" });
+                        } else {
+                          const data = await res.json();
+                          toast({ title: "Erro", description: data.message || "URL inválida", variant: "destructive" });
+                        }
+                      }).catch(err => {
+                        console.error('Erro ao atualizar webhook n8n');
+                        toast({ title: "Erro", description: "Falha ao salvar URL", variant: "destructive" });
+                      });
                     }}
                   />
                   <p className="text-xs text-gray-500">
-                    Cole a URL do webhook gerado no N8N. Exemplo: https://seu-n8n.com/webhook/agendamentos
+                    Cole a URL e clique fora do campo para salvar. Exemplo: https://seu-n8n.com/webhook/agendamentos
                   </p>
 
                   {company?.n8nWebhookUrl && (
