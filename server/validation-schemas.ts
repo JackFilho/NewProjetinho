@@ -91,7 +91,7 @@ export const aiAgentSchema = z.object({
 
 export const n8nWebhookSchema = z.object({
   n8nWebhookUrl: z.string().url("URL inválida").max(500).optional().nullable().or(z.literal("")),
-  n8nWebhookEnabled: z.boolean().optional().default(false),
+  n8nWebhookEnabled: z.preprocess(val => val === true || val === 1 || val === "true", z.boolean()).optional().default(false),
 });
 
 export const humanRequestSchema = z.object({
