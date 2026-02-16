@@ -188,6 +188,25 @@ export const asaasConfigSchema = z.object({
   asaasEnabled: z.boolean().optional(),
 });
 
+// Módulo de Saúde
+export const healthSpecialtySchema = z.object({
+  healthSpecialty: z.string().max(100).nullable(),
+});
+
+export const clinicalEvolutionSchema = z.object({
+  title: z.string().max(255).optional(),
+  content: z.string().min(1, "Conteúdo é obrigatório").max(50000),
+  evolutionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data inválida"),
+  professionalId: z.coerce.number().optional().nullable(),
+  appointmentId: z.coerce.number().optional().nullable(),
+});
+
+export const anamnesisRecordSchema = z.object({
+  templateId: z.coerce.number().positive("Selecione um modelo"),
+  answers: z.record(z.string(), z.any()),
+  notes: z.string().max(10000).optional(),
+});
+
 export const settingsSchema = z.object({
   systemName: z.string().optional(),
   logoUrl: z.string().optional(),

@@ -277,6 +277,73 @@ export const asaasWebhookSchema = z.object({
 }).passthrough(); // Permite campos extras do Asaas
 
 // ============================================================================
+// MÓDULO DE SAÚDE
+// ============================================================================
+
+export const updateHealthSpecialtySchema = z.object({
+  healthSpecialty: z.string().max(100).nullable().optional(),
+});
+
+export const createAnamnesisTemplateSchema = z.object({
+  specialty: requiredString("Especialidade", 100),
+  name: requiredString("Nome do modelo", 255),
+  description: z.string().max(5000).optional().nullable(),
+  fields: z.array(z.object({
+    section: z.string().max(255).optional().nullable(),
+    label: requiredString("Pergunta", 500),
+    fieldType: z.enum(["text", "textarea", "select", "checkbox", "number", "date", "boolean"]).default("text"),
+    options: z.array(z.string()).optional().nullable(),
+    isRequired: z.union([z.boolean(), z.number()]).transform(val => typeof val === 'boolean' ? (val ? 1 : 0) : val).default(0),
+    sortOrder: z.coerce.number().int().min(0).default(0),
+    placeholder: z.string().max(255).optional().nullable(),
+  })).min(1, "Modelo precisa ter pelo menos um campo"),
+});
+
+export const updateAnamnesisTemplateSchema = z.object({
+  name: requiredString("Nome do modelo", 255).optional(),
+  description: z.string().max(5000).optional().nullable(),
+  fields: z.array(z.object({
+    section: z.string().max(255).optional().nullable(),
+    label: requiredString("Pergunta", 500),
+    fieldType: z.enum(["text", "textarea", "select", "checkbox", "number", "date", "boolean"]).default("text"),
+    options: z.array(z.string()).optional().nullable(),
+    isRequired: z.union([z.boolean(), z.number()]).transform(val => typeof val === 'boolean' ? (val ? 1 : 0) : val).default(0),
+    sortOrder: z.coerce.number().int().min(0).default(0),
+    placeholder: z.string().max(255).optional().nullable(),
+  })).min(1, "Modelo precisa ter pelo menos um campo").optional(),
+});
+
+export const createAnamnesisRecordSchema = z.object({
+  clientId: idSchema,
+  templateId: idSchema,
+  answers: z.record(z.string(), z.any()),
+  filledBy: z.coerce.number().int().positive().optional().nullable(),
+  notes: z.string().max(10000).optional().nullable(),
+});
+
+export const updateAnamnesisRecordSchema = z.object({
+  answers: z.record(z.string(), z.any()).optional(),
+  notes: z.string().max(10000).optional().nullable(),
+});
+
+export const createClinicalEvolutionSchema = z.object({
+  clientId: idSchema,
+  professionalId: z.coerce.number().int().positive().optional().nullable(),
+  appointmentId: z.coerce.number().int().positive().optional().nullable(),
+  title: z.string().max(255).optional().nullable(),
+  content: requiredString("Conteúdo da evolução", 50000),
+  evolutionDate: dateSchema,
+});
+
+export const updateClinicalEvolutionSchema = z.object({
+  professionalId: z.coerce.number().int().positive().optional().nullable(),
+  appointmentId: z.coerce.number().int().positive().optional().nullable(),
+  title: z.string().max(255).optional().nullable(),
+  content: requiredString("Conteúdo da evolução", 50000).optional(),
+  evolutionDate: dateSchema.optional(),
+});
+
+// ============================================================================
 // MIDDLEWARE DE VALIDAÇÃO
 // ============================================================================
 

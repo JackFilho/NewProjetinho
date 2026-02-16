@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Edit, Trash2, Grid, List, User, Mail, Phone, Calendar, Search, DollarSign, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Edit, Trash2, Grid, List, User, Mail, Phone, Calendar, Search, DollarSign, ChevronLeft, ChevronRight, HeartPulse } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -17,6 +17,7 @@ import { format, parseISO } from "date-fns";
 import { validateBrazilianPhone } from "../../../shared/phone-utils";
 import { useGlobalTheme } from "@/hooks/use-global-theme";
 import { FloatingHelpButton } from "@/components/floating-help-button";
+import { useLocation } from "wouter";
 
 interface Client {
   id: number;
@@ -485,6 +486,63 @@ function ClientServiceHistory({ clientId, clientName }: ClientServiceHistoryProp
   );
 }
 
+function ClientHealthSummary({ clientId, clientName }: ClientServiceHistoryProps) {
+  const [, navigate] = useLocation();
+
+  const { data: evolutions = [] } = useQuery<any[]>({
+    queryKey: [`/api/company/clients/${clientId}/evolutions`],
+  });
+
+  const { data: anamnesisRecords = [] } = useQuery<any[]>({
+    queryKey: [`/api/company/clients/${clientId}/anamnesis`],
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <Card>
+          <CardContent className="py-3 text-center">
+            <p className="text-xl font-bold">{anamnesisRecords.length}</p>
+            <p className="text-xs text-muted-foreground">Fichas de Anamnese</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-3 text-center">
+            <p className="text-xl font-bold">{evolutions.length}</p>
+            <p className="text-xs text-muted-foreground">Evoluções Clínicas</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {evolutions.length > 0 && (
+        <div>
+          <h4 className="text-sm font-medium mb-2">Últimas evoluções</h4>
+          <div className="space-y-2">
+            {evolutions.slice(0, 3).map((ev: any) => (
+              <Card key={ev.id}>
+                <CardContent className="py-2">
+                  <p className="text-xs text-muted-foreground">{ev.evolutionDate}</p>
+                  {ev.title && <p className="text-sm font-medium">{ev.title}</p>}
+                  <p className="text-sm text-muted-foreground line-clamp-2">{ev.content}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Button
+        className="w-full"
+        variant="outline"
+        onClick={() => navigate(`/company/saude/paciente/${clientId}`)}
+      >
+        <HeartPulse className="h-4 w-4 mr-2" />
+        Ver Perfil Completo de Saúde
+      </Button>
+    </div>
+  );
+}
+
 export default function CompanyClients() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
@@ -837,9 +895,12 @@ export default function CompanyClients() {
             </DialogHeader>
 
             <Tabs defaultValue="dados" className="w-full">
-              <TabsList className="grid w-full grid-cols-2">
+              <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="dados">Dados do Cliente</TabsTrigger>
                 <TabsTrigger value="servicos">Histórico de Serviços</TabsTrigger>
+                <TabsTrigger value="saude" className="gap-1">
+                  <HeartPulse className="h-3 w-3" /> Saúde
+                </TabsTrigger>
               </TabsList>
 
               <TabsContent value="dados" className="space-y-4">
@@ -940,6 +1001,16 @@ export default function CompanyClients() {
                 ) : (
                   <div className="text-center py-8 text-gray-500">
                     <p>Salve o cliente primeiro para ver o histórico de serviços</p>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="saude" className="space-y-4">
+                {editingClient ? (
+                  <ClientHealthSummary clientId={editingClient.id} clientName={editingClient.name} />
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    <p>Salve o cliente primeiro para ver o perfil de saúde</p>
                   </div>
                 )}
               </TabsContent>

@@ -13,6 +13,8 @@ import CompanySettings from "@/pages/company-settings";
 import CompanyServices from "@/pages/company-services";
 import CompanyProfessionals from "@/pages/company-professionals";
 import CompanyClients from "@/pages/company-clients";
+import CompanyHealth from "@/pages/company-health";
+import CompanyPatientProfile from "@/pages/company-patient-profile";
 import CompanyReminders from "@/pages/company-reminders";
 import CompanyReviews from "@/pages/company-reviews";
 import CompanyMessages from "@/pages/company-messages";
@@ -102,6 +104,16 @@ function Router() {
       <Route path="/company/clients">
         <CompanyLayout>
           <CompanyClients />
+        </CompanyLayout>
+      </Route>
+      <Route path="/company/saude">
+        <CompanyLayout>
+          <CompanyHealth />
+        </CompanyLayout>
+      </Route>
+      <Route path="/company/saude/paciente/:clientId">
+        <CompanyLayout>
+          <CompanyPatientProfile />
         </CompanyLayout>
       </Route>
       <Route path="/company/settings">

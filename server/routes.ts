@@ -34,6 +34,13 @@ import {
   createSupportTicketSchema,
   createWhatsAppInstanceSchema,
   createSubscriptionSchema,
+  updateHealthSpecialtySchema,
+  createAnamnesisTemplateSchema,
+  updateAnamnesisTemplateSchema,
+  createAnamnesisRecordSchema,
+  updateAnamnesisRecordSchema,
+  createClinicalEvolutionSchema,
+  updateClinicalEvolutionSchema,
 } from "./validation-schemas";
 import { reminderScheduler, rescheduleRemindersForAppointment } from "./reminder-scheduler";
 import { sql, eq, and, desc, asc, sum, count, gte, lte } from "drizzle-orm";
@@ -19810,6 +19817,407 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     } catch (error: any) {
       console.error('Error fetching dashboard data:', error);
       res.status(500).json({ message: 'Erro ao buscar dados do dashboard' });
+    }
+  });
+
+  // ============================================================================
+  // MÓDULO DE SAÚDE
+  // ============================================================================
+
+  // === Company Health Specialty ===
+  app.get('/api/company/health-specialty', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const company = await storage.getCompany(companyId);
+      if (!company) return res.status(404).json({ message: "Empresa não encontrada" });
+      res.json({ healthSpecialty: company.healthSpecialty || null });
+    } catch (error: any) {
+      console.error("Error getting health specialty:", error);
+      res.status(500).json({ message: "Erro ao buscar especialidade" });
+    }
+  });
+
+  app.put('/api/company/health-specialty', isCompanyAuthenticated, validateBody(updateHealthSpecialtySchema), async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const { healthSpecialty } = req.body;
+      await storage.updateCompany(companyId, { healthSpecialty });
+      res.json({ message: "Especialidade atualizada com sucesso", healthSpecialty });
+    } catch (error: any) {
+      console.error("Error updating health specialty:", error);
+      res.status(500).json({ message: "Erro ao atualizar especialidade" });
+    }
+  });
+
+  // === Anamnesis Templates (Company) ===
+  app.get('/api/company/anamnesis-templates', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const company = await storage.getCompany(companyId);
+      if (!company || !company.healthSpecialty) {
+        return res.json([]);
+      }
+      const templates = await storage.getAnamnesisTemplatesBySpecialty(company.healthSpecialty, companyId);
+      res.json(templates);
+    } catch (error: any) {
+      console.error("Error getting anamnesis templates:", error);
+      res.status(500).json({ message: "Erro ao buscar modelos de anamnese" });
+    }
+  });
+
+  app.get('/api/company/anamnesis-templates/:id', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const templateId = parseInt(req.params.id);
+      const template = await storage.getAnamnesisTemplate(templateId);
+      if (!template) return res.status(404).json({ message: "Modelo não encontrado" });
+      if (template.companyId !== null && template.companyId !== companyId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+      const fields = await storage.getAnamnesisTemplateFields(templateId);
+      res.json({ ...template, fields });
+    } catch (error: any) {
+      console.error("Error getting anamnesis template:", error);
+      res.status(500).json({ message: "Erro ao buscar modelo de anamnese" });
+    }
+  });
+
+  app.post('/api/company/anamnesis-templates', isCompanyAuthenticated, validateBody(createAnamnesisTemplateSchema), async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const { fields, ...templateData } = req.body;
+      const template = await storage.createAnamnesisTemplate({
+        ...templateData,
+        companyId,
+      });
+      for (const field of fields) {
+        await storage.createAnamnesisTemplateField({
+          ...field,
+          templateId: template.id,
+        });
+      }
+      const createdFields = await storage.getAnamnesisTemplateFields(template.id);
+      res.status(201).json({ ...template, fields: createdFields });
+    } catch (error: any) {
+      console.error("Error creating anamnesis template:", error);
+      res.status(500).json({ message: "Erro ao criar modelo de anamnese" });
+    }
+  });
+
+  app.put('/api/company/anamnesis-templates/:id', isCompanyAuthenticated, validateBody(updateAnamnesisTemplateSchema), async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const templateId = parseInt(req.params.id);
+      const existing = await storage.getAnamnesisTemplate(templateId);
+      if (!existing) return res.status(404).json({ message: "Modelo não encontrado" });
+      if (existing.companyId !== companyId) {
+        return res.status(403).json({ message: "Só é possível editar modelos próprios" });
+      }
+      const { fields, ...templateData } = req.body;
+      const updated = await storage.updateAnamnesisTemplate(templateId, templateData);
+      if (fields) {
+        await storage.deleteAnamnesisTemplateFieldsByTemplate(templateId);
+        for (const field of fields) {
+          await storage.createAnamnesisTemplateField({
+            ...field,
+            templateId,
+          });
+        }
+      }
+      const updatedFields = await storage.getAnamnesisTemplateFields(templateId);
+      res.json({ ...updated, fields: updatedFields });
+    } catch (error: any) {
+      console.error("Error updating anamnesis template:", error);
+      res.status(500).json({ message: "Erro ao atualizar modelo de anamnese" });
+    }
+  });
+
+  app.delete('/api/company/anamnesis-templates/:id', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const templateId = parseInt(req.params.id);
+      const existing = await storage.getAnamnesisTemplate(templateId);
+      if (!existing) return res.status(404).json({ message: "Modelo não encontrado" });
+      if (existing.companyId !== companyId) {
+        return res.status(403).json({ message: "Só é possível excluir modelos próprios" });
+      }
+      await storage.deleteAnamnesisTemplate(templateId);
+      res.json({ message: "Modelo excluído com sucesso" });
+    } catch (error: any) {
+      console.error("Error deleting anamnesis template:", error);
+      res.status(500).json({ message: "Erro ao excluir modelo de anamnese" });
+    }
+  });
+
+  // === Anamnesis Templates (Admin - system defaults) ===
+  app.get('/api/admin/anamnesis-templates/:specialty', isAuthenticated, async (req: any, res) => {
+    try {
+      const specialty = req.params.specialty;
+      const templates = await storage.getAnamnesisTemplatesBySpecialty(specialty);
+      res.json(templates);
+    } catch (error: any) {
+      console.error("Error getting admin anamnesis templates:", error);
+      res.status(500).json({ message: "Erro ao buscar modelos de anamnese" });
+    }
+  });
+
+  app.post('/api/admin/anamnesis-templates', isAuthenticated, validateBody(createAnamnesisTemplateSchema), async (req: any, res) => {
+    try {
+      const { fields, ...templateData } = req.body;
+      const template = await storage.createAnamnesisTemplate({
+        ...templateData,
+        companyId: null,
+      });
+      for (const field of fields) {
+        await storage.createAnamnesisTemplateField({
+          ...field,
+          templateId: template.id,
+        });
+      }
+      const createdFields = await storage.getAnamnesisTemplateFields(template.id);
+      res.status(201).json({ ...template, fields: createdFields });
+    } catch (error: any) {
+      console.error("Error creating admin anamnesis template:", error);
+      res.status(500).json({ message: "Erro ao criar modelo de anamnese" });
+    }
+  });
+
+  app.put('/api/admin/anamnesis-templates/:id', isAuthenticated, validateBody(updateAnamnesisTemplateSchema), async (req: any, res) => {
+    try {
+      const templateId = parseInt(req.params.id);
+      const existing = await storage.getAnamnesisTemplate(templateId);
+      if (!existing) return res.status(404).json({ message: "Modelo não encontrado" });
+      if (existing.companyId !== null) {
+        return res.status(403).json({ message: "Este modelo pertence a uma empresa" });
+      }
+      const { fields, ...templateData } = req.body;
+      const updated = await storage.updateAnamnesisTemplate(templateId, templateData);
+      if (fields) {
+        await storage.deleteAnamnesisTemplateFieldsByTemplate(templateId);
+        for (const field of fields) {
+          await storage.createAnamnesisTemplateField({
+            ...field,
+            templateId,
+          });
+        }
+      }
+      const updatedFields = await storage.getAnamnesisTemplateFields(templateId);
+      res.json({ ...updated, fields: updatedFields });
+    } catch (error: any) {
+      console.error("Error updating admin anamnesis template:", error);
+      res.status(500).json({ message: "Erro ao atualizar modelo de anamnese" });
+    }
+  });
+
+  app.delete('/api/admin/anamnesis-templates/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const templateId = parseInt(req.params.id);
+      const existing = await storage.getAnamnesisTemplate(templateId);
+      if (!existing) return res.status(404).json({ message: "Modelo não encontrado" });
+      if (existing.companyId !== null) {
+        return res.status(403).json({ message: "Este modelo pertence a uma empresa" });
+      }
+      await storage.deleteAnamnesisTemplate(templateId);
+      res.json({ message: "Modelo excluído com sucesso" });
+    } catch (error: any) {
+      console.error("Error deleting admin anamnesis template:", error);
+      res.status(500).json({ message: "Erro ao excluir modelo de anamnese" });
+    }
+  });
+
+  // === Anamnesis Records ===
+  app.get('/api/company/clients/:clientId/anamnesis', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const clientId = parseInt(req.params.clientId);
+      const client = await storage.getClient(clientId);
+      if (!client || client.companyId !== companyId) {
+        return res.status(404).json({ message: "Cliente não encontrado" });
+      }
+      const records = await storage.getAnamnesisRecordsByClient(clientId, companyId);
+      res.json(records);
+    } catch (error: any) {
+      console.error("Error getting anamnesis records:", error);
+      res.status(500).json({ message: "Erro ao buscar fichas de anamnese" });
+    }
+  });
+
+  app.get('/api/company/anamnesis-records/:id', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const recordId = parseInt(req.params.id);
+      const record = await storage.getAnamnesisRecord(recordId);
+      if (!record || record.companyId !== companyId) {
+        return res.status(404).json({ message: "Ficha não encontrada" });
+      }
+      const template = await storage.getAnamnesisTemplate(record.templateId);
+      const fields = template ? await storage.getAnamnesisTemplateFields(record.templateId) : [];
+      res.json({ ...record, template, fields });
+    } catch (error: any) {
+      console.error("Error getting anamnesis record:", error);
+      res.status(500).json({ message: "Erro ao buscar ficha de anamnese" });
+    }
+  });
+
+  app.post('/api/company/clients/:clientId/anamnesis', isCompanyAuthenticated, validateBody(createAnamnesisRecordSchema), async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const clientId = parseInt(req.params.clientId);
+      const client = await storage.getClient(clientId);
+      if (!client || client.companyId !== companyId) {
+        return res.status(404).json({ message: "Cliente não encontrado" });
+      }
+      const record = await storage.createAnamnesisRecord({
+        ...req.body,
+        clientId,
+        companyId,
+      });
+      res.status(201).json(record);
+    } catch (error: any) {
+      console.error("Error creating anamnesis record:", error);
+      res.status(500).json({ message: "Erro ao criar ficha de anamnese" });
+    }
+  });
+
+  app.put('/api/company/anamnesis-records/:id', isCompanyAuthenticated, validateBody(updateAnamnesisRecordSchema), async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const recordId = parseInt(req.params.id);
+      const existing = await storage.getAnamnesisRecord(recordId);
+      if (!existing || existing.companyId !== companyId) {
+        return res.status(404).json({ message: "Ficha não encontrada" });
+      }
+      const updated = await storage.updateAnamnesisRecord(recordId, req.body);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating anamnesis record:", error);
+      res.status(500).json({ message: "Erro ao atualizar ficha de anamnese" });
+    }
+  });
+
+  app.delete('/api/company/anamnesis-records/:id', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const recordId = parseInt(req.params.id);
+      const existing = await storage.getAnamnesisRecord(recordId);
+      if (!existing || existing.companyId !== companyId) {
+        return res.status(404).json({ message: "Ficha não encontrada" });
+      }
+      await storage.deleteAnamnesisRecord(recordId);
+      res.json({ message: "Ficha excluída com sucesso" });
+    } catch (error: any) {
+      console.error("Error deleting anamnesis record:", error);
+      res.status(500).json({ message: "Erro ao excluir ficha de anamnese" });
+    }
+  });
+
+  // === Clinical Evolutions ===
+  app.get('/api/company/clients/:clientId/evolutions', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const clientId = parseInt(req.params.clientId);
+      const client = await storage.getClient(clientId);
+      if (!client || client.companyId !== companyId) {
+        return res.status(404).json({ message: "Cliente não encontrado" });
+      }
+      const evolutions = await storage.getClinicalEvolutionsByClient(clientId, companyId);
+      res.json(evolutions);
+    } catch (error: any) {
+      console.error("Error getting clinical evolutions:", error);
+      res.status(500).json({ message: "Erro ao buscar evoluções clínicas" });
+    }
+  });
+
+  app.get('/api/company/evolutions/:id', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const evolutionId = parseInt(req.params.id);
+      const evolution = await storage.getClinicalEvolution(evolutionId);
+      if (!evolution || evolution.companyId !== companyId) {
+        return res.status(404).json({ message: "Evolução não encontrada" });
+      }
+      res.json(evolution);
+    } catch (error: any) {
+      console.error("Error getting clinical evolution:", error);
+      res.status(500).json({ message: "Erro ao buscar evolução clínica" });
+    }
+  });
+
+  app.post('/api/company/clients/:clientId/evolutions', isCompanyAuthenticated, validateBody(createClinicalEvolutionSchema), async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const clientId = parseInt(req.params.clientId);
+      const client = await storage.getClient(clientId);
+      if (!client || client.companyId !== companyId) {
+        return res.status(404).json({ message: "Cliente não encontrado" });
+      }
+      const evolution = await storage.createClinicalEvolution({
+        ...req.body,
+        clientId,
+        companyId,
+      });
+      res.status(201).json(evolution);
+    } catch (error: any) {
+      console.error("Error creating clinical evolution:", error);
+      res.status(500).json({ message: "Erro ao criar evolução clínica" });
+    }
+  });
+
+  app.put('/api/company/evolutions/:id', isCompanyAuthenticated, validateBody(updateClinicalEvolutionSchema), async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const evolutionId = parseInt(req.params.id);
+      const existing = await storage.getClinicalEvolution(evolutionId);
+      if (!existing || existing.companyId !== companyId) {
+        return res.status(404).json({ message: "Evolução não encontrada" });
+      }
+      const updated = await storage.updateClinicalEvolution(evolutionId, req.body);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating clinical evolution:", error);
+      res.status(500).json({ message: "Erro ao atualizar evolução clínica" });
+    }
+  });
+
+  app.delete('/api/company/evolutions/:id', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const evolutionId = parseInt(req.params.id);
+      const existing = await storage.getClinicalEvolution(evolutionId);
+      if (!existing || existing.companyId !== companyId) {
+        return res.status(404).json({ message: "Evolução não encontrada" });
+      }
+      await storage.deleteClinicalEvolution(evolutionId);
+      res.json({ message: "Evolução excluída com sucesso" });
+    } catch (error: any) {
+      console.error("Error deleting clinical evolution:", error);
+      res.status(500).json({ message: "Erro ao excluir evolução clínica" });
+    }
+  });
+
+  // === Health Profile (aggregated view) ===
+  app.get('/api/company/clients/:clientId/health-profile', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const clientId = parseInt(req.params.clientId);
+      const client = await storage.getClient(clientId);
+      if (!client || client.companyId !== companyId) {
+        return res.status(404).json({ message: "Cliente não encontrado" });
+      }
+      const [anamnesisRecordsList, evolutionsList, appointmentsList] = await Promise.all([
+        storage.getAnamnesisRecordsByClient(clientId, companyId),
+        storage.getClinicalEvolutionsByClient(clientId, companyId),
+        storage.getAppointmentsByClient(clientId, companyId),
+      ]);
+      res.json({
+        client,
+        anamnesis: anamnesisRecordsList,
+        evolutions: evolutionsList,
+        appointments: appointmentsList,
+      });
+    } catch (error: any) {
+      console.error("Error getting health profile:", error);
+      res.status(500).json({ message: "Erro ao buscar perfil de saúde" });
     }
   });
 

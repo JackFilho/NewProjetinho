@@ -101,6 +101,7 @@ export const companies = mysqlTable("companies", {
   financialPasswordEnabled: int("financial_password_enabled").notNull().default(0),
   financialPassword: varchar("financial_password", { length: 255 }),
   logoUrl: varchar("logo_url", { length: 500 }),
+  healthSpecialty: varchar("health_specialty", { length: 100 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
@@ -402,6 +403,96 @@ export const clients = mysqlTable("clients", {
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
 
+// ============================================================================
+// MÓDULO DE SAÚDE
+// ============================================================================
+
+export const HEALTH_SPECIALTIES = [
+  "fisioterapia",
+  "odontologia",
+  "psicologia",
+  "nutricao",
+  "fonoaudiologia",
+  "medicina",
+  "estetica",
+  "outro",
+] as const;
+
+export const HEALTH_SPECIALTY_LABELS: Record<string, string> = {
+  fisioterapia: "Fisioterapia",
+  odontologia: "Odontologia",
+  psicologia: "Psicologia",
+  nutricao: "Nutrição",
+  fonoaudiologia: "Fonoaudiologia",
+  medicina: "Medicina",
+  estetica: "Estética",
+  outro: "Outro",
+};
+
+export const ANAMNESIS_FIELD_TYPES = [
+  "text",
+  "textarea",
+  "select",
+  "checkbox",
+  "number",
+  "date",
+  "boolean",
+] as const;
+
+// Anamnesis templates (company_id NULL = system default for specialty)
+export const anamnesisTemplates = mysqlTable("anamnesis_templates", {
+  id: serial("id").primaryKey(),
+  companyId: int("company_id"),
+  specialty: varchar("specialty", { length: 100 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  isActive: int("is_active").notNull().default(1),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
+// Anamnesis template fields (questions within a template)
+export const anamnesisTemplateFields = mysqlTable("anamnesis_template_fields", {
+  id: serial("id").primaryKey(),
+  templateId: int("template_id").notNull(),
+  section: varchar("section", { length: 255 }),
+  label: varchar("label", { length: 500 }).notNull(),
+  fieldType: varchar("field_type", { length: 50 }).notNull().default("text"),
+  options: json("options").$type<string[]>(),
+  isRequired: int("is_required").notNull().default(0),
+  sortOrder: int("sort_order").notNull().default(0),
+  placeholder: varchar("placeholder", { length: 255 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
+// Anamnesis records (filled per client)
+export const anamnesisRecords = mysqlTable("anamnesis_records", {
+  id: serial("id").primaryKey(),
+  companyId: int("company_id").notNull(),
+  clientId: int("client_id").notNull(),
+  templateId: int("template_id").notNull(),
+  answers: json("answers").$type<Record<string, any>>().notNull(),
+  filledBy: int("filled_by"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
+// Clinical evolutions (per client, per visit)
+export const clinicalEvolutions = mysqlTable("clinical_evolutions", {
+  id: serial("id").primaryKey(),
+  companyId: int("company_id").notNull(),
+  clientId: int("client_id").notNull(),
+  professionalId: int("professional_id"),
+  appointmentId: int("appointment_id"),
+  title: varchar("title", { length: 255 }),
+  content: text("content").notNull(),
+  evolutionDate: date("evolution_date").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
 // Birthday messages table
 export const birthdayMessages = mysqlTable("birthday_messages", {
   id: serial("id").primaryKey(),
@@ -544,6 +635,9 @@ export const companiesRelations = relations(companies, ({ many }) => ({
   financialCategories: many(financialCategories),
   paymentMethods: many(paymentMethods),
   financialTransactions: many(financialTransactions),
+  anamnesisTemplates: many(anamnesisTemplates),
+  anamnesisRecords: many(anamnesisRecords),
+  clinicalEvolutions: many(clinicalEvolutions),
 }));
 
 export const messageCampaignsRelations = relations(messageCampaigns, ({ one }) => ({
@@ -553,10 +647,62 @@ export const messageCampaignsRelations = relations(messageCampaigns, ({ one }) =
   }),
 }));
 
-export const clientsRelations = relations(clients, ({ one }) => ({
+export const clientsRelations = relations(clients, ({ one, many }) => ({
   company: one(companies, {
     fields: [clients.companyId],
     references: [companies.id],
+  }),
+  anamnesisRecords: many(anamnesisRecords),
+  clinicalEvolutions: many(clinicalEvolutions),
+}));
+
+// Health module relations
+export const anamnesisTemplatesRelations = relations(anamnesisTemplates, ({ one, many }) => ({
+  company: one(companies, {
+    fields: [anamnesisTemplates.companyId],
+    references: [companies.id],
+  }),
+  fields: many(anamnesisTemplateFields),
+}));
+
+export const anamnesisTemplateFieldsRelations = relations(anamnesisTemplateFields, ({ one }) => ({
+  template: one(anamnesisTemplates, {
+    fields: [anamnesisTemplateFields.templateId],
+    references: [anamnesisTemplates.id],
+  }),
+}));
+
+export const anamnesisRecordsRelations = relations(anamnesisRecords, ({ one }) => ({
+  company: one(companies, {
+    fields: [anamnesisRecords.companyId],
+    references: [companies.id],
+  }),
+  client: one(clients, {
+    fields: [anamnesisRecords.clientId],
+    references: [clients.id],
+  }),
+  template: one(anamnesisTemplates, {
+    fields: [anamnesisRecords.templateId],
+    references: [anamnesisTemplates.id],
+  }),
+}));
+
+export const clinicalEvolutionsRelations = relations(clinicalEvolutions, ({ one }) => ({
+  company: one(companies, {
+    fields: [clinicalEvolutions.companyId],
+    references: [companies.id],
+  }),
+  client: one(clients, {
+    fields: [clinicalEvolutions.clientId],
+    references: [clients.id],
+  }),
+  professional: one(professionals, {
+    fields: [clinicalEvolutions.professionalId],
+    references: [professionals.id],
+  }),
+  appointment: one(appointments, {
+    fields: [clinicalEvolutions.appointmentId],
+    references: [appointments.id],
   }),
 }));
 
@@ -730,7 +876,30 @@ export const insertPaymentAlertSchema = createInsertSchema(paymentAlerts).omit({
   shownAt: true,
 });
 
+// Health module insert schemas
+export const insertAnamnesisTemplateSchema = createInsertSchema(anamnesisTemplates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
 
+export const insertAnamnesisTemplateFieldSchema = createInsertSchema(anamnesisTemplateFields).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertAnamnesisRecordSchema = createInsertSchema(anamnesisRecords).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertClinicalEvolutionSchema = createInsertSchema(clinicalEvolutions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
 
 // Type exports
 export type Admin = typeof admins.$inferSelect;
@@ -788,7 +957,15 @@ export type InsertCompanyAlertView = z.infer<typeof insertCompanyAlertViewSchema
 export type PaymentAlert = typeof paymentAlerts.$inferSelect;
 export type InsertPaymentAlert = z.infer<typeof insertPaymentAlertSchema>;
 
-
+// Health module types
+export type AnamnesisTemplate = typeof anamnesisTemplates.$inferSelect;
+export type InsertAnamnesisTemplate = z.infer<typeof insertAnamnesisTemplateSchema>;
+export type AnamnesisTemplateField = typeof anamnesisTemplateFields.$inferSelect;
+export type InsertAnamnesisTemplateField = z.infer<typeof insertAnamnesisTemplateFieldSchema>;
+export type AnamnesisRecord = typeof anamnesisRecords.$inferSelect;
+export type InsertAnamnesisRecord = z.infer<typeof insertAnamnesisRecordSchema>;
+export type ClinicalEvolution = typeof clinicalEvolutions.$inferSelect;
+export type InsertClinicalEvolution = z.infer<typeof insertClinicalEvolutionSchema>;
 
 // Support ticket types table
 export const supportTicketTypes = mysqlTable("support_ticket_types", {

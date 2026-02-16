@@ -1,0 +1,348 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { HeartPulse, FileText, Users, Plus, Pencil, Trash2, Search, Eye } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { useGlobalTheme } from "@/hooks/use-global-theme";
+import { HEALTH_SPECIALTIES, HEALTH_SPECIALTY_LABELS } from "@shared/schema";
+import type { AnamnesisTemplate, Client } from "@shared/schema";
+import { AnamnesisTemplateBuilder } from "@/components/health/anamnesis-template-builder";
+
+export default function CompanyHealth() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const globalSettings = useGlobalTheme();
+  const [, navigate] = useLocation();
+  const [showTemplateBuilder, setShowTemplateBuilder] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<any>(null);
+  const [clientSearch, setClientSearch] = useState("");
+
+  // Fetch company health specialty
+  const { data: specialtyData } = useQuery<{ healthSpecialty: string | null }>({
+    queryKey: ['/api/company/health-specialty'],
+  });
+
+  const specialty = specialtyData?.healthSpecialty;
+
+  // Fetch templates
+  const { data: templates = [] } = useQuery<AnamnesisTemplate[]>({
+    queryKey: ['/api/company/anamnesis-templates'],
+    enabled: !!specialty,
+  });
+
+  // Fetch clients
+  const { data: clients = [] } = useQuery<Client[]>({
+    queryKey: ['/api/company/clients'],
+  });
+
+  // Update specialty mutation
+  const updateSpecialtyMutation = useMutation({
+    mutationFn: async (healthSpecialty: string) => {
+      const res = await fetch('/api/company/health-specialty', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ healthSpecialty }),
+      });
+      if (!res.ok) throw new Error('Erro ao atualizar especialidade');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/company/health-specialty'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/company/anamnesis-templates'] });
+      toast({ title: "Especialidade atualizada com sucesso" });
+    },
+    onError: () => {
+      toast({ title: "Erro ao atualizar especialidade", variant: "destructive" });
+    },
+  });
+
+  // Create template mutation
+  const createTemplateMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await fetch('/api/company/anamnesis-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...data, specialty }),
+      });
+      if (!res.ok) throw new Error('Erro ao criar modelo');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/company/anamnesis-templates'] });
+      setShowTemplateBuilder(false);
+      toast({ title: "Modelo de anamnese criado com sucesso" });
+    },
+    onError: () => {
+      toast({ title: "Erro ao criar modelo", variant: "destructive" });
+    },
+  });
+
+  // Update template mutation
+  const updateTemplateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      const res = await fetch(`/api/company/anamnesis-templates/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Erro ao atualizar modelo');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/company/anamnesis-templates'] });
+      setEditingTemplate(null);
+      toast({ title: "Modelo atualizado com sucesso" });
+    },
+    onError: () => {
+      toast({ title: "Erro ao atualizar modelo", variant: "destructive" });
+    },
+  });
+
+  // Delete template mutation
+  const deleteTemplateMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/company/anamnesis-templates/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Erro ao excluir modelo');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/company/anamnesis-templates'] });
+      toast({ title: "Modelo excluído com sucesso" });
+    },
+    onError: () => {
+      toast({ title: "Erro ao excluir modelo", variant: "destructive" });
+    },
+  });
+
+  // Load template with fields for editing
+  const loadTemplateForEdit = async (templateId: number) => {
+    try {
+      const res = await fetch(`/api/company/anamnesis-templates/${templateId}`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setEditingTemplate(data);
+    } catch {
+      toast({ title: "Erro ao carregar modelo", variant: "destructive" });
+    }
+  };
+
+  const filteredClients = clients.filter((c) =>
+    c.name.toLowerCase().includes(clientSearch.toLowerCase()) ||
+    (c.phone && c.phone.includes(clientSearch))
+  );
+
+  // If no specialty is set, show specialty selector
+  if (!specialty) {
+    return (
+      <div className="p-6 max-w-2xl mx-auto">
+        <div className="text-center mb-8">
+          <HeartPulse className="h-12 w-12 mx-auto mb-4 text-primary" />
+          <h1 className="text-2xl font-bold mb-2">Módulo de Saúde</h1>
+          <p className="text-muted-foreground">
+            Selecione a especialidade da sua empresa para começar a usar o módulo de saúde.
+          </p>
+        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Qual é a especialidade da sua empresa?</CardTitle>
+            <CardDescription>Isso determinará os modelos de anamnese disponíveis.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {HEALTH_SPECIALTIES.map((spec) => (
+                <Button
+                  key={spec}
+                  variant="outline"
+                  className="h-auto py-4 flex-col gap-1"
+                  onClick={() => updateSpecialtyMutation.mutate(spec)}
+                  disabled={updateSpecialtyMutation.isPending}
+                >
+                  <span className="font-medium">{HEALTH_SPECIALTY_LABELS[spec]}</span>
+                </Button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <HeartPulse className="h-6 w-6" />
+            Saúde
+          </h1>
+          <p className="text-muted-foreground">
+            Especialidade: <Badge variant="secondary">{HEALTH_SPECIALTY_LABELS[specialty] || specialty}</Badge>
+            <Button
+              variant="link"
+              size="sm"
+              className="ml-2 text-xs"
+              onClick={() => {
+                const newSpec = prompt("Nova especialidade? (" + HEALTH_SPECIALTIES.join(", ") + ")");
+                if (newSpec && HEALTH_SPECIALTIES.includes(newSpec as any)) {
+                  updateSpecialtyMutation.mutate(newSpec);
+                }
+              }}
+            >
+              alterar
+            </Button>
+          </p>
+        </div>
+      </div>
+
+      <Tabs defaultValue="templates">
+        <TabsList>
+          <TabsTrigger value="templates" className="gap-1">
+            <FileText className="h-4 w-4" /> Modelos de Anamnese
+          </TabsTrigger>
+          <TabsTrigger value="pacientes" className="gap-1">
+            <Users className="h-4 w-4" /> Pacientes
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Templates Tab */}
+        <TabsContent value="templates" className="space-y-4">
+          <div className="flex justify-end">
+            <Button onClick={() => setShowTemplateBuilder(true)}>
+              <Plus className="h-4 w-4 mr-1" /> Novo modelo
+            </Button>
+          </div>
+
+          {templates.length === 0 ? (
+            <Card>
+              <CardContent className="py-8 text-center text-muted-foreground">
+                <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                Nenhum modelo de anamnese encontrado. Crie um modelo para começar.
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {templates.map((template) => (
+                <Card key={template.id}>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <CardTitle className="text-base">{template.name}</CardTitle>
+                        {template.description && (
+                          <CardDescription className="text-xs mt-1">{template.description}</CardDescription>
+                        )}
+                      </div>
+                      <Badge variant={template.companyId ? "default" : "outline"} className="text-xs">
+                        {template.companyId ? "Customizado" : "Padrão"}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <div className="flex gap-1 mt-2">
+                      {template.companyId && (
+                        <>
+                          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => loadTemplateForEdit(template.id)}>
+                            <Pencil className="h-3 w-3 mr-1" /> Editar
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500" onClick={() => deleteTemplateMutation.mutate(template.id)}>
+                            <Trash2 className="h-3 w-3 mr-1" /> Excluir
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* Patients Tab */}
+        <TabsContent value="pacientes" className="space-y-4">
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Buscar paciente por nome ou telefone..."
+              value={clientSearch}
+              onChange={(e) => setClientSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+
+          {filteredClients.length === 0 ? (
+            <Card>
+              <CardContent className="py-8 text-center text-muted-foreground">
+                <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                Nenhum paciente encontrado.
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filteredClients.map((client) => (
+                <Card key={client.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/company/saude/paciente/${client.id}`)}>
+                  <CardContent className="py-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium">{client.name}</p>
+                        {client.phone && <p className="text-xs text-muted-foreground">{client.phone}</p>}
+                      </div>
+                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {/* Template Builder Dialog - Create */}
+      <Dialog open={showTemplateBuilder} onOpenChange={setShowTemplateBuilder}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Novo Modelo de Anamnese</DialogTitle>
+          </DialogHeader>
+          <AnamnesisTemplateBuilder
+            onSave={(data) => createTemplateMutation.mutate(data)}
+            onCancel={() => setShowTemplateBuilder(false)}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* Template Builder Dialog - Edit */}
+      <Dialog open={!!editingTemplate} onOpenChange={(open) => !open && setEditingTemplate(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Editar Modelo de Anamnese</DialogTitle>
+          </DialogHeader>
+          {editingTemplate && (
+            <AnamnesisTemplateBuilder
+              initialName={editingTemplate.name}
+              initialDescription={editingTemplate.description || ""}
+              initialFields={editingTemplate.fields?.map((f: any) => ({
+                section: f.section || "",
+                label: f.label,
+                fieldType: f.fieldType,
+                options: f.options,
+                isRequired: f.isRequired,
+                sortOrder: f.sortOrder,
+                placeholder: f.placeholder || "",
+              }))}
+              onSave={(data) => updateTemplateMutation.mutate({ id: editingTemplate.id, data })}
+              onCancel={() => setEditingTemplate(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

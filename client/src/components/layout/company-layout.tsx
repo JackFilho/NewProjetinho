@@ -21,7 +21,8 @@ import {
   DollarSign,
   BarChart3,
   CreditCard,
-  HelpCircle
+  HelpCircle,
+  HeartPulse
 } from "lucide-react";
 import { useCompanyAuth } from "@/hooks/useCompanyAuth";
 import { useGlobalTheme } from "@/hooks/use-global-theme";
@@ -68,6 +69,12 @@ const menuItems = [
     href: "/company/clients",
     icon: Users,
     permission: "clients" as keyof PlanPermissions | null,
+  },
+  {
+    title: "Saúde",
+    href: "/company/saude",
+    icon: HeartPulse,
+    permission: null,
   },
   {
     title: "Avaliações",

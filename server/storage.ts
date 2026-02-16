@@ -72,6 +72,18 @@ import {
   type InsertReviewInvitation,
   type MessageCampaign,
   type InsertMessageCampaign,
+  anamnesisTemplates,
+  anamnesisTemplateFields,
+  anamnesisRecords,
+  clinicalEvolutions,
+  type AnamnesisTemplate,
+  type InsertAnamnesisTemplate,
+  type AnamnesisTemplateField,
+  type InsertAnamnesisTemplateField,
+  type AnamnesisRecord,
+  type InsertAnamnesisRecord,
+  type ClinicalEvolution,
+  type InsertClinicalEvolution,
 } from "@shared/schema";
 import { normalizePhone, validateBrazilianPhone, comparePhones } from "../shared/phone-utils";
 import { db, pool } from "./db";
@@ -321,6 +333,32 @@ export interface IStorage {
   getAffiliateReferrals(affiliateId: number): Promise<any[]>;
   getAffiliateCommissions(affiliateId: number): Promise<any[]>;
   createAffiliateReferral(referral: any): Promise<any>;
+
+  // Health module - Anamnesis templates
+  getAnamnesisTemplatesBySpecialty(specialty: string, companyId?: number): Promise<AnamnesisTemplate[]>;
+  getAnamnesisTemplate(id: number): Promise<AnamnesisTemplate | undefined>;
+  createAnamnesisTemplate(template: InsertAnamnesisTemplate): Promise<AnamnesisTemplate>;
+  updateAnamnesisTemplate(id: number, template: Partial<InsertAnamnesisTemplate>): Promise<AnamnesisTemplate>;
+  deleteAnamnesisTemplate(id: number): Promise<void>;
+
+  // Health module - Anamnesis template fields
+  getAnamnesisTemplateFields(templateId: number): Promise<AnamnesisTemplateField[]>;
+  createAnamnesisTemplateField(field: InsertAnamnesisTemplateField): Promise<AnamnesisTemplateField>;
+  deleteAnamnesisTemplateFieldsByTemplate(templateId: number): Promise<void>;
+
+  // Health module - Anamnesis records
+  getAnamnesisRecordsByClient(clientId: number, companyId: number): Promise<AnamnesisRecord[]>;
+  getAnamnesisRecord(id: number): Promise<AnamnesisRecord | undefined>;
+  createAnamnesisRecord(record: InsertAnamnesisRecord): Promise<AnamnesisRecord>;
+  updateAnamnesisRecord(id: number, record: Partial<InsertAnamnesisRecord>): Promise<AnamnesisRecord>;
+  deleteAnamnesisRecord(id: number): Promise<void>;
+
+  // Health module - Clinical evolutions
+  getClinicalEvolutionsByClient(clientId: number, companyId: number): Promise<ClinicalEvolution[]>;
+  getClinicalEvolution(id: number): Promise<ClinicalEvolution | undefined>;
+  createClinicalEvolution(evolution: InsertClinicalEvolution): Promise<ClinicalEvolution>;
+  updateClinicalEvolution(id: number, evolution: Partial<InsertClinicalEvolution>): Promise<ClinicalEvolution>;
+  deleteClinicalEvolution(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -3774,6 +3812,275 @@ Obrigado pela preferência! 🙏`;
         updated_at = NOW()
       WHERE id = ${companyId}
     `);
+  }
+
+  // ============================================================================
+  // MÓDULO DE SAÚDE - Anamnesis Templates
+  // ============================================================================
+
+  async getAnamnesisTemplatesBySpecialty(specialty: string, companyId?: number): Promise<AnamnesisTemplate[]> {
+    try {
+      if (companyId) {
+        return await db.select().from(anamnesisTemplates)
+          .where(
+            and(
+              eq(anamnesisTemplates.specialty, specialty),
+              eq(anamnesisTemplates.isActive, 1),
+              sql`(${anamnesisTemplates.companyId} = ${companyId} OR ${anamnesisTemplates.companyId} IS NULL)`
+            )
+          )
+          .orderBy(desc(anamnesisTemplates.companyId), anamnesisTemplates.name);
+      }
+      return await db.select().from(anamnesisTemplates)
+        .where(
+          and(
+            eq(anamnesisTemplates.specialty, specialty),
+            sql`${anamnesisTemplates.companyId} IS NULL`
+          )
+        )
+        .orderBy(anamnesisTemplates.name);
+    } catch (error: any) {
+      console.error("Error getting anamnesis templates:", error);
+      return [];
+    }
+  }
+
+  async getAnamnesisTemplate(id: number): Promise<AnamnesisTemplate | undefined> {
+    try {
+      const [template] = await db.select().from(anamnesisTemplates)
+        .where(eq(anamnesisTemplates.id, id));
+      return template;
+    } catch (error: any) {
+      console.error("Error getting anamnesis template:", error);
+      return undefined;
+    }
+  }
+
+  async createAnamnesisTemplate(templateData: InsertAnamnesisTemplate): Promise<AnamnesisTemplate> {
+    try {
+      await db.insert(anamnesisTemplates).values(templateData);
+      const [template] = await db.select().from(anamnesisTemplates)
+        .where(
+          and(
+            eq(anamnesisTemplates.name, templateData.name),
+            eq(anamnesisTemplates.specialty, templateData.specialty)
+          )
+        )
+        .orderBy(desc(anamnesisTemplates.id))
+        .limit(1);
+      return template;
+    } catch (error: any) {
+      console.error("Error creating anamnesis template:", error);
+      throw error;
+    }
+  }
+
+  async updateAnamnesisTemplate(id: number, templateData: Partial<InsertAnamnesisTemplate>): Promise<AnamnesisTemplate> {
+    try {
+      await db.update(anamnesisTemplates)
+        .set({ ...templateData, updatedAt: new Date() })
+        .where(eq(anamnesisTemplates.id, id));
+      const [template] = await db.select().from(anamnesisTemplates)
+        .where(eq(anamnesisTemplates.id, id));
+      return template;
+    } catch (error: any) {
+      console.error("Error updating anamnesis template:", error);
+      throw error;
+    }
+  }
+
+  async deleteAnamnesisTemplate(id: number): Promise<void> {
+    try {
+      await db.delete(anamnesisTemplates).where(eq(anamnesisTemplates.id, id));
+    } catch (error: any) {
+      console.error("Error deleting anamnesis template:", error);
+      throw error;
+    }
+  }
+
+  // ============================================================================
+  // MÓDULO DE SAÚDE - Anamnesis Template Fields
+  // ============================================================================
+
+  async getAnamnesisTemplateFields(templateId: number): Promise<AnamnesisTemplateField[]> {
+    try {
+      return await db.select().from(anamnesisTemplateFields)
+        .where(eq(anamnesisTemplateFields.templateId, templateId))
+        .orderBy(anamnesisTemplateFields.sortOrder);
+    } catch (error: any) {
+      console.error("Error getting anamnesis template fields:", error);
+      return [];
+    }
+  }
+
+  async createAnamnesisTemplateField(fieldData: InsertAnamnesisTemplateField): Promise<AnamnesisTemplateField> {
+    try {
+      await db.insert(anamnesisTemplateFields).values(fieldData);
+      const [field] = await db.select().from(anamnesisTemplateFields)
+        .where(eq(anamnesisTemplateFields.templateId, fieldData.templateId))
+        .orderBy(desc(anamnesisTemplateFields.id))
+        .limit(1);
+      return field;
+    } catch (error: any) {
+      console.error("Error creating anamnesis template field:", error);
+      throw error;
+    }
+  }
+
+  async deleteAnamnesisTemplateFieldsByTemplate(templateId: number): Promise<void> {
+    try {
+      await db.delete(anamnesisTemplateFields)
+        .where(eq(anamnesisTemplateFields.templateId, templateId));
+    } catch (error: any) {
+      console.error("Error deleting anamnesis template fields:", error);
+      throw error;
+    }
+  }
+
+  // ============================================================================
+  // MÓDULO DE SAÚDE - Anamnesis Records
+  // ============================================================================
+
+  async getAnamnesisRecordsByClient(clientId: number, companyId: number): Promise<AnamnesisRecord[]> {
+    try {
+      return await db.select().from(anamnesisRecords)
+        .where(
+          and(
+            eq(anamnesisRecords.clientId, clientId),
+            eq(anamnesisRecords.companyId, companyId)
+          )
+        )
+        .orderBy(desc(anamnesisRecords.createdAt));
+    } catch (error: any) {
+      console.error("Error getting anamnesis records:", error);
+      return [];
+    }
+  }
+
+  async getAnamnesisRecord(id: number): Promise<AnamnesisRecord | undefined> {
+    try {
+      const [record] = await db.select().from(anamnesisRecords)
+        .where(eq(anamnesisRecords.id, id));
+      return record;
+    } catch (error: any) {
+      console.error("Error getting anamnesis record:", error);
+      return undefined;
+    }
+  }
+
+  async createAnamnesisRecord(recordData: InsertAnamnesisRecord): Promise<AnamnesisRecord> {
+    try {
+      await db.insert(anamnesisRecords).values(recordData);
+      const [record] = await db.select().from(anamnesisRecords)
+        .where(
+          and(
+            eq(anamnesisRecords.clientId, recordData.clientId),
+            eq(anamnesisRecords.companyId, recordData.companyId)
+          )
+        )
+        .orderBy(desc(anamnesisRecords.id))
+        .limit(1);
+      return record;
+    } catch (error: any) {
+      console.error("Error creating anamnesis record:", error);
+      throw error;
+    }
+  }
+
+  async updateAnamnesisRecord(id: number, recordData: Partial<InsertAnamnesisRecord>): Promise<AnamnesisRecord> {
+    try {
+      await db.update(anamnesisRecords)
+        .set({ ...recordData, updatedAt: new Date() })
+        .where(eq(anamnesisRecords.id, id));
+      const [record] = await db.select().from(anamnesisRecords)
+        .where(eq(anamnesisRecords.id, id));
+      return record;
+    } catch (error: any) {
+      console.error("Error updating anamnesis record:", error);
+      throw error;
+    }
+  }
+
+  async deleteAnamnesisRecord(id: number): Promise<void> {
+    try {
+      await db.delete(anamnesisRecords).where(eq(anamnesisRecords.id, id));
+    } catch (error: any) {
+      console.error("Error deleting anamnesis record:", error);
+      throw error;
+    }
+  }
+
+  // ============================================================================
+  // MÓDULO DE SAÚDE - Clinical Evolutions
+  // ============================================================================
+
+  async getClinicalEvolutionsByClient(clientId: number, companyId: number): Promise<ClinicalEvolution[]> {
+    try {
+      return await db.select().from(clinicalEvolutions)
+        .where(
+          and(
+            eq(clinicalEvolutions.clientId, clientId),
+            eq(clinicalEvolutions.companyId, companyId)
+          )
+        )
+        .orderBy(desc(clinicalEvolutions.evolutionDate), desc(clinicalEvolutions.createdAt));
+    } catch (error: any) {
+      console.error("Error getting clinical evolutions:", error);
+      return [];
+    }
+  }
+
+  async getClinicalEvolution(id: number): Promise<ClinicalEvolution | undefined> {
+    try {
+      const [evolution] = await db.select().from(clinicalEvolutions)
+        .where(eq(clinicalEvolutions.id, id));
+      return evolution;
+    } catch (error: any) {
+      console.error("Error getting clinical evolution:", error);
+      return undefined;
+    }
+  }
+
+  async createClinicalEvolution(evolutionData: InsertClinicalEvolution): Promise<ClinicalEvolution> {
+    try {
+      await db.insert(clinicalEvolutions).values(evolutionData);
+      const [evolution] = await db.select().from(clinicalEvolutions)
+        .where(
+          and(
+            eq(clinicalEvolutions.clientId, evolutionData.clientId),
+            eq(clinicalEvolutions.companyId, evolutionData.companyId)
+          )
+        )
+        .orderBy(desc(clinicalEvolutions.id))
+        .limit(1);
+      return evolution;
+    } catch (error: any) {
+      console.error("Error creating clinical evolution:", error);
+      throw error;
+    }
+  }
+
+  async updateClinicalEvolution(id: number, evolutionData: Partial<InsertClinicalEvolution>): Promise<ClinicalEvolution> {
+    try {
+      await db.update(clinicalEvolutions)
+        .set({ ...evolutionData, updatedAt: new Date() })
+        .where(eq(clinicalEvolutions.id, id));
+      const [evolution] = await db.select().from(clinicalEvolutions)
+        .where(eq(clinicalEvolutions.id, id));
+      return evolution;
+    } catch (error: any) {
+      console.error("Error updating clinical evolution:", error);
+      throw error;
+    }
+  }
+
+  async deleteClinicalEvolution(id: number): Promise<void> {
+    try {
+      await db.delete(clinicalEvolutions).where(eq(clinicalEvolutions.id, id));
+    } catch (error: any) {
+      console.error("Error deleting clinical evolution:", error);
+      throw error;
+    }
   }
 }
 
