@@ -4,14 +4,13 @@ import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { HeartPulse, FileText, Users, Plus, Pencil, Trash2, Search, Eye } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useGlobalTheme } from "@/hooks/use-global-theme";
-import { HEALTH_SPECIALTIES, HEALTH_SPECIALTY_LABELS } from "@shared/schema";
+import { HEALTH_SPECIALTY_LABELS } from "@shared/schema";
 import type { AnamnesisTemplate, Client } from "@shared/schema";
 import { AnamnesisTemplateBuilder } from "@/components/health/anamnesis-template-builder";
 
@@ -40,27 +39,6 @@ export default function CompanyHealth() {
   // Fetch clients
   const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ['/api/company/clients'],
-  });
-
-  // Update specialty mutation
-  const updateSpecialtyMutation = useMutation({
-    mutationFn: async (healthSpecialty: string) => {
-      const res = await fetch('/api/company/health-specialty', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ healthSpecialty }),
-      });
-      if (!res.ok) throw new Error('Erro ao atualizar especialidade');
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/company/health-specialty'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/company/anamnesis-templates'] });
-      toast({ title: "Especialidade atualizada com sucesso" });
-    },
-    onError: () => {
-      toast({ title: "Erro ao atualizar especialidade", variant: "destructive" });
-    },
   });
 
   // Create template mutation
@@ -138,38 +116,17 @@ export default function CompanyHealth() {
     (c.phone && c.phone.includes(clientSearch))
   );
 
-  // If no specialty is set, show specialty selector
+  // If no specialty is set, show message to contact admin
   if (!specialty) {
     return (
       <div className="p-6 max-w-2xl mx-auto">
         <div className="text-center mb-8">
-          <HeartPulse className="h-12 w-12 mx-auto mb-4 text-primary" />
-          <h1 className="text-2xl font-bold mb-2">Módulo de Saúde</h1>
+          <HeartPulse className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+          <h1 className="text-2xl font-bold mb-2">Modulo de Saude</h1>
           <p className="text-muted-foreground">
-            Selecione a especialidade da sua empresa para começar a usar o módulo de saúde.
+            Especialidade nao configurada. Entre em contato com o administrador para ativar o modulo de saude.
           </p>
         </div>
-        <Card>
-          <CardHeader>
-            <CardTitle>Qual é a especialidade da sua empresa?</CardTitle>
-            <CardDescription>Isso determinará os modelos de anamnese disponíveis.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {HEALTH_SPECIALTIES.map((spec) => (
-                <Button
-                  key={spec}
-                  variant="outline"
-                  className="h-auto py-4 flex-col gap-1"
-                  onClick={() => updateSpecialtyMutation.mutate(spec)}
-                  disabled={updateSpecialtyMutation.isPending}
-                >
-                  <span className="font-medium">{HEALTH_SPECIALTY_LABELS[spec]}</span>
-                </Button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
       </div>
     );
   }
@@ -185,19 +142,6 @@ export default function CompanyHealth() {
           </h1>
           <p className="text-muted-foreground">
             Especialidade: <Badge variant="secondary">{HEALTH_SPECIALTY_LABELS[specialty] || specialty}</Badge>
-            <Button
-              variant="link"
-              size="sm"
-              className="ml-2 text-xs"
-              onClick={() => {
-                const newSpec = prompt("Nova especialidade? (" + HEALTH_SPECIALTIES.join(", ") + ")");
-                if (newSpec && HEALTH_SPECIALTIES.includes(newSpec as any)) {
-                  updateSpecialtyMutation.mutate(newSpec);
-                }
-              }}
-            >
-              alterar
-            </Button>
           </p>
         </div>
       </div>

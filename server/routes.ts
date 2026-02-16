@@ -34,7 +34,6 @@ import {
   createSupportTicketSchema,
   createWhatsAppInstanceSchema,
   createSubscriptionSchema,
-  updateHealthSpecialtySchema,
   createAnamnesisTemplateSchema,
   updateAnamnesisTemplateSchema,
   createAnamnesisRecordSchema,
@@ -4188,7 +4187,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         subscriptionStatus: company.subscription_status,
         trialExpiresAt: company.trial_expires_at,
         planId: company.plan_id,
-        financialPasswordEnabled: company.financial_password_enabled
+        financialPasswordEnabled: company.financial_password_enabled,
+        healthSpecialty: company.health_specialty
       }));
 
       res.json(formattedCompanies);
@@ -19834,18 +19834,6 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     } catch (error: any) {
       console.error("Error getting health specialty:", error);
       res.status(500).json({ message: "Erro ao buscar especialidade" });
-    }
-  });
-
-  app.put('/api/company/health-specialty', isCompanyAuthenticated, validateBody(updateHealthSpecialtySchema), async (req: any, res) => {
-    try {
-      const companyId = req.session.companyId;
-      const { healthSpecialty } = req.body;
-      await storage.updateCompany(companyId, { healthSpecialty });
-      res.json({ message: "Especialidade atualizada com sucesso", healthSpecialty });
-    } catch (error: any) {
-      console.error("Error updating health specialty:", error);
-      res.status(500).json({ message: "Erro ao atualizar especialidade" });
     }
   });
 

@@ -93,8 +93,8 @@ export function EvolutionForm({
                 <FormItem>
                   <FormLabel>Profissional</FormLabel>
                   <Select
-                    value={field.value ? String(field.value) : ""}
-                    onValueChange={(val) => field.onChange(val ? Number(val) : null)}
+                    value={field.value ? String(field.value) : undefined}
+                    onValueChange={(val) => field.onChange(val === "none" ? null : Number(val))}
                   >
                     <FormControl>
                       <SelectTrigger>
@@ -102,6 +102,7 @@ export function EvolutionForm({
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
+                      <SelectItem value="none">Nenhum</SelectItem>
                       {professionals.map((prof) => (
                         <SelectItem key={prof.id} value={String(prof.id)}>{prof.name}</SelectItem>
                       ))}
@@ -120,8 +121,8 @@ export function EvolutionForm({
                   <FormItem>
                     <FormLabel>Vincular a agendamento (opcional)</FormLabel>
                     <Select
-                      value={field.value ? String(field.value) : ""}
-                      onValueChange={(val) => field.onChange(val ? Number(val) : null)}
+                      value={field.value ? String(field.value) : undefined}
+                      onValueChange={(val) => field.onChange(val === "none" ? null : Number(val))}
                     >
                       <FormControl>
                         <SelectTrigger>
@@ -129,10 +130,10 @@ export function EvolutionForm({
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="">Nenhum</SelectItem>
+                        <SelectItem value="none">Nenhum</SelectItem>
                         {appointments.map((apt) => (
                           <SelectItem key={apt.id} value={String(apt.id)}>
-                            {apt.appointmentDate} {apt.appointmentTime} - {apt.status}
+                            {apt.appointmentDate} {apt.appointmentTime} - {apt.statusName || apt.status || "Pendente"}
                           </SelectItem>
                         ))}
                       </SelectContent>

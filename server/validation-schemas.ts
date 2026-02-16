@@ -314,7 +314,6 @@ export const updateAnamnesisTemplateSchema = z.object({
 });
 
 export const createAnamnesisRecordSchema = z.object({
-  clientId: idSchema,
   templateId: idSchema,
   answers: z.record(z.string(), z.any()),
   filledBy: z.coerce.number().int().positive().optional().nullable(),
@@ -327,7 +326,6 @@ export const updateAnamnesisRecordSchema = z.object({
 });
 
 export const createClinicalEvolutionSchema = z.object({
-  clientId: idSchema,
   professionalId: z.coerce.number().int().positive().optional().nullable(),
   appointmentId: z.coerce.number().int().positive().optional().nullable(),
   title: z.string().max(255).optional().nullable(),

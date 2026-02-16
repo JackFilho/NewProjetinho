@@ -18,6 +18,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { companySchema, companyProfileSchema, companyEditSchema } from "@/lib/validations";
 import { formatDocument } from "@/lib/validations";
 import type { Company, Plan } from "@shared/schema";
+import { HEALTH_SPECIALTIES, HEALTH_SPECIALTY_LABELS } from "@shared/schema";
 import { z } from "zod";
 import { FloatingHelpButton } from "@/components/floating-help-button";
 
@@ -59,6 +60,7 @@ export default function Companies() {
       isActive: true,
       tourEnabled: true,
       financialPasswordEnabled: false,
+      healthSpecialty: null,
     },
   });
 
@@ -80,6 +82,7 @@ export default function Companies() {
       tourEnabled: true,
       financialPasswordEnabled: false,
       password: "", // Adicionar password com valor vazio
+      healthSpecialty: null,
     },
   });
 
@@ -253,6 +256,7 @@ export default function Companies() {
       tourEnabled: Boolean(company.tourEnabled ?? company.tour_enabled ?? true),
       financialPasswordEnabled: Boolean(company.financialPasswordEnabled || company.financial_password_enabled),
       password: "", // Sempre iniciar com string vazia
+      healthSpecialty: company.healthSpecialty || company.health_specialty || null,
     });
     setIsModalOpen(true);
   };
@@ -502,6 +506,26 @@ export default function Companies() {
                 )}
               </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="healthSpecialty">Especialidade de Saúde</Label>
+                <Select
+                  value={editForm.watch("healthSpecialty") || "none"}
+                  onValueChange={(value) => editForm.setValue("healthSpecialty", value === "none" ? null : value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione uma especialidade" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Nenhuma especialidade</SelectItem>
+                    {HEALTH_SPECIALTIES.map((spec) => (
+                      <SelectItem key={spec} value={spec}>
+                        {HEALTH_SPECIALTY_LABELS[spec]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="space-y-4">
                 <div className="flex items-center space-x-2">
                   <Switch
@@ -733,6 +757,26 @@ export default function Companies() {
                     {form.formState.errors.planId.message}
                   </p>
                 )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="healthSpecialtyCreate">Especialidade de Saúde</Label>
+                <Select
+                  value={form.watch("healthSpecialty") || "none"}
+                  onValueChange={(value) => form.setValue("healthSpecialty", value === "none" ? null : value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione uma especialidade" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Nenhuma especialidade</SelectItem>
+                    {HEALTH_SPECIALTIES.map((spec) => (
+                      <SelectItem key={spec} value={spec}>
+                        {HEALTH_SPECIALTY_LABELS[spec]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="flex items-center space-x-2">

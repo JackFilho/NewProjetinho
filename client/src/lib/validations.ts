@@ -75,6 +75,7 @@ export const companyProfileSchema = z.object({
   tourEnabled: z.boolean().optional(),
   financialPasswordEnabled: z.boolean().optional(),
   password: z.string().optional(),
+  healthSpecialty: z.string().nullable().optional(),
 });
 
 // Schema específico para edição de empresa (sem validação de senha)
@@ -94,6 +95,7 @@ export const companyEditSchema = z.object({
   tourEnabled: z.boolean().optional(),
   financialPasswordEnabled: z.boolean().optional(),
   password: z.string().optional(),
+  healthSpecialty: z.string().nullable().optional(),
 });
 
 export const companyPasswordSchema = z.object({
@@ -164,6 +166,7 @@ export const companySchema = z.object({
   isActive: z.boolean().default(true),
   tourEnabled: z.boolean().default(true),
   financialPasswordEnabled: z.boolean().default(false),
+  healthSpecialty: z.string().nullable().optional(),
 });
 
 export const planSchema = z.object({

@@ -469,6 +469,7 @@ export class DatabaseStorage implements IStorage {
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      healthSpecialty: companies.healthSpecialty,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).orderBy(desc(companies.createdAt));
@@ -527,6 +528,7 @@ export class DatabaseStorage implements IStorage {
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      healthSpecialty: companies.healthSpecialty,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.id, id));
@@ -575,6 +577,7 @@ export class DatabaseStorage implements IStorage {
         asaasApiKey: companies.asaasApiKey,
         asaasEnvironment: companies.asaasEnvironment,
         asaasEnabled: companies.asaasEnabled,
+        healthSpecialty: companies.healthSpecialty,
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
       }).from(companies).where(eq(companies.email, email));
@@ -628,6 +631,7 @@ export class DatabaseStorage implements IStorage {
         asaasApiKey: companies.asaasApiKey,
         asaasEnvironment: companies.asaasEnvironment,
         asaasEnabled: companies.asaasEnabled,
+        healthSpecialty: companies.healthSpecialty,
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
       }).from(companies).where(eq(companies.resetToken, token));
@@ -696,6 +700,7 @@ export class DatabaseStorage implements IStorage {
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      healthSpecialty: companies.healthSpecialty,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.email, companyData.email));
@@ -790,6 +795,7 @@ export class DatabaseStorage implements IStorage {
         asaasApiKey: companies.asaasApiKey,
         asaasEnvironment: companies.asaasEnvironment,
         asaasEnabled: companies.asaasEnabled,
+        healthSpecialty: companies.healthSpecialty,
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
       }).from(companies).where(eq(companies.id, id));
@@ -3488,6 +3494,7 @@ Obrigado pela preferência! 🙏`;
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      healthSpecialty: companies.healthSpecialty,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies);
@@ -3774,6 +3781,7 @@ Obrigado pela preferência! 🙏`;
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      healthSpecialty: companies.healthSpecialty,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.id, companyId));
@@ -3904,9 +3912,14 @@ Obrigado pela preferência! 🙏`;
 
   async getAnamnesisTemplateFields(templateId: number): Promise<AnamnesisTemplateField[]> {
     try {
-      return await db.select().from(anamnesisTemplateFields)
+      const fields = await db.select().from(anamnesisTemplateFields)
         .where(eq(anamnesisTemplateFields.templateId, templateId))
         .orderBy(anamnesisTemplateFields.sortOrder);
+      // mysql2 3.x retorna colunas JSON como string - parse defensivo
+      return fields.map(f => ({
+        ...f,
+        options: typeof f.options === 'string' ? JSON.parse(f.options) : f.options,
+      }));
     } catch (error: any) {
       console.error("Error getting anamnesis template fields:", error);
       return [];
@@ -3920,7 +3933,11 @@ Obrigado pela preferência! 🙏`;
         .where(eq(anamnesisTemplateFields.templateId, fieldData.templateId))
         .orderBy(desc(anamnesisTemplateFields.id))
         .limit(1);
-      return field;
+      // mysql2 3.x retorna colunas JSON como string - parse defensivo
+      return {
+        ...field,
+        options: typeof field.options === 'string' ? JSON.parse(field.options) : field.options,
+      };
     } catch (error: any) {
       console.error("Error creating anamnesis template field:", error);
       throw error;
@@ -3943,7 +3960,7 @@ Obrigado pela preferência! 🙏`;
 
   async getAnamnesisRecordsByClient(clientId: number, companyId: number): Promise<AnamnesisRecord[]> {
     try {
-      return await db.select().from(anamnesisRecords)
+      const records = await db.select().from(anamnesisRecords)
         .where(
           and(
             eq(anamnesisRecords.clientId, clientId),
@@ -3951,6 +3968,11 @@ Obrigado pela preferência! 🙏`;
           )
         )
         .orderBy(desc(anamnesisRecords.createdAt));
+      // mysql2 3.x retorna colunas JSON como string - parse defensivo
+      return records.map(r => ({
+        ...r,
+        answers: typeof r.answers === 'string' ? JSON.parse(r.answers) : r.answers,
+      }));
     } catch (error: any) {
       console.error("Error getting anamnesis records:", error);
       return [];
@@ -3961,7 +3983,12 @@ Obrigado pela preferência! 🙏`;
     try {
       const [record] = await db.select().from(anamnesisRecords)
         .where(eq(anamnesisRecords.id, id));
-      return record;
+      if (!record) return undefined;
+      // mysql2 3.x retorna colunas JSON como string - parse defensivo
+      return {
+        ...record,
+        answers: typeof record.answers === 'string' ? JSON.parse(record.answers) : record.answers,
+      };
     } catch (error: any) {
       console.error("Error getting anamnesis record:", error);
       return undefined;
@@ -3980,7 +4007,11 @@ Obrigado pela preferência! 🙏`;
         )
         .orderBy(desc(anamnesisRecords.id))
         .limit(1);
-      return record;
+      // mysql2 3.x retorna colunas JSON como string - parse defensivo
+      return {
+        ...record,
+        answers: typeof record.answers === 'string' ? JSON.parse(record.answers) : record.answers,
+      };
     } catch (error: any) {
       console.error("Error creating anamnesis record:", error);
       throw error;
@@ -3994,7 +4025,11 @@ Obrigado pela preferência! 🙏`;
         .where(eq(anamnesisRecords.id, id));
       const [record] = await db.select().from(anamnesisRecords)
         .where(eq(anamnesisRecords.id, id));
-      return record;
+      // mysql2 3.x retorna colunas JSON como string - parse defensivo
+      return {
+        ...record,
+        answers: typeof record.answers === 'string' ? JSON.parse(record.answers) : record.answers,
+      };
     } catch (error: any) {
       console.error("Error updating anamnesis record:", error);
       throw error;
