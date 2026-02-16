@@ -154,6 +154,9 @@ export const createClientSchema = z.object({
   phone: phoneSchema,
   email: z.string().email().max(255).optional().nullable().or(z.literal("")),
   birthDate: z.string().max(20).optional().nullable().or(z.literal("")),
+  sex: z.enum(["masculino", "feminino", "outro"]).optional().nullable(),
+  guardian: z.string().max(255).optional().nullable().or(z.literal("")),
+  occupation: z.string().max(255).optional().nullable().or(z.literal("")),
   notes: z.string().max(5000).optional().nullable().or(z.literal("")),
 });
 

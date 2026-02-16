@@ -14,7 +14,8 @@ interface EvolutionTimelineProps {
 
 function formatDateBR(dateVal: string | Date | null): string {
   if (!dateVal) return "";
-  const dateStr = typeof dateVal === "string" ? dateVal : dateVal.toISOString().split("T")[0];
+  const raw = typeof dateVal === "string" ? dateVal : dateVal.toISOString();
+  const dateStr = raw.includes("T") ? raw.split("T")[0] : raw;
   const parts = dateStr.split("-");
   if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
   return dateStr;

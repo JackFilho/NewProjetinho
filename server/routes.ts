@@ -13392,6 +13392,9 @@ Obrigado pela preferência! 🙏`;
         email: req.body.email === '' ? null : req.body.email,
         phone: req.body.phone === '' ? null : req.body.phone,
         birthDate: req.body.birthDate === '' ? null : (req.body.birthDate ? new Date(req.body.birthDate + 'T12:00:00') : null),
+        sex: req.body.sex === '' ? null : req.body.sex,
+        guardian: req.body.guardian === '' ? null : req.body.guardian,
+        occupation: req.body.occupation === '' ? null : req.body.occupation,
         notes: req.body.notes === '' ? null : req.body.notes,
       };
 
@@ -13424,6 +13427,9 @@ Obrigado pela preferência! 🙏`;
         email: req.body.email === '' ? null : req.body.email,
         phone: req.body.phone === '' ? null : req.body.phone,
         birthDate: req.body.birthDate === '' ? null : (req.body.birthDate ? new Date(req.body.birthDate + 'T12:00:00') : null),
+        sex: req.body.sex === '' ? null : req.body.sex,
+        guardian: req.body.guardian === '' ? null : req.body.guardian,
+        occupation: req.body.occupation === '' ? null : req.body.occupation,
         notes: req.body.notes === '' ? null : req.body.notes,
       };
 
@@ -18552,6 +18558,9 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         companyId,
         email: req.body.email === '' ? null : req.body.email,
         phone: req.body.phone === '' ? null : req.body.phone,
+        sex: req.body.sex === '' ? null : req.body.sex,
+        guardian: req.body.guardian === '' ? null : req.body.guardian,
+        occupation: req.body.occupation === '' ? null : req.body.occupation,
       };
 
       const client = await storage.createClient(clientData);

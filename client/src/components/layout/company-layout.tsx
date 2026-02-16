@@ -65,7 +65,7 @@ const menuItems = [
     permission: "professionals" as keyof PlanPermissions | null,
   },
   {
-    title: "Clientes",
+    title: "Pacientes",
     href: "/company/clients",
     icon: Users,
     permission: "clients" as keyof PlanPermissions | null,

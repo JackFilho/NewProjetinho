@@ -146,13 +146,13 @@ export default function CompanyHealth() {
         </div>
       </div>
 
-      <Tabs defaultValue="templates">
+      <Tabs defaultValue="pacientes">
         <TabsList>
-          <TabsTrigger value="templates" className="gap-1">
-            <FileText className="h-4 w-4" /> Modelos de Anamnese
-          </TabsTrigger>
           <TabsTrigger value="pacientes" className="gap-1">
             <Users className="h-4 w-4" /> Pacientes
+          </TabsTrigger>
+          <TabsTrigger value="templates" className="gap-1">
+            <FileText className="h-4 w-4" /> Modelos de Anamnese
           </TabsTrigger>
         </TabsList>
 

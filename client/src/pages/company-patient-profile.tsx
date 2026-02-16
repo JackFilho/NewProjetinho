@@ -24,7 +24,8 @@ interface HealthProfile {
 
 function formatDateBR(dateVal: string | Date | null): string {
   if (!dateVal) return "";
-  const dateStr = typeof dateVal === "string" ? dateVal : dateVal.toISOString().split("T")[0];
+  const raw = typeof dateVal === "string" ? dateVal : dateVal.toISOString();
+  const dateStr = raw.includes("T") ? raw.split("T")[0] : raw;
   const parts = dateStr.split("-");
   if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
   return dateStr;
@@ -392,6 +393,7 @@ export default function CompanyPatientProfile() {
           {selectedTemplate?.fields && (
             <AnamnesisForm
               templateFields={selectedTemplate.fields}
+              patient={client}
               onSubmit={(answers, notes) => {
                 createAnamnesisMutation.mutate({
                   templateId: selectedTemplateId,
@@ -416,6 +418,7 @@ export default function CompanyPatientProfile() {
               existingAnswers={viewingAnamnesis.answers as Record<string, any>}
               notes={viewingAnamnesis.notes || ""}
               isReadOnly
+              patient={client}
               onSubmit={() => {}}
             />
           )}

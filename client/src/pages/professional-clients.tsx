@@ -23,6 +23,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Professional {
   id: number;
@@ -37,6 +44,9 @@ interface Client {
   phone: string | null;
   email: string | null;
   birthDate: string | null;
+  sex: string | null;
+  guardian: string | null;
+  occupation: string | null;
   companyId: number;
 }
 
@@ -57,12 +67,18 @@ export default function ProfessionalClients() {
     name: "",
     phone: "",
     birthDate: "",
+    sex: "",
+    guardian: "",
+    occupation: "",
   });
 
   const [editForm, setEditForm] = useState({
     name: "",
     phone: "",
     birthDate: "",
+    sex: "",
+    guardian: "",
+    occupation: "",
   });
 
   // Check authentication
@@ -113,7 +129,7 @@ export default function ProfessionalClients() {
         description: "O cliente foi cadastrado com sucesso.",
       });
       setAddClientOpen(false);
-      setNewClient({ name: "", phone: "", birthDate: "" });
+      setNewClient({ name: "", phone: "", birthDate: "", sex: "", guardian: "", occupation: "" });
     },
     onError: () => {
       toast({
@@ -176,6 +192,9 @@ export default function ProfessionalClients() {
       name: client.name,
       phone: client.phone || "",
       birthDate: client.birthDate || "",
+      sex: client.sex || "",
+      guardian: client.guardian || "",
+      occupation: client.occupation || "",
     });
     setEditClientOpen(true);
   };
@@ -235,7 +254,7 @@ export default function ProfessionalClients() {
         <div className="flex items-center justify-between px-4 h-14" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
           <h1 className="text-lg font-semibold flex items-center gap-2">
             <Users className="w-6 h-6" />
-            Clientes
+            Pacientes
           </h1>
           <Button
             onClick={() => setAddClientOpen(true)}
@@ -378,7 +397,7 @@ export default function ProfessionalClients() {
 
           <button className="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] py-2 px-3 transition-colors rounded-lg text-primary">
             <Users className="w-6 h-6 mb-1" />
-            <span className="text-xs">Clientes</span>
+            <span className="text-xs">Pacientes</span>
           </button>
         </div>
       </div>
@@ -419,13 +438,47 @@ export default function ProfessionalClients() {
                 onChange={(e) => setNewClient({ ...newClient, birthDate: e.target.value })}
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="clientSex">Sexo</Label>
+              <Select
+                value={newClient.sex}
+                onValueChange={(val) => setNewClient({ ...newClient, sex: val })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="masculino">Masculino</SelectItem>
+                  <SelectItem value="feminino">Feminino</SelectItem>
+                  <SelectItem value="outro">Outro</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="clientGuardian">Responsável</Label>
+              <Input
+                id="clientGuardian"
+                value={newClient.guardian}
+                onChange={(e) => setNewClient({ ...newClient, guardian: e.target.value })}
+                placeholder="Nome do responsável (se menor)"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="clientOccupation">Ocupação</Label>
+              <Input
+                id="clientOccupation"
+                value={newClient.occupation}
+                onChange={(e) => setNewClient({ ...newClient, occupation: e.target.value })}
+                placeholder="Ex: Estudante, Engenheiro, Aposentado..."
+              />
+            </div>
           </div>
           <DialogFooter className="flex gap-2">
             <Button
               variant="outline"
               onClick={() => {
                 setAddClientOpen(false);
-                setNewClient({ name: "", phone: "", birthDate: "" });
+                setNewClient({ name: "", phone: "", birthDate: "", sex: "", guardian: "", occupation: "" });
               }}
               className="flex-1"
             >
@@ -476,6 +529,40 @@ export default function ProfessionalClients() {
                 type="date"
                 value={editForm.birthDate}
                 onChange={(e) => setEditForm({ ...editForm, birthDate: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="editClientSex">Sexo</Label>
+              <Select
+                value={editForm.sex}
+                onValueChange={(val) => setEditForm({ ...editForm, sex: val })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="masculino">Masculino</SelectItem>
+                  <SelectItem value="feminino">Feminino</SelectItem>
+                  <SelectItem value="outro">Outro</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="editClientGuardian">Responsável</Label>
+              <Input
+                id="editClientGuardian"
+                value={editForm.guardian}
+                onChange={(e) => setEditForm({ ...editForm, guardian: e.target.value })}
+                placeholder="Nome do responsável (se menor)"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="editClientOccupation">Ocupação</Label>
+              <Input
+                id="editClientOccupation"
+                value={editForm.occupation}
+                onChange={(e) => setEditForm({ ...editForm, occupation: e.target.value })}
+                placeholder="Ex: Estudante, Engenheiro, Aposentado..."
               />
             </div>
           </div>

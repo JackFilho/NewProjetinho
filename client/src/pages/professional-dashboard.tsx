@@ -1258,7 +1258,7 @@ export default function ProfessionalDashboard() {
             onClick={() => setLocation('/profissional/clientes')}
           >
             <User className="w-6 h-6 mb-1" />
-            <span className="text-xs">Clientes</span>
+            <span className="text-xs">Pacientes</span>
           </button>
         </div>
       </div>

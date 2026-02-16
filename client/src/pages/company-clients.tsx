@@ -25,6 +25,9 @@ interface Client {
   email?: string;
   phone?: string;
   birthDate?: string;
+  sex?: string;
+  guardian?: string;
+  occupation?: string;
   notes?: string;
   createdAt: string;
   updatedAt: string;
@@ -48,6 +51,9 @@ const clientSchema = z.object({
     return validateBrazilianPhone(phone);
   }, "Telefone deve estar no formato brasileiro: (XX) XXXXX-XXXX"),
   birthDate: z.string().optional(),
+  sex: z.string().optional(),
+  guardian: z.string().optional(),
+  occupation: z.string().optional(),
   notes: z.string().optional(),
 });
 
@@ -640,6 +646,9 @@ export default function CompanyClients() {
       email: "",
       phone: "",
       birthDate: "",
+      sex: "",
+      guardian: "",
+      occupation: "",
       notes: "",
     },
   });
@@ -767,6 +776,9 @@ export default function CompanyClients() {
       email: client.email || "",
       phone: client.phone || "",
       birthDate: formattedBirthDate,
+      sex: client.sex || "",
+      guardian: client.guardian || "",
+      occupation: client.occupation || "",
       notes: client.notes || "",
     });
     setIsDialogOpen(true);
@@ -976,6 +988,51 @@ export default function CompanyClients() {
                         type="date"
                         className="col-span-3"
                         {...form.register('birthDate')}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-4 items-center gap-4">
+                      <Label htmlFor="sex" className="text-right">
+                        Sexo
+                      </Label>
+                      <div className="col-span-3">
+                        <Select
+                          value={form.watch("sex") || ""}
+                          onValueChange={(val) => form.setValue("sex", val)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="masculino">Masculino</SelectItem>
+                            <SelectItem value="feminino">Feminino</SelectItem>
+                            <SelectItem value="outro">Outro</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-4 items-center gap-4">
+                      <Label htmlFor="guardian" className="text-right">
+                        Responsável
+                      </Label>
+                      <Input
+                        id="guardian"
+                        className="col-span-3"
+                        placeholder="Nome do responsável (se menor)"
+                        {...form.register('guardian')}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-4 items-center gap-4">
+                      <Label htmlFor="occupation" className="text-right">
+                        Ocupação
+                      </Label>
+                      <Input
+                        id="occupation"
+                        className="col-span-3"
+                        placeholder="Ex: Estudante, Engenheiro, Aposentado..."
+                        {...form.register('occupation')}
                       />
                     </div>
                   </div>

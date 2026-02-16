@@ -7,7 +7,9 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { AnamnesisTemplateField } from "@shared/schema";
+import { Badge } from "@/components/ui/badge";
+import { User, Phone, Mail, Cake, ShieldCheck, Briefcase } from "lucide-react";
+import type { AnamnesisTemplateField, Client } from "@shared/schema";
 
 interface AnamnesisFormProps {
   templateFields: AnamnesisTemplateField[];
@@ -15,9 +17,40 @@ interface AnamnesisFormProps {
   onSubmit: (answers: Record<string, any>, notes?: string) => void;
   isReadOnly?: boolean;
   notes?: string;
+  patient?: Client;
 }
 
-export function AnamnesisForm({ templateFields, existingAnswers, onSubmit, isReadOnly = false, notes: initialNotes }: AnamnesisFormProps) {
+function formatDateBR(dateVal: string | Date | null): string {
+  if (!dateVal) return "";
+  const raw = typeof dateVal === "string" ? dateVal : dateVal.toISOString();
+  const dateStr = raw.includes("T") ? raw.split("T")[0] : raw;
+  const parts = dateStr.split("-");
+  if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  return dateStr;
+}
+
+function calculateAge(birthDate: string | Date | null): number | null {
+  if (!birthDate) return null;
+  const raw = typeof birthDate === "string" ? birthDate : birthDate.toISOString();
+  const dateStr = raw.includes("T") ? raw.split("T")[0] : raw;
+  const [year, month, day] = dateStr.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const today = new Date();
+  let age = today.getFullYear() - year;
+  const monthDiff = today.getMonth() + 1 - month;
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < day)) {
+    age--;
+  }
+  return age;
+}
+
+const SEX_LABELS: Record<string, string> = {
+  masculino: "Masculino",
+  feminino: "Feminino",
+  outro: "Outro",
+};
+
+export function AnamnesisForm({ templateFields, existingAnswers, onSubmit, isReadOnly = false, notes: initialNotes, patient }: AnamnesisFormProps) {
   const [answers, setAnswers] = useState<Record<string, any>>(existingAnswers || {});
   const [notes, setNotes] = useState(initialNotes || "");
 
@@ -143,6 +176,79 @@ export function AnamnesisForm({ templateFields, existingAnswers, onSubmit, isRea
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Identificação do Paciente */}
+      {patient && (
+        <Card className="border-primary/20 bg-primary/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <User className="h-4 w-4" />
+              Identificação do Paciente
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-muted-foreground">Nome:</span>
+                <span className="font-semibold">{patient.name}</span>
+              </div>
+
+              {patient.birthDate && (
+                <div className="flex items-center gap-2">
+                  <Cake className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="font-medium text-muted-foreground">Nascimento:</span>
+                  <span>{formatDateBR(patient.birthDate)}</span>
+                  {calculateAge(patient.birthDate) !== null && (
+                    <Badge variant="outline" className="text-xs">
+                      {calculateAge(patient.birthDate)} anos
+                    </Badge>
+                  )}
+                </div>
+              )}
+
+              {patient.sex && (
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-muted-foreground">Sexo:</span>
+                  <span>{SEX_LABELS[patient.sex] || patient.sex}</span>
+                </div>
+              )}
+
+              {(patient.phone || patient.email) && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {patient.phone && (
+                    <span className="flex items-center gap-1">
+                      <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+                      {patient.phone}
+                    </span>
+                  )}
+                  {patient.email && (
+                    <span className="flex items-center gap-1 ml-2">
+                      <Mail className="h-3.5 w-3.5 text-muted-foreground" />
+                      {patient.email}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {patient.occupation && (
+                <div className="flex items-center gap-2">
+                  <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="font-medium text-muted-foreground">Ocupação:</span>
+                  <span>{patient.occupation}</span>
+                </div>
+              )}
+
+              {patient.guardian && (
+                <div className="flex items-center gap-2 sm:col-span-2">
+                  <ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="font-medium text-muted-foreground">Responsável:</span>
+                  <span>{patient.guardian}</span>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {Object.entries(sections).map(([sectionName, fields]) => (
         <Card key={sectionName}>
           <CardHeader className="pb-3">
