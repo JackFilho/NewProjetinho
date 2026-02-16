@@ -1088,7 +1088,8 @@ export class DatabaseStorage implements IStorage {
     try {
       return await db.select().from(conversations)
         .where(eq(conversations.companyId, companyId))
-        .orderBy(desc(conversations.lastMessageAt));
+        .orderBy(desc(conversations.lastMessageAt))
+        .limit(500);
     } catch (error: any) {
       console.error("Error getting conversations by company:", error);
       return [];
@@ -1696,7 +1697,55 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(professionals, eq(appointments.professionalId, professionals.id))
       .where(eq(appointments.companyId, companyId));
 
-      // Apply month filter if provided
+      // Apply month filter if provided, or default 3-month window for scalability
+      if (!month) {
+        // Default: load appointments from 1 month ago to 2 months ahead to avoid loading ALL appointments
+        const now = new Date();
+        const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const twoMonthsAhead = new Date(now.getFullYear(), now.getMonth() + 3, 0);
+        const startStr = oneMonthAgo.toISOString().split('T')[0];
+        const endStr = twoMonthsAhead.toISOString().split('T')[0];
+
+        console.log('📅 Default date filter (3 months):', startStr, 'to', endStr);
+
+        query = db.select({
+          id: appointments.id,
+          serviceId: appointments.serviceId,
+          professionalId: appointments.professionalId,
+          clientName: appointments.clientName,
+          clientEmail: appointments.clientEmail,
+          clientPhone: appointments.clientPhone,
+          appointmentDate: sql<string>`DATE_FORMAT(${appointments.appointmentDate}, '%Y-%m-%d')`,
+          appointmentTime: appointments.appointmentTime,
+          notes: appointments.notes,
+          status: appointments.status,
+          createdAt: appointments.createdAt,
+          updatedAt: appointments.updatedAt,
+          companyId: appointments.companyId,
+          duration: appointments.duration,
+          totalPrice: appointments.totalPrice,
+          expense: appointments.expense,
+          reminderSent: appointments.reminderSent,
+          service: {
+            name: services.name,
+            color: services.color,
+          },
+          professional: {
+            name: professionals.name,
+          },
+        })
+        .from(appointments)
+        .leftJoin(services, eq(appointments.serviceId, services.id))
+        .leftJoin(professionals, eq(appointments.professionalId, professionals.id))
+        .where(
+          and(
+            eq(appointments.companyId, companyId),
+            sql`DATE(${appointments.appointmentDate}) >= ${startStr}`,
+            sql`DATE(${appointments.appointmentDate}) <= ${endStr}`
+          )
+        );
+      }
+
       if (month) {
         const [year, monthNum] = month.split('-');
         const startDate = new Date(parseInt(year), parseInt(monthNum) - 1, 1);
@@ -2552,7 +2601,8 @@ export class DatabaseStorage implements IStorage {
     try {
       return await db.select().from(clients)
         .where(eq(clients.companyId, companyId))
-        .orderBy(desc(clients.createdAt));
+        .orderBy(desc(clients.createdAt))
+        .limit(1000);
     } catch (error: any) {
       console.error("Error getting clients:", error);
       return [];

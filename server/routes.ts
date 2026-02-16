@@ -114,6 +114,48 @@ function isConfirmationSummary(text: string): boolean {
   return hasConfirmationPrompt && hasNameMarker && hasDateMarker && hasTimeMarker;
 }
 
+// 🧹 LIMPEZA PERIÓDICA: Remove entradas órfãs dos Maps em memória a cada 5 minutos
+setInterval(() => {
+  const now = Date.now();
+  let cleanedProcessing = 0;
+  let cleanedLastMsg = 0;
+  let cleanedTimers = 0;
+
+  // processingLocks: entradas mais velhas que 5 minutos são órfãs (processamento travado)
+  // Não temos timestamp direto, mas lastMessageTime serve como proxy
+  for (const [key] of processingLocks) {
+    const lastActivity = lastMessageTime.get(key);
+    if (lastActivity && now - lastActivity > 5 * 60 * 1000) {
+      processingLocks.delete(key);
+      cleanedProcessing++;
+    }
+  }
+
+  // lastMessageTime: entradas mais velhas que 5 minutos não são mais necessárias para debounce
+  for (const [key, timestamp] of lastMessageTime) {
+    if (now - timestamp > 5 * 60 * 1000) {
+      lastMessageTime.delete(key);
+      cleanedLastMsg++;
+    }
+  }
+
+  // pendingConfirmationTimers: entradas mais velhas que 15 minutos são órfãs
+  // (o timer de lembrete é 10 min, então 15 min já passou do timeout)
+  for (const [key, entry] of pendingConfirmationTimers) {
+    // Não temos createdAt, mas se o timer existir há mais de 15 min, é órfão
+    const lastActivity = lastMessageTime.get(key) || 0;
+    if (lastActivity > 0 && now - lastActivity > 15 * 60 * 1000) {
+      clearTimeout(entry.timer);
+      pendingConfirmationTimers.delete(key);
+      cleanedTimers++;
+    }
+  }
+
+  if (cleanedProcessing > 0 || cleanedLastMsg > 0 || cleanedTimers > 0) {
+    console.log(`🧹 Limpeza de Maps: processingLocks=${cleanedProcessing}, lastMessageTime=${cleanedLastMsg}, pendingTimers=${cleanedTimers}`);
+  }
+}, 5 * 60 * 1000); // 5 minutos
+
 // Utility function to ensure Evolution API URLs have proper /api/ endpoint
 function ensureEvolutionApiEndpoint(baseUrl: string): string {
   if (!baseUrl) return baseUrl;
@@ -8769,8 +8811,16 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                   }
 
                   if (appointmentDateStr && appointmentTimeStr && professional && service) {
-                    // Buscar agendamentos existentes para verificar conflito
-                    const existingAppointments = await storage.getAppointmentsByCompany(company.id);
+                    // Buscar APENAS agendamentos do mesmo dia/profissional com status ativo (consulta otimizada)
+                    const inactiveStatusList = ['Cancelado', 'cancelado', 'cancelled', 'Rejeitado', 'rejeitado', 'rejected', 'Excluído', 'excluido', 'deleted', 'Concluído', 'concluido', 'completed', 'Finalizado', 'finalizado'];
+                    const placeholders = inactiveStatusList.map(() => '?').join(',');
+                    const [conflictRows] = await pool.execute(
+                      `SELECT id, client_name, appointment_time, duration, status FROM appointments
+                       WHERE company_id = ? AND professional_id = ? AND appointment_date = ?
+                       AND (status IS NULL OR status NOT IN (${placeholders}))`,
+                      [company.id, professional.id, appointmentDateStr, ...inactiveStatusList]
+                    );
+                    const existingAppointments = conflictRows as any[];
                     const serviceDuration = service.duration || 30;
 
                     // Converter horário para minutos
@@ -8778,10 +8828,11 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                     const requestedStartMinutes = reqHour * 60 + reqMin;
                     const requestedEndMinutes = requestedStartMinutes + serviceDuration;
 
-                    console.log('🔍 [PRÉ-VALIDAÇÃO] Verificando conflitos:');
+                    console.log('🔍 [PRÉ-VALIDAÇÃO] Verificando conflitos (consulta otimizada):');
                     console.log(`   📅 Data solicitada: ${appointmentDateStr}`);
                     console.log(`   ⏰ Horário solicitado: ${appointmentTimeStr}`);
                     console.log(`   ⏱️ Duração do serviço: ${serviceDuration} min`);
+                    console.log(`   📊 Agendamentos ativos encontrados no dia: ${existingAppointments.length}`);
                     console.log(`   📊 Novo agendamento: início=${requestedStartMinutes}min (${appointmentTimeStr}), fim=${requestedEndMinutes}min (${Math.floor(requestedEndMinutes/60)}:${String(requestedEndMinutes%60).padStart(2,'0')})`);
 
                     // Verificar conflitos
@@ -8789,23 +8840,14 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                     let conflictingAppointment: any = null;
 
                     for (const apt of existingAppointments) {
-                      // Verificar mesma data e profissional
-                      const aptDateStr = apt.appointmentDate instanceof Date
-                        ? apt.appointmentDate.toISOString().split('T')[0]
-                        : String(apt.appointmentDate).split('T')[0];
-
-                      // Ignorar agendamentos com status inativo (cancelado, rejeitado, excluído, concluído)
-                      const inactiveStatuses = ['Cancelado', 'cancelado', 'cancelled', 'Rejeitado', 'rejeitado', 'rejected', 'Excluído', 'excluido', 'deleted', 'Concluído', 'concluido', 'completed', 'Finalizado', 'finalizado'];
-                      if (aptDateStr === appointmentDateStr &&
-                          apt.professionalId === professional.id &&
-                          !inactiveStatuses.includes(apt.status || '')) {
-
                         // Converter horário existente para minutos
-                        const [existHour, existMin] = apt.appointmentTime.split(':').map(Number);
+                        const aptTime = apt.appointment_time || apt.appointmentTime;
+                        const [existHour, existMin] = aptTime.split(':').map(Number);
                         const existingStartMinutes = existHour * 60 + existMin;
                         const existingEndMinutes = existingStartMinutes + (apt.duration || 30);
+                        const aptClientName = apt.client_name || apt.clientName;
 
-                        console.log(`   📋 Agendamento existente: ${apt.clientName} - ${apt.appointmentTime} (${existingStartMinutes}min) até ${Math.floor(existingEndMinutes/60)}:${String(existingEndMinutes%60).padStart(2,'0')} (${existingEndMinutes}min)`);
+                        console.log(`   📋 Agendamento existente: ${aptClientName} - ${aptTime} (${existingStartMinutes}min) até ${Math.floor(existingEndMinutes/60)}:${String(existingEndMinutes%60).padStart(2,'0')} (${existingEndMinutes}min)`);
                         console.log(`      🔄 Verificação: novo_inicio(${requestedStartMinutes}) < existente_fim(${existingEndMinutes})? ${requestedStartMinutes < existingEndMinutes}`);
                         console.log(`      🔄 Verificação: novo_fim(${requestedEndMinutes}) > existente_inicio(${existingStartMinutes})? ${requestedEndMinutes > existingStartMinutes}`);
 
@@ -8813,12 +8855,11 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                         if (requestedStartMinutes < existingEndMinutes && requestedEndMinutes > existingStartMinutes) {
                           console.log(`      ⚠️ CONFLITO DETECTADO!`);
                           hasConflict = true;
-                          conflictingAppointment = apt;
+                          conflictingAppointment = { ...apt, appointmentTime: aptTime, clientName: aptClientName };
                           break;
                         } else {
                           console.log(`      ✅ Sem conflito com este agendamento`);
                         }
-                      }
                     }
 
                     if (hasConflict && conflictingAppointment) {

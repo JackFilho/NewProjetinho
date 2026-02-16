@@ -12,7 +12,9 @@ const connectionConfig = {
   password: process.env.MYSQL_PASSWORD,
   database: process.env.MYSQL_DATABASE,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 50,
+  connectTimeout: 10000,
+  idleTimeout: 60000,
   queueLimit: 0
 };
 
