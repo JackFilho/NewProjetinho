@@ -82,7 +82,7 @@ import { asaasService } from "./services/asaas";
 import { clearMetaTagsCache } from "./vite";
 import { getAvailableSlots, validateSlot, getAvailabilitySummary, generateAvailabilityTextForAI } from "./services/availability";
 
-// 📨 MESSAGE GROUPING: Aguarda 4s para agrupar mensagens rápidas
+// 📨 MESSAGE GROUPING: Debounce - aguarda silêncio de 5s para agrupar mensagens (máx 60s)
 const processingLocks = new Map<string, boolean>();
 const lastMessageTime = new Map<string, number>();
 
@@ -3461,8 +3461,11 @@ async function createAppointmentFromConversation(conversationId: number, company
         normalizeForComparison(lastUserMessage.content) === phrase.toLowerCase()
       );
 
+    // Buscar confirmação apenas nas mensagens do USUÁRIO (não do assistente)
+    // A frase "Responda SIM para confirmar" do assistente contém "sim" e causava falso positivo
+    const userMessagesText = messages.filter(m => m.role === 'user').map(m => m.content.toLowerCase()).join(' ');
     const hasAnyConfirmation = finalConfirmationPhrases.some(phrase =>
-      conversationText.toLowerCase().includes(phrase.toLowerCase())
+      userMessagesText.includes(phrase.toLowerCase())
     );
 
     if (!hasRecentConfirmation && !hasAnyConfirmation) {
@@ -3511,6 +3514,14 @@ async function createAppointmentFromConversation(conversationId: number, company
       // Check if AI is confirming appointment (skip question check if it's a confirmation)
       const isConfirmingAppointment = lastAIMessage.content.toLowerCase().includes('agendamento realizado') ||
                                       lastAIMessage.content.toLowerCase().includes('nos vemos');
+
+      // 🛑 NÃO criar agendamento quando a IA está PEDINDO confirmação (aguardando SIM do cliente)
+      // Sem esta verificação, a IA envia "Responda SIM" e o sistema cria o agendamento prematuramente,
+      // gerando um "fantasma" que causa conflito quando o cliente realmente confirma.
+      if (isAskingForConfirmation && !isConfirmingAppointment) {
+        console.log('⏳ AI está pedindo confirmação ao cliente (SIM/OK), aguardando resposta antes de criar agendamento');
+        return null;
+      }
 
       if (!isConfirmingAppointment && !isAskingForConfirmation) {
         const hasQuestion = lastAIMessage.content.includes('?') ||
@@ -7786,26 +7797,60 @@ if (ignoredNumbers !== undefined) {
                 timestamp: messageTimestamp,
               });
 
-              console.log('⏱️  Aguardando 5 segundos para agrupar mensagens...');
-              await new Promise(resolve => setTimeout(resolve, 5000));
+              // ========================================
+              // 📨 DEBOUNCE: Aguardar até que o cliente pare de enviar mensagens
+              // Reseta o timer a cada nova mensagem (máximo 60s de espera total)
+              // ========================================
+              const DEBOUNCE_INTERVAL_MS = 5000;    // 5 segundos entre verificações
+              const MAX_DEBOUNCE_ITERATIONS = 12;   // 12 x 5s = 60 segundos máximo
 
-              // Buscar mensagens recentes (últimos 6 segundos) do cliente
-              const allRecentMessages = await storage.getRecentMessages(conversation.id, 20);
-              const now = Date.now();
-              const messagesToGroup = allRecentMessages
-                .filter(m =>
-                  m.role === 'user' &&
-                  (now - new Date(m.timestamp).getTime()) < 6000 // últimos 6s
-                )
-                .reverse() // Ordenar da mais antiga para mais recente
+              let debounceIteration = 0;
+              let lastKnownActivity = lastMessageTime.get(lockKey) || Date.now();
+
+              while (debounceIteration < MAX_DEBOUNCE_ITERATIONS) {
+                debounceIteration++;
+                console.log(`⏱️ Debounce: Aguardando ${DEBOUNCE_INTERVAL_MS / 1000}s (iteração ${debounceIteration}/${MAX_DEBOUNCE_ITERATIONS})...`);
+
+                await new Promise(resolve => setTimeout(resolve, DEBOUNCE_INTERVAL_MS));
+
+                // Verificar se novas mensagens chegaram via Map em memória
+                // O caminho "queued" (linha ~7759) atualiza lastMessageTime a cada mensagem nova
+                const latestActivity = lastMessageTime.get(lockKey) || 0;
+
+                if (latestActivity <= lastKnownActivity) {
+                  console.log(`✅ Debounce: Nenhuma mensagem nova detectada após ${debounceIteration * DEBOUNCE_INTERVAL_MS / 1000}s. Processando.`);
+                  break;
+                }
+
+                console.log(`⏱️ Debounce: Nova(s) mensagem(ns) detectada(s). Resetando timer...`);
+                lastKnownActivity = latestActivity;
+              }
+
+              if (debounceIteration >= MAX_DEBOUNCE_ITERATIONS) {
+                console.log(`⚠️ Debounce: Limite máximo atingido (${MAX_DEBOUNCE_ITERATIONS} iterações = ${MAX_DEBOUNCE_ITERATIONS * DEBOUNCE_INTERVAL_MS / 1000}s). Processando mensagens acumuladas.`);
+              }
+
+              // Agrupar TODAS as mensagens do usuário desde a última resposta do assistente
+              // Substitui a janela rígida de 6 segundos por um limite lógico de contexto
+              const allRecentMessages = await storage.getRecentMessages(conversation.id, 50);
+              const lastAssistantIndex = allRecentMessages.findIndex(m => m.role === 'assistant');
+              const userMessagesSinceLastAssistant = (lastAssistantIndex === -1
+                ? allRecentMessages.filter(m => m.role === 'user')
+                : allRecentMessages.slice(0, lastAssistantIndex).filter(m => m.role === 'user')
+              );
+
+              const messagesToGroup = userMessagesSinceLastAssistant
+                .reverse()  // Ordem cronológica (mais antiga primeiro) - getRecentMessages retorna DESC
                 .map(m => m.content);
 
-              // Se houver múltiplas mensagens, concatenar
               if (messagesToGroup.length > 1) {
                 messageText = messagesToGroup.join('\n');
-                console.log(`✅ ${messagesToGroup.length} mensagens agrupadas: "${messageText}"`);
-              } else {
+                console.log(`✅ ${messagesToGroup.length} mensagens agrupadas via debounce: "${messageText.substring(0, 200)}${messageText.length > 200 ? '...' : ''}"`);
+              } else if (messagesToGroup.length === 1) {
+                messageText = messagesToGroup[0];
                 console.log('✅ Mensagem única, processando normalmente');
+              } else {
+                console.log('⚠️ Nenhuma mensagem do usuário encontrada para processar');
               }
 
               // Get conversation history (last 15 messages for context)
@@ -8749,9 +8794,11 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                         ? apt.appointmentDate.toISOString().split('T')[0]
                         : String(apt.appointmentDate).split('T')[0];
 
+                      // Ignorar agendamentos com status inativo (cancelado, rejeitado, excluído, concluído)
+                      const inactiveStatuses = ['Cancelado', 'cancelado', 'cancelled', 'Rejeitado', 'rejeitado', 'rejected', 'Excluído', 'excluido', 'deleted', 'Concluído', 'concluido', 'completed', 'Finalizado', 'finalizado'];
                       if (aptDateStr === appointmentDateStr &&
                           apt.professionalId === professional.id &&
-                          apt.status !== 'Cancelado' && apt.status !== 'cancelado' && apt.status !== 'cancelled') {
+                          !inactiveStatuses.includes(apt.status || '')) {
 
                         // Converter horário existente para minutos
                         const [existHour, existMin] = apt.appointmentTime.split(':').map(Number);
@@ -15904,8 +15951,11 @@ async function createAppointmentFromConversation(conversationId: number, company
         normalizeForComparison(lastUserMessage.content) === phrase.toLowerCase()
       );
 
+    // Buscar confirmação apenas nas mensagens do USUÁRIO (não do assistente)
+    // A frase "Responda SIM para confirmar" do assistente contém "sim" e causava falso positivo
+    const userMessagesText = messages.filter(m => m.role === 'user').map(m => m.content.toLowerCase()).join(' ');
     const hasAnyConfirmation = finalConfirmationPhrases.some(phrase =>
-      conversationText.toLowerCase().includes(phrase.toLowerCase())
+      userMessagesText.includes(phrase.toLowerCase())
     );
 
     if (!hasRecentConfirmation && !hasAnyConfirmation) {
@@ -15954,6 +16004,14 @@ async function createAppointmentFromConversation(conversationId: number, company
       // Check if AI is confirming appointment (skip question check if it's a confirmation)
       const isConfirmingAppointment = lastAIMessage.content.toLowerCase().includes('agendamento realizado') ||
                                       lastAIMessage.content.toLowerCase().includes('nos vemos');
+
+      // 🛑 NÃO criar agendamento quando a IA está PEDINDO confirmação (aguardando SIM do cliente)
+      // Sem esta verificação, a IA envia "Responda SIM" e o sistema cria o agendamento prematuramente,
+      // gerando um "fantasma" que causa conflito quando o cliente realmente confirma.
+      if (isAskingForConfirmation && !isConfirmingAppointment) {
+        console.log('⏳ AI está pedindo confirmação ao cliente (SIM/OK), aguardando resposta antes de criar agendamento');
+        return null;
+      }
 
       if (!isConfirmingAppointment && !isAskingForConfirmation) {
         const hasQuestion = lastAIMessage.content.includes('?') ||
