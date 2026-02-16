@@ -86,6 +86,34 @@ import { getAvailableSlots, validateSlot, getAvailabilitySummary, generateAvaila
 const processingLocks = new Map<string, boolean>();
 const lastMessageTime = new Map<string, number>();
 
+// ⏰ LEMBRETE DE CONFIRMAÇÃO: Timer de 10 minutos para clientes que não respondem "Sim"
+const pendingConfirmationTimers = new Map<string, {
+  timer: NodeJS.Timeout;
+  conversationId: number;
+  instanceName: string;
+  companyId: number;
+  phoneNumber: string;
+}>();
+
+/**
+ * Verifica se uma resposta da IA é um resumo de confirmação de agendamento.
+ * Usa os mesmos padrões da detecção em PRÉ-VALIDAÇÃO (linhas 8489-8503).
+ */
+function isConfirmationSummary(text: string): boolean {
+  const hasConfirmationPrompt =
+    text.includes('Está tudo correto?') ||
+    text.includes('Responda SIM para confirmar') ||
+    text.includes('Digite SIM ou OK para confirmar') ||
+    text.includes('confirmar seu agendamento') ||
+    text.includes('Vou confirmar');
+
+  const hasNameMarker = text.includes('👤') || text.includes('Nome:');
+  const hasDateMarker = text.includes('📅') || text.includes('Data:');
+  const hasTimeMarker = text.includes('🕐') || text.includes('Horário:');
+
+  return hasConfirmationPrompt && hasNameMarker && hasDateMarker && hasTimeMarker;
+}
+
 // Utility function to ensure Evolution API URLs have proper /api/ endpoint
 function ensureEvolutionApiEndpoint(baseUrl: string): string {
   if (!baseUrl) return baseUrl;
@@ -7485,6 +7513,18 @@ if (ignoredNumbers !== undefined) {
             console.log('📍 Google Maps Location:', company.googleMapsLocation ? `Configured: ${company.googleMapsLocation.substring(0, 50)}...` : 'Not configured');
 
             // ========================================
+            // ⏰ CANCELAR TIMER DE LEMBRETE DE CONFIRMAÇÃO
+            // Se o usuário enviou qualquer mensagem, cancelar o timer pendente
+            // ========================================
+            const confirmTimerKey = `${company.id}:${phoneNumber}`;
+            if (pendingConfirmationTimers.has(confirmTimerKey)) {
+              const pending = pendingConfirmationTimers.get(confirmTimerKey)!;
+              clearTimeout(pending.timer);
+              pendingConfirmationTimers.delete(confirmTimerKey);
+              console.log(`⏰ Timer de lembrete de confirmação CANCELADO para ${confirmTimerKey}`);
+            }
+
+            // ========================================
             // ⏸️  CHECK IF AI AGENT IS PAUSED FOR THIS COMPANY
             // ========================================
             if (company.agentPaused === 1 || company.agentPaused === true) {
@@ -8505,6 +8545,15 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 
                 if (summaryMessage) {
                   console.log('✅ Mensagem de resumo encontrada, validando dados...');
+
+                  // ⏰ Cancelar timer de lembrete (rede de segurança)
+                  const confirmTimerKeyPreVal = `${company.id}:${phoneNumber}`;
+                  if (pendingConfirmationTimers.has(confirmTimerKeyPreVal)) {
+                    const pendingTimer = pendingConfirmationTimers.get(confirmTimerKeyPreVal)!;
+                    clearTimeout(pendingTimer.timer);
+                    pendingConfirmationTimers.delete(confirmTimerKeyPreVal);
+                    console.log(`⏰ Timer de lembrete cancelado (confirmação recebida): ${confirmTimerKeyPreVal}`);
+                  }
 
                   // Extrair dados do resumo
                   const extractDetails = (text: string) => {
@@ -9796,6 +9845,112 @@ Por favor, escolha um dos horários disponíveis acima.`;
                   timestamp: new Date(),
                 });
                 console.log('✅ AI response saved to conversation history');
+
+                // ========================================
+                // ⏰ AGENDAR LEMBRETE DE CONFIRMAÇÃO (10 MINUTOS)
+                // Se a IA enviou um resumo de confirmação, agendar lembrete
+                // caso o cliente não responda em 10 minutos
+                // ========================================
+                if (isConfirmationSummary(aiResponse)) {
+                  const confirmTimerKeySched = `${company.id}:${phoneNumber}`;
+
+                  // Cancelar timer anterior se existir (evita duplicatas)
+                  if (pendingConfirmationTimers.has(confirmTimerKeySched)) {
+                    const existing = pendingConfirmationTimers.get(confirmTimerKeySched)!;
+                    clearTimeout(existing.timer);
+                    pendingConfirmationTimers.delete(confirmTimerKeySched);
+                    console.log(`⏰ Timer anterior cancelado para ${confirmTimerKeySched}`);
+                  }
+
+                  console.log(`⏰ Agendando lembrete de confirmação para ${confirmTimerKeySched} em 10 minutos`);
+
+                  const reminderConversationId = conversation.id;
+                  const reminderInstanceName = instanceName;
+                  const reminderCompanyId = company.id;
+                  const reminderPhoneNumber = phoneNumber;
+
+                  const reminderTimer = setTimeout(async () => {
+                    try {
+                      console.log(`⏰ Timer de lembrete disparado para ${confirmTimerKeySched}`);
+
+                      // Buscar configurações atualizadas (podem ter mudado em 10 minutos)
+                      const currentGlobalSettings = await storage.getGlobalSettings();
+                      if (!currentGlobalSettings?.evolutionApiUrl || !currentGlobalSettings?.evolutionApiGlobalKey) {
+                        console.error('❌ Evolution API não configurada para lembrete');
+                        pendingConfirmationTimers.delete(confirmTimerKeySched);
+                        return;
+                      }
+
+                      const reminderApiUrl = ensureEvolutionApiEndpoint(currentGlobalSettings.evolutionApiUrl);
+
+                      const reminderMessage = 'Oi! 😊 Notei que seu agendamento ainda não foi confirmado. Basta responder *SIM* para confirmar! Se precisar alterar algo, é só me dizer.';
+
+                      // Formatar número para API
+                      let reminderPhone = reminderPhoneNumber.replace(/\D/g, '');
+                      if (!reminderPhone.startsWith('55') && reminderPhone.length >= 10) {
+                        reminderPhone = '55' + reminderPhone;
+                      }
+
+                      // Enviar presença "digitando"
+                      await sendTypingPresence(
+                        reminderApiUrl,
+                        currentGlobalSettings.evolutionApiGlobalKey!,
+                        reminderInstanceName,
+                        reminderPhone,
+                        2000
+                      );
+                      await new Promise(resolve => setTimeout(resolve, 2000));
+
+                      // Enviar lembrete via WhatsApp
+                      const reminderResponse = await fetch(
+                        `${reminderApiUrl}/message/sendText/${reminderInstanceName}`,
+                        {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': currentGlobalSettings.evolutionApiGlobalKey!
+                          },
+                          body: JSON.stringify({
+                            number: reminderPhone,
+                            text: reminderMessage
+                          })
+                        }
+                      );
+
+                      if (reminderResponse.ok) {
+                        console.log(`✅ Lembrete de confirmação enviado para ${reminderPhoneNumber}`);
+
+                        // Salvar lembrete no banco como mensagem do assistente
+                        await storage.createMessage({
+                          conversationId: reminderConversationId,
+                          content: reminderMessage,
+                          role: 'assistant',
+                          messageType: 'text',
+                          delivered: true,
+                          timestamp: new Date(),
+                        });
+                        console.log('✅ Lembrete salvo no histórico da conversa');
+                      } else {
+                        console.error(`❌ Falha ao enviar lembrete: Status ${reminderResponse.status}`);
+                      }
+                    } catch (error) {
+                      console.error('❌ Erro ao enviar lembrete de confirmação:', error);
+                    } finally {
+                      // Sempre limpar o timer do mapa
+                      pendingConfirmationTimers.delete(confirmTimerKeySched);
+                    }
+                  }, 10 * 60 * 1000); // 10 minutos
+
+                  pendingConfirmationTimers.set(confirmTimerKeySched, {
+                    timer: reminderTimer,
+                    conversationId: reminderConversationId,
+                    instanceName: reminderInstanceName,
+                    companyId: reminderCompanyId,
+                    phoneNumber: reminderPhoneNumber,
+                  });
+
+                  console.log(`⏰ Timer agendado com sucesso. Total de timers ativos: ${pendingConfirmationTimers.size}`);
+                }
 
                 // ========================================
                 // 📎 ENVIAR ARQUIVOS DE CURSO (SE HOUVER)
