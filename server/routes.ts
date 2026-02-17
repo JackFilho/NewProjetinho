@@ -6311,30 +6311,34 @@ if (ignoredNumbers !== undefined) {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
-      const { birthdayMessage, aiAgentPrompt, agentInactivityTimeout, logoUrl } = req.body;
+      const { birthdayMessage, aiAgentPrompt, agentInactivityTimeout, logoUrl, primaryColor } = req.body;
       console.log('🔧 [SETTINGS] Birthday message:', birthdayMessage?.substring(0, 50));
       console.log('🔧 [SETTINGS] AI prompt:', aiAgentPrompt?.substring(0, 50));
       console.log('🔧 [SETTINGS] Agent inactivity timeout:', agentInactivityTimeout);
       console.log('🔧 [SETTINGS] Logo URL:', logoUrl?.substring(0, 80));
+      console.log('🔧 [SETTINGS] Primary color:', primaryColor);
 
       const updatedCompany = await storage.updateCompany(companyId, {
         birthdayMessage,
         aiAgentPrompt,
         agentInactivityTimeout: agentInactivityTimeout !== undefined ? agentInactivityTimeout : undefined,
-        logoUrl: logoUrl !== undefined ? logoUrl : undefined
+        logoUrl: logoUrl !== undefined ? logoUrl : undefined,
+        primaryColor: primaryColor !== undefined ? (primaryColor || null) : undefined,
       });
 
       console.log('🔧 [SETTINGS] Saved birthday message:', updatedCompany.birthdayMessage?.substring(0, 50));
       console.log('🔧 [SETTINGS] Saved AI prompt:', updatedCompany.aiAgentPrompt?.substring(0, 50));
       console.log('🔧 [SETTINGS] Saved agent inactivity timeout:', updatedCompany.agentInactivityTimeout);
       console.log('🔧 [SETTINGS] Saved logo URL:', updatedCompany.logoUrl?.substring(0, 80));
+      console.log('🔧 [SETTINGS] Saved primary color:', updatedCompany.primaryColor);
 
       res.json({
         message: "Configurações atualizadas com sucesso",
         birthdayMessage: updatedCompany.birthdayMessage,
         aiAgentPrompt: updatedCompany.aiAgentPrompt,
         agentInactivityTimeout: updatedCompany.agentInactivityTimeout,
-        logoUrl: updatedCompany.logoUrl
+        logoUrl: updatedCompany.logoUrl,
+        primaryColor: updatedCompany.primaryColor,
       });
     } catch (error) {
       console.error("❌ [SETTINGS] Error updating company settings:", error);

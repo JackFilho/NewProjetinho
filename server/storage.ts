@@ -431,6 +431,7 @@ export class DatabaseStorage implements IStorage {
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      primaryColor: companies.primaryColor,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).orderBy(desc(companies.createdAt));
@@ -489,6 +490,7 @@ export class DatabaseStorage implements IStorage {
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      primaryColor: companies.primaryColor,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.id, id));
@@ -537,6 +539,7 @@ export class DatabaseStorage implements IStorage {
         asaasApiKey: companies.asaasApiKey,
         asaasEnvironment: companies.asaasEnvironment,
         asaasEnabled: companies.asaasEnabled,
+        primaryColor: companies.primaryColor,
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
       }).from(companies).where(eq(companies.email, email));
@@ -590,6 +593,7 @@ export class DatabaseStorage implements IStorage {
         asaasApiKey: companies.asaasApiKey,
         asaasEnvironment: companies.asaasEnvironment,
         asaasEnabled: companies.asaasEnabled,
+        primaryColor: companies.primaryColor,
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
       }).from(companies).where(eq(companies.resetToken, token));
@@ -658,6 +662,7 @@ export class DatabaseStorage implements IStorage {
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      primaryColor: companies.primaryColor,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.email, companyData.email));
@@ -752,6 +757,7 @@ export class DatabaseStorage implements IStorage {
         asaasApiKey: companies.asaasApiKey,
         asaasEnvironment: companies.asaasEnvironment,
         asaasEnabled: companies.asaasEnabled,
+        primaryColor: companies.primaryColor,
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
       }).from(companies).where(eq(companies.id, id));
@@ -3736,6 +3742,7 @@ Obrigado pela preferência! 🙏`;
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      primaryColor: companies.primaryColor,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.id, companyId));

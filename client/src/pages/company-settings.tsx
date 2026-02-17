@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Settings, Building2, Lock, User, MessageSquare, Trash2, Plus, Smartphone, QrCode, RefreshCw, Bot, Key, Gift, Calendar, Bell, Clock, CheckCircle, Send, XCircle, LogOut, CreditCard, DollarSign, PhoneOff, PauseCircle, Upload, X, GraduationCap } from "lucide-react";
+import { Settings, Building2, Lock, User, MessageSquare, Trash2, Plus, Smartphone, QrCode, RefreshCw, Bot, Key, Gift, Calendar, Bell, Clock, CheckCircle, Send, XCircle, LogOut, CreditCard, DollarSign, PhoneOff, PauseCircle, Upload, X, GraduationCap, Palette } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useCompanyAuth } from "@/hooks/useCompanyAuth";
 import { FloatingHelpButton } from "@/components/floating-help-button";
@@ -454,11 +454,13 @@ export default function CompanySettings() {
       birthdayMessage: "",
       aiAgentPrompt: "",
       logoUrl: "",
+      primaryColor: "",
     },
     values: company ? {
       birthdayMessage: company.birthdayMessage || "",
       aiAgentPrompt: company.aiAgentPrompt || "",
       logoUrl: company.logoUrl || "",
+      primaryColor: (company as any).primaryColor || "",
     } : undefined,
   });
 
@@ -1388,6 +1390,7 @@ export default function CompanySettings() {
           birthdayMessage: data.birthdayMessage || "",
           aiAgentPrompt: data.aiAgentPrompt || "",
           logoUrl: data.logoUrl || "",
+          primaryColor: data.primaryColor || "",
         });
       }
       toast({
@@ -2283,6 +2286,106 @@ export default function CompanySettings() {
                         </>
                       ) : (
                         "Salvar Configurações"
+                      )}
+                    </Button>
+                  </div>
+                </form>
+              </Form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Palette className="w-5 h-5" />
+                Cor Principal da Empresa
+              </CardTitle>
+              <CardDescription>
+                Defina a cor principal da sua empresa. Essa cor será utilizada em elementos visuais personalizados do sistema.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Form {...companySettingsForm}>
+                <form onSubmit={companySettingsForm.handleSubmit(onCompanySettingsSubmit)} className="space-y-6">
+                  <FormField
+                    control={companySettingsForm.control}
+                    name="primaryColor"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Cor Principal</FormLabel>
+                        <FormControl>
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-4">
+                              <div className="relative">
+                                <input
+                                  type="color"
+                                  value={field.value || "#2563eb"}
+                                  onChange={(e) => field.onChange(e.target.value)}
+                                  className="w-12 h-12 rounded-lg border cursor-pointer"
+                                />
+                              </div>
+                              <div className="flex-1">
+                                <Input
+                                  placeholder="#2563eb"
+                                  value={field.value || ""}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val === "" || /^#[0-9a-fA-F]{0,6}$/.test(val)) {
+                                      field.onChange(val);
+                                    }
+                                  }}
+                                  className="font-mono text-sm"
+                                  maxLength={7}
+                                />
+                              </div>
+                              {field.value && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => field.onChange("")}
+                                >
+                                  <X className="h-4 w-4 mr-1" />
+                                  Limpar
+                                </Button>
+                              )}
+                            </div>
+
+                            {field.value && /^#[0-9a-fA-F]{6}$/.test(field.value) && (
+                              <div className="flex items-center gap-3 p-3 rounded-lg border bg-gray-50">
+                                <div
+                                  className="w-8 h-8 rounded-full border"
+                                  style={{ backgroundColor: field.value }}
+                                />
+                                <span className="text-sm text-gray-600">
+                                  Preview: <strong>{field.value}</strong>
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="text-sm text-gray-500">
+                              <p>Caso não definida, será utilizada a cor padrão do sistema.</p>
+                            </div>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="submit"
+                      disabled={updateCompanySettingsMutation.isPending}
+                      className="min-w-[140px]"
+                    >
+                      {updateCompanySettingsMutation.isPending ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          Salvando...
+                        </>
+                      ) : (
+                        "Salvar Cor"
                       )}
                     </Button>
                   </div>

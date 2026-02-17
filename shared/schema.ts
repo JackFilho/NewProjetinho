@@ -101,6 +101,7 @@ export const companies = mysqlTable("companies", {
   financialPasswordEnabled: int("financial_password_enabled").notNull().default(0),
   financialPassword: varchar("financial_password", { length: 255 }),
   logoUrl: varchar("logo_url", { length: 500 }),
+  primaryColor: varchar("primary_color", { length: 7 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
