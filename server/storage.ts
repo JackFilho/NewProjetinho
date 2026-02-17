@@ -2355,20 +2355,20 @@ export class DatabaseStorage implements IStorage {
       threeDaysAgo.setHours(0, 0, 0, 0);
       const threeDaysAgoStr = threeDaysAgo.toISOString().split('T')[0];
 
-      console.log(`🔍 Buscando agendamentos pendentes anteriores a ${threeDaysAgoStr}`);
+      console.log(`🔍 Buscando agendamentos não concluídos anteriores a ${threeDaysAgoStr}`);
 
-      // Find all "Pendente" appointments older than 3 days
+      // Find all pending/scheduled/confirmed appointments older than 3 days
       const oldPendingAppointments = await db.select()
         .from(appointments)
         .where(
           and(
             eq(appointments.companyId, companyId),
-            eq(appointments.status, 'Pendente'),
+            inArray(appointments.status, ['Pendente', 'agendado', 'Agendado', 'Confirmado', 'confirmado']),
             lt(appointments.appointmentDate, threeDaysAgoStr)
           )
         );
 
-      console.log(`📋 Encontrados ${oldPendingAppointments.length} agendamentos pendentes antigos`);
+      console.log(`📋 Encontrados ${oldPendingAppointments.length} agendamentos não concluídos antigos`);
 
       if (oldPendingAppointments.length === 0) {
         return { updated: 0, appointments: [] };
