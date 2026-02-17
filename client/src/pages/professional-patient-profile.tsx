@@ -484,7 +484,6 @@ export default function ProfessionalPatientProfile() {
           onOpenChange={setShowEvolutionForm}
           onSubmit={(data) => createEvolutionMutation.mutate(data)}
           professionals={professionalsForTimeline}
-          appointments={appointments}
         />
 
         {/* Edit Evolution Dialog */}
@@ -494,13 +493,11 @@ export default function ProfessionalPatientProfile() {
             onOpenChange={(open) => !open && setEditingEvolution(null)}
             onSubmit={(data) => updateEvolutionMutation.mutate({ id: editingEvolution.id, data })}
             professionals={professionalsForTimeline}
-            appointments={appointments}
             initialData={{
               title: editingEvolution.title || "",
               content: editingEvolution.content,
               evolutionDate: typeof editingEvolution.evolutionDate === "string" ? editingEvolution.evolutionDate : editingEvolution.evolutionDate?.toISOString().split("T")[0] || "",
               professionalId: editingEvolution.professionalId,
-              appointmentId: editingEvolution.appointmentId,
             }}
             isEditing
           />

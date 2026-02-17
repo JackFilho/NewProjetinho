@@ -491,7 +491,6 @@ export const clinicalEvolutions = mysqlTable("clinical_evolutions", {
   companyId: int("company_id").notNull(),
   clientId: int("client_id").notNull(),
   professionalId: int("professional_id"),
-  appointmentId: int("appointment_id"),
   title: varchar("title", { length: 255 }),
   content: text("content").notNull(),
   evolutionDate: date("evolution_date").notNull(),
@@ -727,10 +726,6 @@ export const clinicalEvolutionsRelations = relations(clinicalEvolutions, ({ one 
   professional: one(professionals, {
     fields: [clinicalEvolutions.professionalId],
     references: [professionals.id],
-  }),
-  appointment: one(appointments, {
-    fields: [clinicalEvolutions.appointmentId],
-    references: [appointments.id],
   }),
 }));
 

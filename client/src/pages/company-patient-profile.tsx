@@ -462,7 +462,6 @@ export default function CompanyPatientProfile() {
         onOpenChange={setShowEvolutionForm}
         onSubmit={(data) => createEvolutionMutation.mutate(data)}
         professionals={professionals}
-        appointments={appointments}
       />
 
       {/* Edit Evolution Dialog */}
@@ -472,13 +471,11 @@ export default function CompanyPatientProfile() {
           onOpenChange={(open) => !open && setEditingEvolution(null)}
           onSubmit={(data) => updateEvolutionMutation.mutate({ id: editingEvolution.id, data })}
           professionals={professionals}
-          appointments={appointments}
           initialData={{
             title: editingEvolution.title || "",
             content: editingEvolution.content,
             evolutionDate: typeof editingEvolution.evolutionDate === "string" ? editingEvolution.evolutionDate : editingEvolution.evolutionDate?.toISOString().split("T")[0] || "",
             professionalId: editingEvolution.professionalId,
-            appointmentId: editingEvolution.appointmentId,
           }}
           isEditing
         />

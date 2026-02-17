@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   Calendar,
+  CalendarDays,
   Settings,
   MessageSquare,
   Users,
@@ -55,7 +56,7 @@ const menuItems = [
   {
     title: "Sessões",
     href: "/company/pacotes",
-    icon: Package,
+    icon: CalendarDays,
     permission: null,
   },
   {

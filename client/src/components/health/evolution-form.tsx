@@ -16,7 +16,6 @@ interface EvolutionFormProps {
   onOpenChange: (open: boolean) => void;
   onSubmit: (data: EvolutionFormData) => void;
   professionals: Array<{ id: number; name: string }>;
-  appointments?: Array<{ id: number; appointmentDate: string; appointmentTime: string; status: string }>;
   initialData?: Partial<EvolutionFormData>;
   isEditing?: boolean;
 }
@@ -26,7 +25,6 @@ export function EvolutionForm({
   onOpenChange,
   onSubmit,
   professionals,
-  appointments,
   initialData,
   isEditing = false,
 }: EvolutionFormProps) {
@@ -39,7 +37,6 @@ export function EvolutionForm({
       content: initialData?.content || "",
       evolutionDate: initialData?.evolutionDate || today,
       professionalId: initialData?.professionalId || null,
-      appointmentId: initialData?.appointmentId || null,
     },
   });
 
@@ -112,37 +109,6 @@ export function EvolutionForm({
                 </FormItem>
               )}
             />
-
-            {appointments && appointments.length > 0 && (
-              <FormField
-                control={form.control}
-                name="appointmentId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Vincular a agendamento (opcional)</FormLabel>
-                    <Select
-                      value={field.value ? String(field.value) : undefined}
-                      onValueChange={(val) => field.onChange(val === "none" ? null : Number(val))}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Nenhum agendamento vinculado" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="none">Nenhum</SelectItem>
-                        {appointments.map((apt) => (
-                          <SelectItem key={apt.id} value={String(apt.id)}>
-                            {apt.appointmentDate} {apt.appointmentTime} - {apt.statusName || apt.status || "Pendente"}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
 
             <FormField
               control={form.control}

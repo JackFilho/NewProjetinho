@@ -202,7 +202,6 @@ export const clinicalEvolutionSchema = z.object({
   content: z.string().min(1, "Conteúdo é obrigatório").max(50000),
   evolutionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data inválida"),
   professionalId: z.coerce.number().optional().nullable(),
-  appointmentId: z.coerce.number().optional().nullable(),
 });
 
 export const anamnesisRecordSchema = z.object({
