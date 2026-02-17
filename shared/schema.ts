@@ -102,6 +102,7 @@ export const companies = mysqlTable("companies", {
   financialPassword: varchar("financial_password", { length: 255 }),
   logoUrl: varchar("logo_url", { length: 500 }),
   healthSpecialty: varchar("health_specialty", { length: 100 }),
+  primaryColor: varchar("primary_color", { length: 7 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });

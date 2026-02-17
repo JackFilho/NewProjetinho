@@ -183,6 +183,7 @@ export const companySettingsSchema = z.object({
   birthdayMessage: z.string().optional(),
   aiAgentPrompt: z.string().optional(),
   logoUrl: z.string().url("URL inválida").optional().or(z.literal("")),
+  primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Cor hexadecimal invalida").optional().or(z.literal("")),
 });
 
 export const asaasConfigSchema = z.object({

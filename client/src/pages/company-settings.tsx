@@ -454,11 +454,13 @@ export default function CompanySettings() {
       birthdayMessage: "",
       aiAgentPrompt: "",
       logoUrl: "",
+      primaryColor: "",
     },
     values: company ? {
       birthdayMessage: company.birthdayMessage || "",
       aiAgentPrompt: company.aiAgentPrompt || "",
       logoUrl: company.logoUrl || "",
+      primaryColor: (company as any).primaryColor || "",
     } : undefined,
   });
 
@@ -1388,6 +1390,7 @@ export default function CompanySettings() {
           birthdayMessage: data.birthdayMessage || "",
           aiAgentPrompt: data.aiAgentPrompt || "",
           logoUrl: data.logoUrl || "",
+          primaryColor: data.primaryColor || "",
         });
       }
       toast({
@@ -2283,6 +2286,95 @@ export default function CompanySettings() {
                         </>
                       ) : (
                         "Salvar Configurações"
+                      )}
+                    </Button>
+                  </div>
+                </form>
+              </Form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="w-5 h-5" />
+                Cor Principal da Empresa
+              </CardTitle>
+              <CardDescription>
+                Defina a cor principal da sua empresa. Essa cor será utilizada nos PDFs gerados e em elementos visuais personalizados.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Form {...companySettingsForm}>
+                <form onSubmit={companySettingsForm.handleSubmit(onCompanySettingsSubmit)} className="space-y-6">
+                  <FormField
+                    control={companySettingsForm.control}
+                    name="primaryColor"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Cor Principal</FormLabel>
+                        <FormControl>
+                          <div className="space-y-3">
+                            <div className="flex gap-2 items-center">
+                              <Input
+                                type="color"
+                                className="w-16 h-10 p-1 cursor-pointer"
+                                value={field.value || "#2563eb"}
+                                onChange={(e) => field.onChange(e.target.value)}
+                              />
+                              <Input
+                                placeholder="#2563eb"
+                                {...field}
+                                className="flex-1"
+                              />
+                            </div>
+                            {field.value && (
+                              <div className="flex items-center gap-3 p-3 border rounded-lg bg-gray-50">
+                                <div
+                                  className="w-10 h-10 rounded-lg border shadow-sm"
+                                  style={{ backgroundColor: field.value }}
+                                />
+                                <div className="flex-1">
+                                  <p className="text-sm font-medium">Pré-visualização</p>
+                                  <p className="text-xs text-gray-500">
+                                    Essa cor será aplicada nos PDFs de anamnese e em documentos gerados
+                                  </p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => field.onChange("")}
+                                  className="text-xs text-gray-400 hover:text-red-500"
+                                >
+                                  Limpar
+                                </Button>
+                              </div>
+                            )}
+                            <div className="text-sm text-gray-500">
+                              <p>• Caso não definida, será utilizada a cor padrão do sistema (#2563eb)</p>
+                              <p>• A cor é aplicada nos cabeçalhos e detalhes de PDFs exportados</p>
+                            </div>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="submit"
+                      disabled={updateCompanySettingsMutation.isPending}
+                      className="min-w-[140px]"
+                    >
+                      {updateCompanySettingsMutation.isPending ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          Salvando...
+                        </>
+                      ) : (
+                        "Salvar Cor"
                       )}
                     </Button>
                   </div>

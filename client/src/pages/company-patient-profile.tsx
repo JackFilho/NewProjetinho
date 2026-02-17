@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,12 +8,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, HeartPulse, FileText, Activity, Calendar, Plus, Phone, Mail, Cake } from "lucide-react";
+import { ArrowLeft, HeartPulse, FileText, Activity, Calendar, Plus, Phone, Mail, Cake, Pencil, Download, FileDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { AnamnesisTemplate, AnamnesisTemplateField, AnamnesisRecord, ClinicalEvolution, Client, Professional } from "@shared/schema";
 import { AnamnesisForm } from "@/components/health/anamnesis-form";
 import { EvolutionForm } from "@/components/health/evolution-form";
 import { EvolutionTimeline } from "@/components/health/evolution-timeline";
+import { generateAnamnesisPdf } from "@/components/health/anamnesis-pdf";
+import { useCompanyAuth } from "@/hooks/useCompanyAuth";
 
 interface HealthProfile {
   client: Client;
@@ -37,11 +39,15 @@ export default function CompanyPatientProfile() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const { company } = useCompanyAuth();
+
   const [showEvolutionForm, setShowEvolutionForm] = useState(false);
   const [editingEvolution, setEditingEvolution] = useState<ClinicalEvolution | null>(null);
   const [showAnamnesisForm, setShowAnamnesisForm] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [viewingAnamnesisId, setViewingAnamnesisId] = useState<number | null>(null);
+  const [editingAnamnesisId, setEditingAnamnesisId] = useState<number | null>(null);
+  const [pdfExportType, setPdfExportType] = useState<"digital" | "manual" | null>(null);
 
   // Fetch health profile
   const { data: profile, isLoading } = useQuery<HealthProfile>({
@@ -63,6 +69,12 @@ export default function CompanyPatientProfile() {
   const { data: viewingAnamnesis } = useQuery<{ fields: AnamnesisTemplateField[] } & AnamnesisRecord>({
     queryKey: [`/api/company/anamnesis-records/${viewingAnamnesisId}`],
     enabled: !!viewingAnamnesisId,
+  });
+
+  // Fetch anamnesis record for editing
+  const { data: editingAnamnesis } = useQuery<{ fields: AnamnesisTemplateField[] } & AnamnesisRecord>({
+    queryKey: [`/api/company/anamnesis-records/${editingAnamnesisId}`],
+    enabled: !!editingAnamnesisId,
   });
 
   // Fetch template fields when creating new anamnesis
@@ -128,6 +140,27 @@ export default function CompanyPatientProfile() {
     },
   });
 
+  // Update anamnesis record mutation
+  const updateAnamnesisMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      const res = await fetch(`/api/company/anamnesis-records/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Erro ao atualizar anamnese');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/company/clients/${clientId}/health-profile`] });
+      setEditingAnamnesisId(null);
+      toast({ title: "Anamnese atualizada com sucesso" });
+    },
+    onError: () => {
+      toast({ title: "Erro ao atualizar anamnese", variant: "destructive" });
+    },
+  });
+
   // Create anamnesis record mutation
   const createAnamnesisMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -149,6 +182,30 @@ export default function CompanyPatientProfile() {
       toast({ title: "Erro ao salvar anamnese", variant: "destructive" });
     },
   });
+
+  // Auto-export PDF when data is ready from list click
+  useEffect(() => {
+    if (pdfExportType && viewingAnamnesis?.fields && profile?.client) {
+      generateAnamnesisPdf({
+        fields: viewingAnamnesis.fields,
+        answers: pdfExportType === "digital" ? (viewingAnamnesis.answers as Record<string, any>) : {},
+        notes: pdfExportType === "digital" ? (viewingAnamnesis.notes || "") : "",
+        patient: profile.client,
+        mode: pdfExportType,
+        logoUrl: company?.logoUrl,
+        companyName: company?.fantasyName,
+        primaryColor: (company as any)?.primaryColor,
+      })
+        .catch((err) => {
+          console.error("Erro ao gerar PDF:", err);
+          toast({ title: "Erro ao gerar PDF", variant: "destructive" });
+        })
+        .finally(() => {
+          setPdfExportType(null);
+          setViewingAnamnesisId(null);
+        });
+    }
+  }, [pdfExportType, viewingAnamnesis, profile, company]);
 
   if (isLoading) {
     return (
@@ -256,16 +313,53 @@ export default function CompanyPatientProfile() {
               {anamnesis.map((record) => {
                 const template = templates.find(t => t.id === record.templateId);
                 return (
-                  <Card key={record.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setViewingAnamnesisId(record.id)}>
+                  <Card key={record.id} className="hover:shadow-md transition-shadow">
                     <CardContent className="py-4">
                       <div className="flex items-center justify-between">
-                        <div>
+                        <div className="cursor-pointer flex-1" onClick={() => setViewingAnamnesisId(record.id)}>
                           <p className="font-medium">{template?.name || `Modelo #${record.templateId}`}</p>
                           <p className="text-xs text-muted-foreground">
                             Preenchida em {record.createdAt ? new Date(record.createdAt).toLocaleDateString('pt-BR') : '-'}
                           </p>
                         </div>
-                        <Badge variant="outline" className="text-xs">Ver ficha</Badge>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            title="Editar ficha"
+                            onClick={(e) => { e.stopPropagation(); setEditingAnamnesisId(record.id); }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            title="Exportar PDF preenchido"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setViewingAnamnesisId(record.id);
+                              setPdfExportType("digital");
+                            }}
+                          >
+                            <FileDown className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            title="Exportar PDF em branco (para paciente)"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setViewingAnamnesisId(record.id);
+                              setPdfExportType("manual");
+                            }}
+                          >
+                            <Download className="h-4 w-4" />
+                          </Button>
+                          <Badge variant="outline" className="text-xs cursor-pointer" onClick={() => setViewingAnamnesisId(record.id)}>Ver ficha</Badge>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -407,10 +501,60 @@ export default function CompanyPatientProfile() {
       </Dialog>
 
       {/* View Anamnesis Record Dialog */}
-      <Dialog open={!!viewingAnamnesisId && !!viewingAnamnesis} onOpenChange={(open) => { if (!open) setViewingAnamnesisId(null); }}>
+      <Dialog open={!!viewingAnamnesisId && !!viewingAnamnesis && !pdfExportType} onOpenChange={(open) => { if (!open) setViewingAnamnesisId(null); }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Ficha de Anamnese</DialogTitle>
+            <DialogTitle className="flex items-center justify-between">
+              <span>Ficha de Anamnese</span>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (viewingAnamnesis?.fields) {
+                      generateAnamnesisPdf({
+                        fields: viewingAnamnesis.fields,
+                        answers: viewingAnamnesis.answers as Record<string, any>,
+                        notes: viewingAnamnesis.notes || "",
+                        patient: client,
+                        mode: "digital",
+                        logoUrl: company?.logoUrl,
+                        companyName: company?.fantasyName,
+                        primaryColor: (company as any)?.primaryColor,
+                      }).catch((err) => {
+                        console.error("Erro ao gerar PDF:", err);
+                        toast({ title: "Erro ao gerar PDF", variant: "destructive" });
+                      });
+                    }
+                  }}
+                >
+                  <FileDown className="h-4 w-4 mr-1" /> PDF Preenchido
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (viewingAnamnesis?.fields) {
+                      generateAnamnesisPdf({
+                        fields: viewingAnamnesis.fields,
+                        answers: {},
+                        notes: "",
+                        patient: client,
+                        mode: "manual",
+                        logoUrl: company?.logoUrl,
+                        companyName: company?.fantasyName,
+                        primaryColor: (company as any)?.primaryColor,
+                      }).catch((err) => {
+                        console.error("Erro ao gerar PDF:", err);
+                        toast({ title: "Erro ao gerar PDF", variant: "destructive" });
+                      });
+                    }
+                  }}
+                >
+                  <Download className="h-4 w-4 mr-1" /> PDF Manual
+                </Button>
+              </div>
+            </DialogTitle>
           </DialogHeader>
           {viewingAnamnesis?.fields && (
             <AnamnesisForm
@@ -420,6 +564,29 @@ export default function CompanyPatientProfile() {
               isReadOnly
               patient={client}
               onSubmit={() => {}}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Anamnesis Record Dialog */}
+      <Dialog open={!!editingAnamnesisId && !!editingAnamnesis} onOpenChange={(open) => { if (!open) setEditingAnamnesisId(null); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Editar Anamnese</DialogTitle>
+          </DialogHeader>
+          {editingAnamnesis?.fields && (
+            <AnamnesisForm
+              templateFields={editingAnamnesis.fields}
+              existingAnswers={editingAnamnesis.answers as Record<string, any>}
+              notes={editingAnamnesis.notes || ""}
+              patient={client}
+              onSubmit={(answers, notes) => {
+                updateAnamnesisMutation.mutate({
+                  id: editingAnamnesisId!,
+                  data: { answers, notes },
+                });
+              }}
             />
           )}
         </DialogContent>
