@@ -87,7 +87,7 @@ import {
 } from "@shared/schema";
 import { normalizePhone, validateBrazilianPhone, comparePhones } from "../shared/phone-utils";
 import { db, pool } from "./db";
-import { eq, desc, and, sql, gte, lte, lt } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lte, lt, inArray } from "drizzle-orm";
 
 // Helper function to create conversation and message tables
 // Ensure professional password column exists
@@ -336,6 +336,7 @@ export interface IStorage {
 
   // Health module - Anamnesis templates
   getAnamnesisTemplatesBySpecialty(specialty: string, companyId?: number): Promise<AnamnesisTemplate[]>;
+  getAnamnesisTemplatesBySpecialties(specialties: string[], companyId?: number): Promise<AnamnesisTemplate[]>;
   getAnamnesisTemplate(id: number): Promise<AnamnesisTemplate | undefined>;
   createAnamnesisTemplate(template: InsertAnamnesisTemplate): Promise<AnamnesisTemplate>;
   updateAnamnesisTemplate(id: number, template: Partial<InsertAnamnesisTemplate>): Promise<AnamnesisTemplate>;
@@ -3861,6 +3862,34 @@ Obrigado pela preferência! 🙏`;
         .orderBy(anamnesisTemplates.name);
     } catch (error: any) {
       console.error("Error getting anamnesis templates:", error);
+      return [];
+    }
+  }
+
+  async getAnamnesisTemplatesBySpecialties(specialties: string[], companyId?: number): Promise<AnamnesisTemplate[]> {
+    try {
+      if (specialties.length === 0) return [];
+      if (companyId) {
+        return await db.select().from(anamnesisTemplates)
+          .where(
+            and(
+              inArray(anamnesisTemplates.specialty, specialties),
+              eq(anamnesisTemplates.isActive, 1),
+              sql`(${anamnesisTemplates.companyId} = ${companyId} OR ${anamnesisTemplates.companyId} IS NULL)`
+            )
+          )
+          .orderBy(desc(anamnesisTemplates.companyId), anamnesisTemplates.name);
+      }
+      return await db.select().from(anamnesisTemplates)
+        .where(
+          and(
+            inArray(anamnesisTemplates.specialty, specialties),
+            sql`${anamnesisTemplates.companyId} IS NULL`
+          )
+        )
+        .orderBy(anamnesisTemplates.name);
+    } catch (error: any) {
+      console.error("Error getting anamnesis templates by specialties:", error);
       return [];
     }
   }

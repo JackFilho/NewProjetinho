@@ -44,6 +44,7 @@ import ProfessionalDashboard from "@/pages/professional-dashboard";
 import ProfessionalLogin from "@/pages/professional-login";
 import ProfessionalProfile from "@/pages/professional-profile";
 import ProfessionalClients from "@/pages/professional-clients";
+import ProfessionalPatientProfile from "@/pages/professional-patient-profile";
 import Register from "@/pages/register";
 import ThankYou from "@/pages/thank-you";
 import ResetPassword from "@/pages/reset-password";
@@ -64,6 +65,7 @@ function Router() {
       <Route path="/profissional/dashboard" component={ProfessionalDashboard} />
       <Route path="/profissional/perfil" component={ProfessionalProfile} />
       <Route path="/profissional/clientes" component={ProfessionalClients} />
+      <Route path="/profissional/pacientes/:clientId" component={ProfessionalPatientProfile} />
 
       {/* Registration Routes */}
       <Route path="/cadastro" component={Register} />

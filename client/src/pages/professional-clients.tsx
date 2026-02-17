@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Users, Plus, Phone, Calendar, Search, Edit } from "lucide-react";
+import { Users, Plus, Phone, Calendar, Search, Edit, HeartPulse } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useGlobalTheme } from "@/hooks/use-global-theme";
 import { Button } from "@/components/ui/button";
@@ -330,14 +330,25 @@ export default function ProfessionalClients() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEditClient(client)}
-                          className="text-primary hover:text-primary/90"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setLocation(`/profissional/pacientes/${client.id}`)}
+                            className="text-pink-600 hover:text-pink-700"
+                            title="Saúde"
+                          >
+                            <HeartPulse className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleEditClient(client)}
+                            className="text-primary hover:text-primary/90"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
