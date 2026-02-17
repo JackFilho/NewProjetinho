@@ -70,10 +70,10 @@ function getFieldDisplayValue(field: AnamnesisTemplateField, value: any): string
   }
 }
 
-function checkPage(doc: jsPDF, y: number, needed: number, margin: number): number {
-  if (y + needed > doc.internal.pageSize.getHeight() - 15) {
+function checkPage(doc: jsPDF, y: number, needed: number, marginTop: number): number {
+  if (y + needed > doc.internal.pageSize.getHeight() - 18) {
     doc.addPage();
-    return margin;
+    return marginTop;
   }
   return y;
 }
@@ -102,33 +102,84 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const r = parseInt(clean.substring(0, 2), 16);
   const g = parseInt(clean.substring(2, 4), 16);
   const b = parseInt(clean.substring(4, 6), 16);
-  if (isNaN(r) || isNaN(g) || isNaN(b)) return { r: 37, g: 99, b: 235 }; // fallback blue
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return { r: 37, g: 99, b: 235 };
   return { r, g, b };
 }
 
-const DEFAULT_PRIMARY = { r: 37, g: 99, b: 235 };  // blue-600
-const DARK = { r: 30, g: 41, b: 59 };               // slate-800
-const MUTED = { r: 100, g: 116, b: 139 };           // slate-500
-const LIGHT_BG = { r: 241, g: 245, b: 249 };        // slate-100
-const LINE_COLOR = { r: 203, g: 213, b: 225 };      // slate-300
+/** Lighten a color by mixing with white */
+function lighten(c: { r: number; g: number; b: number }, amount: number) {
+  return {
+    r: Math.round(c.r + (255 - c.r) * amount),
+    g: Math.round(c.g + (255 - c.g) * amount),
+    b: Math.round(c.b + (255 - c.b) * amount),
+  };
+}
+
+const DEFAULT_PRIMARY = { r: 37, g: 99, b: 235 };
+const DARK = { r: 33, g: 37, b: 41 };
+const MUTED = { r: 108, g: 117, b: 125 };
+const FIELD_LINE = { r: 180, g: 180, b: 180 };
+
+// ── Drawing helpers ──────────────────────────────────
+
+function drawSectionHeader(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  text: string,
+  primary: { r: number; g: number; b: number },
+) {
+  doc.setFillColor(primary.r, primary.g, primary.b);
+  doc.roundedRect(x, y, w, h, 2, 2, "F");
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(255, 255, 255);
+  doc.text(text, x + 5, y + h / 2 + 1.2);
+}
+
+function drawFieldLabel(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  label: string,
+  required: boolean,
+) {
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(DARK.r, DARK.g, DARK.b);
+  doc.text(`${label}${required ? " *" : ""}`, x, y);
+}
+
+function drawUnderline(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  w: number,
+) {
+  doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
+  doc.setLineWidth(0.3);
+  doc.line(x, y, x + w, y);
+}
 
 // ── Main ─────────────────────────────────────────────
 
 export async function generateAnamnesisPdf(options: AnamnesisPdfOptions) {
   const { fields, answers, notes, patient, mode, logoUrl, companyName, primaryColor } = options;
 
-  // Resolve primary color: use company color or fallback to default blue
   const PRIMARY = primaryColor && /^#[0-9a-fA-F]{6}$/.test(primaryColor)
     ? hexToRgb(primaryColor)
     : DEFAULT_PRIMARY;
+  const PRIMARY_LIGHT = lighten(PRIMARY, 0.92);
   const isManual = mode === "manual";
 
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  const pageWidth = doc.internal.pageSize.getWidth();   // 210
-  const pageHeight = doc.internal.pageSize.getHeight();  // 297
-  const margin = 14;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 15;
   const contentWidth = pageWidth - margin * 2;
-  let y = margin;
+  let y = 0;
 
   // ── Load logo ──
   let logoData: string | null = null;
@@ -137,91 +188,85 @@ export async function generateAnamnesisPdf(options: AnamnesisPdfOptions) {
   }
 
   // ════════════════════════════════════════════════════
-  //  HEADER – Logo left + Title right
+  //  HEADER
   // ════════════════════════════════════════════════════
 
-  // Header background bar
-  doc.setFillColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
-  doc.rect(0, 0, pageWidth, 28, "F");
+  // Light background area for the header
+  doc.setFillColor(PRIMARY_LIGHT.r, PRIMARY_LIGHT.g, PRIMARY_LIGHT.b);
+  doc.rect(0, 0, pageWidth, 38, "F");
 
   // Logo
-  const logoSize = 24;
+  const logoSize = 28;
+  const logoY = 6.5;
   if (logoData) {
     try {
-      doc.addImage(logoData, "AUTO", margin, 2, logoSize, logoSize);
+      doc.addImage(logoData, "AUTO", margin, logoY, logoSize, logoSize);
     } catch {
-      // logo failed, skip
+      // logo failed
     }
   }
 
-  // Title text
-  const titleX = logoData ? margin + logoSize + 4 : margin;
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(16);
-  doc.setFont("helvetica", "bold");
-  doc.text("FICHA DE ANAMNESE", titleX, 12);
+  // Title block (right of logo)
+  const titleX = logoData ? margin + logoSize + 6 : margin;
 
-  // Subtitle
+  doc.setFontSize(18);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(DARK.r, DARK.g, DARK.b);
+  doc.text("Ficha de Anamnese", titleX, 16);
+
   doc.setFontSize(9);
   doc.setFont("helvetica", "normal");
-  const subtitle = isManual ? "Formulario para preenchimento pelo paciente" : "Formulario preenchido digitalmente";
-  doc.text(subtitle, titleX, 18);
+  doc.setTextColor(MUTED.r, MUTED.g, MUTED.b);
+  const subtitle = isManual
+    ? "Formulario para preenchimento pelo paciente"
+    : "Formulario preenchido digitalmente";
+  doc.text(subtitle, titleX, 22);
 
-  // Company name on the right
+  // Company name below subtitle
   if (companyName) {
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "normal");
-    doc.text(companyName, pageWidth - margin, 18, { align: "right" });
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
+    doc.text(companyName, titleX, 29);
   }
 
   // Date on the right
-  doc.setFontSize(7);
-  doc.text(`Data: ${new Date().toLocaleDateString("pt-BR")}`, pageWidth - margin, 24, { align: "right" });
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(MUTED.r, MUTED.g, MUTED.b);
+  doc.text(`Data: ${new Date().toLocaleDateString("pt-BR")}`, pageWidth - margin, 33, { align: "right" });
 
-  doc.setTextColor(0, 0, 0);
-  y = 34;
+  y = 43;
 
   // ════════════════════════════════════════════════════
   //  PATIENT IDENTIFICATION
   // ════════════════════════════════════════════════════
 
-  // Section title bar
-  doc.setFillColor(LIGHT_BG.r, LIGHT_BG.g, LIGHT_BG.b);
-  doc.rect(margin, y, contentWidth, 7, "F");
-  doc.setDrawColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
-  doc.setLineWidth(0.6);
-  doc.line(margin, y, margin, y + 7); // left accent bar
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(DARK.r, DARK.g, DARK.b);
-  doc.text("IDENTIFICACAO DO PACIENTE", margin + 3, y + 4.8);
-  y += 10;
+  drawSectionHeader(doc, margin, y, contentWidth, 8, "IDENTIFICACAO DO PACIENTE", PRIMARY);
+  y += 13;
 
-  const colLeft = margin;
-  const colRight = margin + contentWidth / 2 + 2;
-  const fieldW = contentWidth / 2 - 2;
+  const colLeft = margin + 2;
+  const colRight = margin + contentWidth / 2 + 4;
+  const fieldW = contentWidth / 2 - 6;
 
   if (isManual) {
-    // Two-column patient fields
     const leftFields = ["Nome completo", "Data de nascimento", "Telefone", "Ocupacao"];
     const rightFields = ["Sexo", "Idade", "E-mail", "Responsavel"];
 
-    doc.setFontSize(8);
     for (let i = 0; i < leftFields.length; i++) {
-      y = checkPage(doc, y, 9, 34);
+      y = checkPage(doc, y, 11, 43);
       // Left
-      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
       doc.setTextColor(MUTED.r, MUTED.g, MUTED.b);
       doc.text(leftFields[i], colLeft, y);
-      doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-      doc.setLineWidth(0.2);
-      doc.line(colLeft, y + 4.5, colLeft + fieldW, y + 4.5);
+      drawUnderline(doc, colLeft, y + 5, fieldW);
 
       // Right
       doc.text(rightFields[i], colRight, y);
-      doc.line(colRight, y + 4.5, colRight + fieldW, y + 4.5);
+      drawUnderline(doc, colRight, y + 5, fieldW);
 
-      y += 9;
+      y += 11;
     }
   } else if (patient) {
     const leftData: [string, string][] = [];
@@ -233,48 +278,49 @@ export async function generateAnamnesisPdf(options: AnamnesisPdfOptions) {
       leftData.push(["Nascimento", formatDateBR(patient.birthDate)]);
       rightData.push(["Idade", age !== null ? `${age} anos` : ""]);
     }
-    if (patient.sex) rightData.push(["Sexo", SEX_LABELS[patient.sex] || patient.sex]);
+    if (patient.sex) rightData.unshift(["Sexo", SEX_LABELS[patient.sex] || patient.sex]);
     if (patient.phone) leftData.push(["Telefone", patient.phone]);
     if (patient.email) rightData.push(["E-mail", patient.email]);
     if (patient.occupation) leftData.push(["Ocupacao", patient.occupation]);
     if (patient.guardian) rightData.push(["Responsavel", patient.guardian]);
 
     const maxRows = Math.max(leftData.length, rightData.length);
-    doc.setFontSize(8);
     for (let i = 0; i < maxRows; i++) {
-      y = checkPage(doc, y, 9, 34);
+      y = checkPage(doc, y, 10, 43);
+
       // Left column
       if (leftData[i]) {
-        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "normal");
         doc.setTextColor(MUTED.r, MUTED.g, MUTED.b);
         doc.text(leftData[i][0], colLeft, y);
-        const lw = doc.getTextWidth(leftData[i][0] + "  ");
-        doc.setFont("helvetica", "normal");
+        const lw = doc.getTextWidth(leftData[i][0]) + 3;
+        doc.setFont("helvetica", "bold");
         doc.setTextColor(DARK.r, DARK.g, DARK.b);
+        doc.setFontSize(9);
         doc.text(leftData[i][1], colLeft + lw, y);
       }
-      // Separator
-      doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-      doc.setLineWidth(0.15);
-      doc.line(colLeft, y + 2.5, colLeft + fieldW, y + 2.5);
+      drawUnderline(doc, colLeft, y + 3, fieldW);
 
       // Right column
       if (rightData[i]) {
-        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "normal");
         doc.setTextColor(MUTED.r, MUTED.g, MUTED.b);
         doc.text(rightData[i][0], colRight, y);
-        const lw = doc.getTextWidth(rightData[i][0] + "  ");
-        doc.setFont("helvetica", "normal");
+        const lw = doc.getTextWidth(rightData[i][0]) + 3;
+        doc.setFont("helvetica", "bold");
         doc.setTextColor(DARK.r, DARK.g, DARK.b);
+        doc.setFontSize(9);
         doc.text(rightData[i][1], colRight + lw, y);
       }
-      doc.line(colRight, y + 2.5, colRight + fieldW, y + 2.5);
+      drawUnderline(doc, colRight, y + 3, fieldW);
 
-      y += 7;
+      y += 10;
     }
   }
 
-  y += 3;
+  y += 4;
 
   // ════════════════════════════════════════════════════
   //  FORM FIELDS BY SECTION
@@ -288,101 +334,99 @@ export async function generateAnamnesisPdf(options: AnamnesisPdfOptions) {
   }, {});
 
   for (const [sectionName, sectionFields] of Object.entries(sections)) {
-    y = checkPage(doc, y, 16, 34);
+    y = checkPage(doc, y, 20, 43);
 
-    // Section header bar
-    doc.setFillColor(LIGHT_BG.r, LIGHT_BG.g, LIGHT_BG.b);
-    doc.rect(margin, y, contentWidth, 7, "F");
-    doc.setDrawColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
-    doc.setLineWidth(0.6);
-    doc.line(margin, y, margin, y + 7);
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(DARK.r, DARK.g, DARK.b);
-    doc.text(sectionName.toUpperCase(), margin + 3, y + 4.8);
-    y += 10;
+    // Section header with rounded colored background
+    drawSectionHeader(doc, margin, y, contentWidth, 8, sectionName.toUpperCase(), PRIMARY);
+    y += 13;
 
     const sortedFields = [...sectionFields].sort((a, b) => a.sortOrder - b.sortOrder);
 
     for (const field of sortedFields) {
-      y = checkPage(doc, y, 12, 34);
+      y = checkPage(doc, y, 14, 43);
 
       const fieldOpts = safeOptions(field.options);
 
       // Field label
-      doc.setFontSize(8.5);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(DARK.r, DARK.g, DARK.b);
-      const label = `${field.label}${field.isRequired ? " *" : ""}`;
-      doc.text(label, margin + 1, y);
-      y += 4;
+      drawFieldLabel(doc, margin + 2, y, field.label, !!field.isRequired);
+      y += 5;
 
       if (isManual) {
         // ── MANUAL MODE ──
         doc.setFont("helvetica", "normal");
-        doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-        doc.setLineWidth(0.2);
+        doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
 
         switch (field.fieldType) {
           case "textarea": {
-            const boxH = 16;
-            y = checkPage(doc, y, boxH + 3, 34);
-            doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-            doc.rect(margin, y, contentWidth, boxH);
-            y += boxH + 3;
+            const boxH = 20;
+            y = checkPage(doc, y, boxH + 4, 43);
+            doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
+            doc.setLineWidth(0.3);
+            doc.roundedRect(margin + 1, y, contentWidth - 2, boxH, 1.5, 1.5);
+            // Draw faint guide lines inside
+            doc.setLineWidth(0.1);
+            doc.setDrawColor(220, 220, 220);
+            for (let lineY = y + 5; lineY < y + boxH - 1; lineY += 5) {
+              doc.line(margin + 4, lineY, margin + contentWidth - 5, lineY);
+            }
+            y += boxH + 4;
             break;
           }
           case "boolean": {
-            doc.setFontSize(8);
+            doc.setFontSize(9);
             doc.setTextColor(DARK.r, DARK.g, DARK.b);
+            doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
+            doc.setLineWidth(0.3);
             // Sim
-            doc.rect(margin + 1, y - 2.5, 3.5, 3.5);
-            doc.text("Sim", margin + 6, y);
+            doc.roundedRect(margin + 2, y - 3, 4, 4, 0.8, 0.8);
+            doc.text("Sim", margin + 8, y);
             // Nao
-            doc.rect(margin + 22, y - 2.5, 3.5, 3.5);
-            doc.text("Nao", margin + 27, y);
-            y += 6;
+            doc.roundedRect(margin + 25, y - 3, 4, 4, 0.8, 0.8);
+            doc.text("Nao", margin + 31, y);
+            y += 7;
             break;
           }
           case "select": {
-            doc.setFontSize(8);
+            doc.setFontSize(8.5);
             doc.setTextColor(DARK.r, DARK.g, DARK.b);
-            let xOpt = margin + 1;
-            const optY = y;
+            let xOpt = margin + 2;
             for (const opt of fieldOpts) {
-              const optW = doc.getTextWidth(opt) + 8;
+              const optW = doc.getTextWidth(opt) + 10;
               if (xOpt + optW > pageWidth - margin) {
-                y += 5.5;
-                xOpt = margin + 1;
+                y += 6;
+                xOpt = margin + 2;
               }
-              doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-              doc.ellipse(xOpt + 1.5, y - 0.8, 1.5, 1.5);
-              doc.text(opt, xOpt + 4.5, y);
+              doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
+              doc.setLineWidth(0.3);
+              doc.circle(xOpt + 2, y - 1, 1.8);
+              doc.text(opt, xOpt + 6, y);
               xOpt += optW;
             }
-            y += 6;
+            y += 7;
             break;
           }
           case "checkbox": {
-            doc.setFontSize(8);
+            doc.setFontSize(8.5);
             doc.setTextColor(DARK.r, DARK.g, DARK.b);
-            let xOpt = margin + 1;
+            let xOpt = margin + 2;
             for (const opt of fieldOpts) {
-              const optW = doc.getTextWidth(opt) + 9;
+              const optW = doc.getTextWidth(opt) + 11;
               if (xOpt + optW > pageWidth - margin) {
-                y += 5.5;
-                xOpt = margin + 1;
+                y += 6;
+                xOpt = margin + 2;
               }
-              doc.rect(xOpt, y - 2.5, 3.5, 3.5);
-              doc.text(opt, xOpt + 5, y);
+              doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
+              doc.setLineWidth(0.3);
+              doc.roundedRect(xOpt, y - 3, 4, 4, 0.8, 0.8);
+              doc.text(opt, xOpt + 6, y);
               xOpt += optW;
             }
-            y += 6;
+            y += 7;
             break;
           }
           default: {
-            doc.line(margin, y + 0.5, pageWidth - margin, y + 0.5);
-            y += 6;
+            drawUnderline(doc, margin + 1, y + 1, contentWidth - 2);
+            y += 7;
             break;
           }
         }
@@ -393,166 +437,181 @@ export async function generateAnamnesisPdf(options: AnamnesisPdfOptions) {
         const displayValue = getFieldDisplayValue(field, answers[String(field.id)]);
 
         if (field.fieldType === "boolean") {
-          doc.setFontSize(8);
+          doc.setFontSize(9);
           const val = answers[String(field.id)];
+          doc.setLineWidth(0.3);
+
           // Sim
           if (val) {
             doc.setFillColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
-            doc.rect(margin + 1, y - 2.5, 3.5, 3.5, "FD");
+            doc.setDrawColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
+            doc.roundedRect(margin + 2, y - 3, 4, 4, 0.8, 0.8, "FD");
             doc.setTextColor(255, 255, 255);
-            doc.setFontSize(7);
-            doc.text("X", margin + 1.8, y);
-            doc.setTextColor(DARK.r, DARK.g, DARK.b);
             doc.setFontSize(8);
+            doc.setFont("helvetica", "bold");
+            doc.text("X", margin + 2.8, y);
+            doc.setFont("helvetica", "normal");
           } else {
-            doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-            doc.rect(margin + 1, y - 2.5, 3.5, 3.5);
+            doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
+            doc.roundedRect(margin + 2, y - 3, 4, 4, 0.8, 0.8);
           }
-          doc.text("Sim", margin + 6, y);
+          doc.setTextColor(DARK.r, DARK.g, DARK.b);
+          doc.setFontSize(9);
+          doc.text("Sim", margin + 8, y);
+
           // Nao
           if (!val) {
             doc.setFillColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
-            doc.rect(margin + 22, y - 2.5, 3.5, 3.5, "FD");
+            doc.setDrawColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
+            doc.roundedRect(margin + 25, y - 3, 4, 4, 0.8, 0.8, "FD");
             doc.setTextColor(255, 255, 255);
-            doc.setFontSize(7);
-            doc.text("X", margin + 22.8, y);
-            doc.setTextColor(DARK.r, DARK.g, DARK.b);
             doc.setFontSize(8);
+            doc.setFont("helvetica", "bold");
+            doc.text("X", margin + 25.8, y);
+            doc.setFont("helvetica", "normal");
           } else {
-            doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-            doc.rect(margin + 22, y - 2.5, 3.5, 3.5);
+            doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
+            doc.roundedRect(margin + 25, y - 3, 4, 4, 0.8, 0.8);
           }
-          doc.text("Nao", margin + 27, y);
-          y += 6;
+          doc.setTextColor(DARK.r, DARK.g, DARK.b);
+          doc.setFontSize(9);
+          doc.text("Nao", margin + 31, y);
+          y += 7;
 
         } else if (field.fieldType === "select") {
-          doc.setFontSize(8);
-          let xOpt = margin + 1;
+          doc.setFontSize(8.5);
+          let xOpt = margin + 2;
           for (const opt of fieldOpts) {
-            const optW = doc.getTextWidth(opt) + 8;
+            const optW = doc.getTextWidth(opt) + 10;
             if (xOpt + optW > pageWidth - margin) {
-              y += 5.5;
-              xOpt = margin + 1;
+              y += 6;
+              xOpt = margin + 2;
             }
             if (opt === displayValue) {
               doc.setFillColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
-              doc.ellipse(xOpt + 1.5, y - 0.8, 1.5, 1.5, "F");
+              doc.setDrawColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
+              doc.circle(xOpt + 2, y - 1, 1.8, "F");
             } else {
-              doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-              doc.ellipse(xOpt + 1.5, y - 0.8, 1.5, 1.5);
+              doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
+              doc.setLineWidth(0.3);
+              doc.circle(xOpt + 2, y - 1, 1.8);
             }
             doc.setTextColor(DARK.r, DARK.g, DARK.b);
-            doc.text(opt, xOpt + 4.5, y);
+            doc.text(opt, xOpt + 6, y);
             xOpt += optW;
           }
-          y += 6;
+          y += 7;
 
         } else if (field.fieldType === "checkbox") {
           const selectedVals: string[] = Array.isArray(answers[String(field.id)])
             ? answers[String(field.id)]
             : [];
-          doc.setFontSize(8);
-          let xOpt = margin + 1;
+          doc.setFontSize(8.5);
+          let xOpt = margin + 2;
           for (const opt of fieldOpts) {
-            const optW = doc.getTextWidth(opt) + 9;
+            const optW = doc.getTextWidth(opt) + 11;
             if (xOpt + optW > pageWidth - margin) {
-              y += 5.5;
-              xOpt = margin + 1;
+              y += 6;
+              xOpt = margin + 2;
             }
+            doc.setLineWidth(0.3);
             if (selectedVals.includes(opt)) {
               doc.setFillColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
-              doc.rect(xOpt, y - 2.5, 3.5, 3.5, "FD");
+              doc.setDrawColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
+              doc.roundedRect(xOpt, y - 3, 4, 4, 0.8, 0.8, "FD");
               doc.setTextColor(255, 255, 255);
-              doc.setFontSize(7);
-              doc.text("X", xOpt + 0.8, y);
-              doc.setTextColor(DARK.r, DARK.g, DARK.b);
               doc.setFontSize(8);
+              doc.setFont("helvetica", "bold");
+              doc.text("X", xOpt + 0.8, y);
+              doc.setFont("helvetica", "normal");
+              doc.setTextColor(DARK.r, DARK.g, DARK.b);
+              doc.setFontSize(8.5);
             } else {
-              doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-              doc.rect(xOpt, y - 2.5, 3.5, 3.5);
+              doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
+              doc.roundedRect(xOpt, y - 3, 4, 4, 0.8, 0.8);
             }
-            doc.text(opt, xOpt + 5, y);
+            doc.text(opt, xOpt + 6, y);
             xOpt += optW;
           }
-          y += 6;
+          y += 7;
 
         } else if (field.fieldType === "textarea") {
-          doc.setFontSize(8);
+          doc.setFontSize(9);
           if (displayValue) {
-            const lines = doc.splitTextToSize(displayValue, contentWidth - 6);
-            const boxH = Math.max(10, lines.length * 4 + 4);
-            y = checkPage(doc, y, boxH + 3, 34);
-            doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
+            const lines = doc.splitTextToSize(displayValue, contentWidth - 10);
+            const boxH = Math.max(14, lines.length * 4.5 + 6);
+            y = checkPage(doc, y, boxH + 4, 43);
+            // Light background box
+            doc.setFillColor(PRIMARY_LIGHT.r, PRIMARY_LIGHT.g, PRIMARY_LIGHT.b);
+            doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
             doc.setLineWidth(0.2);
-            doc.rect(margin, y, contentWidth, boxH);
+            doc.roundedRect(margin + 1, y, contentWidth - 2, boxH, 1.5, 1.5, "FD");
             doc.setTextColor(DARK.r, DARK.g, DARK.b);
-            doc.text(lines, margin + 3, y + 3.5);
-            y += boxH + 3;
+            doc.text(lines, margin + 5, y + 4.5);
+            y += boxH + 4;
           } else {
-            doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-            doc.rect(margin, y, contentWidth, 10);
-            y += 13;
+            doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
+            doc.setLineWidth(0.2);
+            doc.roundedRect(margin + 1, y, contentWidth - 2, 14, 1.5, 1.5);
+            y += 18;
           }
         } else {
-          doc.setFontSize(8);
+          // text, number, date, etc.
+          doc.setFontSize(9);
           doc.setTextColor(DARK.r, DARK.g, DARK.b);
           if (displayValue) {
-            doc.text(displayValue, margin + 1, y);
+            doc.text(displayValue, margin + 2, y);
           }
-          doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-          doc.setLineWidth(0.15);
-          doc.line(margin, y + 2, pageWidth - margin, y + 2);
-          y += 6;
+          drawUnderline(doc, margin + 1, y + 2.5, contentWidth - 2);
+          y += 7;
         }
       }
     }
 
-    y += 3;
+    y += 5;
   }
 
   // ════════════════════════════════════════════════════
   //  NOTES SECTION
   // ════════════════════════════════════════════════════
 
-  y = checkPage(doc, y, 24, 34);
+  y = checkPage(doc, y, 28, 43);
 
-  // Section header
-  doc.setFillColor(LIGHT_BG.r, LIGHT_BG.g, LIGHT_BG.b);
-  doc.rect(margin, y, contentWidth, 7, "F");
-  doc.setDrawColor(PRIMARY.r, PRIMARY.g, PRIMARY.b);
-  doc.setLineWidth(0.6);
-  doc.line(margin, y, margin, y + 7);
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(DARK.r, DARK.g, DARK.b);
-  doc.text("OBSERVACOES ADICIONAIS", margin + 3, y + 4.8);
-  y += 10;
+  drawSectionHeader(doc, margin, y, contentWidth, 8, "OBSERVACOES ADICIONAIS", PRIMARY);
+  y += 13;
 
   if (isManual) {
-    doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-    doc.setLineWidth(0.15);
-    for (let i = 0; i < 5; i++) {
-      y = checkPage(doc, y, 7, 34);
-      doc.line(margin, y, pageWidth - margin, y);
-      y += 7;
+    // Draw lined box for manual notes
+    const boxH = 30;
+    y = checkPage(doc, y, boxH + 4, 43);
+    doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(margin + 1, y, contentWidth - 2, boxH, 1.5, 1.5);
+    doc.setLineWidth(0.1);
+    doc.setDrawColor(220, 220, 220);
+    for (let lineY = y + 5; lineY < y + boxH - 1; lineY += 5) {
+      doc.line(margin + 4, lineY, margin + contentWidth - 5, lineY);
     }
+    y += boxH + 4;
   } else {
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
+    doc.setFontSize(9);
     doc.setTextColor(DARK.r, DARK.g, DARK.b);
     if (notes) {
-      const noteLines = doc.splitTextToSize(notes, contentWidth - 6);
-      const boxH = Math.max(12, noteLines.length * 4 + 4);
-      y = checkPage(doc, y, boxH + 3, 34);
-      doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
+      const noteLines = doc.splitTextToSize(notes, contentWidth - 10);
+      const boxH = Math.max(14, noteLines.length * 4.5 + 6);
+      y = checkPage(doc, y, boxH + 4, 43);
+      doc.setFillColor(PRIMARY_LIGHT.r, PRIMARY_LIGHT.g, PRIMARY_LIGHT.b);
+      doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
       doc.setLineWidth(0.2);
-      doc.rect(margin, y, contentWidth, boxH);
-      doc.text(noteLines, margin + 3, y + 3.5);
-      y += boxH + 3;
+      doc.roundedRect(margin + 1, y, contentWidth - 2, boxH, 1.5, 1.5, "FD");
+      doc.text(noteLines, margin + 5, y + 4.5);
+      y += boxH + 4;
     } else {
-      doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-      doc.rect(margin, y, contentWidth, 12);
-      y += 15;
+      doc.setDrawColor(FIELD_LINE.r, FIELD_LINE.g, FIELD_LINE.b);
+      doc.setLineWidth(0.2);
+      doc.roundedRect(margin + 1, y, contentWidth - 2, 14, 1.5, 1.5);
+      y += 18;
     }
   }
 
@@ -560,30 +619,29 @@ export async function generateAnamnesisPdf(options: AnamnesisPdfOptions) {
   //  SIGNATURE SECTION
   // ════════════════════════════════════════════════════
 
-  y = checkPage(doc, y, 35, 34);
-  y += 12;
+  y = checkPage(doc, y, 40, 43);
+  y += 15;
+
+  const signWidth = (contentWidth - 30) / 2;
 
   doc.setDrawColor(DARK.r, DARK.g, DARK.b);
-  doc.setLineWidth(0.3);
-
-  const signWidth = (contentWidth - 24) / 2;
+  doc.setLineWidth(0.4);
 
   // Patient signature
   doc.line(margin, y, margin + signWidth, y);
-  doc.setFontSize(7.5);
+  doc.setFontSize(8);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(MUTED.r, MUTED.g, MUTED.b);
-  doc.text("Assinatura do Paciente", margin + signWidth / 2, y + 4.5, { align: "center" });
+  doc.text("Assinatura do Paciente", margin + signWidth / 2, y + 5, { align: "center" });
 
   // Professional signature
-  doc.line(margin + signWidth + 24, y, pageWidth - margin, y);
-  doc.text("Assinatura do Profissional", margin + signWidth + 24 + signWidth / 2, y + 4.5, {
-    align: "center",
-  });
+  const rightSignX = margin + signWidth + 30;
+  doc.line(rightSignX, y, pageWidth - margin, y);
+  doc.text("Assinatura do Profissional", rightSignX + signWidth / 2, y + 5, { align: "center" });
 
-  y += 10;
+  y += 12;
   doc.setTextColor(MUTED.r, MUTED.g, MUTED.b);
-  doc.setFontSize(7.5);
+  doc.setFontSize(8);
   if (isManual) {
     doc.text("Data: ____/____/________", pageWidth / 2, y, { align: "center" });
   } else {
@@ -598,19 +656,11 @@ export async function generateAnamnesisPdf(options: AnamnesisPdfOptions) {
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
 
-    // Bottom line
-    doc.setDrawColor(LINE_COLOR.r, LINE_COLOR.g, LINE_COLOR.b);
-    doc.setLineWidth(0.3);
-    doc.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12);
-
     doc.setFontSize(7);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(MUTED.r, MUTED.g, MUTED.b);
 
-    if (companyName) {
-      doc.text(companyName, margin, pageHeight - 8);
-    }
-    doc.text(`Pagina ${i} de ${totalPages}`, pageWidth - margin, pageHeight - 8, { align: "right" });
+    doc.text(`Pagina ${i} de ${totalPages}`, pageWidth - margin, pageHeight - 5, { align: "right" });
   }
 
   // ── Save ──
