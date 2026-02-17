@@ -12191,7 +12191,7 @@ Obrigado pela preferência! 🙏`;
         try {
           const pkgSessions = await storage.getAppointmentsByPackage(updatedAppointment.packageId);
           const completedCount = pkgSessions.filter(s => ['Concluído', 'concluido'].includes(s.status)).length;
-          const cancelledCount = pkgSessions.filter(s => ['Cancelado', 'cancelado'].includes(s.status)).length;
+          const cancelledCount = pkgSessions.filter(s => ['Cancelado', 'cancelado', 'Não compareceu', 'Nao compareceu', 'não compareceu'].includes(s.status)).length;
           const updatePkgData: any = { completedSessions: completedCount, cancelledSessions: cancelledCount };
 
           const currentPkg = await storage.getTreatmentPackage(updatedAppointment.packageId);
@@ -19927,6 +19927,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       });
 
       const appointmentRevenue = monthlyAppointments
+        .filter((apt: any) => ['Concluído', 'concluido'].includes(apt.status))
         .reduce((sum: number, apt: any) => sum + (parseFloat(apt.totalPrice) || 0), 0);
 
       // Calculate transaction-based income and expenses
@@ -20508,7 +20509,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         // Count actual session statuses
         const sessions = await storage.getAppointmentsByPackage(pkg.id);
         const completed = sessions.filter(s => ['Concluído', 'concluido'].includes(s.status)).length;
-        const cancelled = sessions.filter(s => ['Cancelado', 'cancelado'].includes(s.status)).length;
+        const cancelled = sessions.filter(s => ['Cancelado', 'cancelado', 'Não compareceu', 'Nao compareceu', 'não compareceu'].includes(s.status)).length;
 
         return {
           ...pkg,
@@ -20547,7 +20548,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       ]);
 
       const completed = sessions.filter(s => ['Concluído', 'concluido'].includes(s.status)).length;
-      const cancelled = sessions.filter(s => ['Cancelado', 'cancelado'].includes(s.status)).length;
+      const cancelled = sessions.filter(s => ['Cancelado', 'cancelado', 'Não compareceu', 'Nao compareceu', 'não compareceu'].includes(s.status)).length;
 
       res.json({
         ...pkg,
@@ -20752,7 +20753,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         const sessions = await storage.getAppointmentsByPackage(packageId);
         const today = new Date().toISOString().split('T')[0];
         for (const session of sessions) {
-          if (session.appointmentDate >= today && ['agendado', 'Pendente'].includes(session.status)) {
+          if (session.appointmentDate >= today && ['agendado', 'Agendado', 'Pendente', 'pendente', 'confirmado', 'Confirmado'].includes(session.status)) {
             await storage.updateAppointment(session.id, { status: 'Cancelado' });
           }
         }
