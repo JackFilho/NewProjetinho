@@ -70,6 +70,8 @@ import {
   X,
   Trash2,
   Eye,
+  UserX,
+  Pencil,
 } from "lucide-react";
 
 interface TreatmentPackage {
@@ -184,6 +186,9 @@ function getSessionStatusBadge(status: string) {
   if (lower === "cancelado") {
     return <Badge className="bg-red-100 text-red-800 hover:bg-red-100 text-xs">Cancelado</Badge>;
   }
+  if (lower === "não compareceu" || lower === "nao compareceu") {
+    return <Badge className="bg-orange-100 text-orange-800 hover:bg-orange-100 text-xs">Não compareceu</Badge>;
+  }
   if (lower === "confirmado") {
     return <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100 text-xs">Confirmado</Badge>;
   }
@@ -214,6 +219,11 @@ export default function CompanyPackages() {
   const [searchTerm, setSearchTerm] = useState("");
   const [clientComboboxOpen, setClientComboboxOpen] = useState(false);
   const [deletePackageId, setDeletePackageId] = useState<number | null>(null);
+  const [confirmCompleteId, setConfirmCompleteId] = useState<number | null>(null);
+  const [confirmNoShowId, setConfirmNoShowId] = useState<number | null>(null);
+  const [editingSession, setEditingSession] = useState<PackageSession | null>(null);
+  const [editDate, setEditDate] = useState("");
+  const [editTime, setEditTime] = useState("");
 
   // Queries
   const { data: packages = [], isLoading } = useQuery<TreatmentPackage[]>({
@@ -345,6 +355,51 @@ export default function CompanyPackages() {
       queryClient.invalidateQueries({ queryKey: [`/api/company/treatment-packages/${selectedPackageId}`] });
       queryClient.invalidateQueries({ queryKey: ["/api/company/appointments"] });
       toast({ title: "Sessão concluída com sucesso" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Erro", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const noShowMutation = useMutation({
+    mutationFn: async (appointmentId: number) => {
+      const response = await fetch(`/api/company/appointments/${appointmentId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "Não compareceu" }),
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error("Erro ao registrar falta");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/company/treatment-packages"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/company/treatment-packages/${selectedPackageId}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/company/appointments"] });
+      toast({ title: "Falta registrada com sucesso" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Erro", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const editSessionMutation = useMutation({
+    mutationFn: async ({ id, appointmentDate, appointmentTime }: { id: number; appointmentDate: string; appointmentTime: string }) => {
+      const response = await fetch(`/api/company/appointments/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ appointmentDate, appointmentTime }),
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error("Erro ao atualizar sessão");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/company/treatment-packages"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/company/treatment-packages/${selectedPackageId}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/company/appointments"] });
+      toast({ title: "Sessão atualizada com sucesso" });
+      setEditingSession(null);
     },
     onError: (error: Error) => {
       toast({ title: "Erro", description: error.message, variant: "destructive" });
@@ -846,7 +901,7 @@ export default function CompanyPackages() {
                         </Button>
                       )}
 
-                      {pkg.status === "paused" && (
+                      {(pkg.status === "paused" || pkg.status === "cancelled") && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -972,7 +1027,8 @@ export default function CompanyPackages() {
                   {packageDetail.sessions.map((session) => {
                     const isCompleted = ['Concluído', 'concluido'].includes(session.status.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")) || ['Concluído', 'concluido'].includes(session.status);
                     const isCancelled = session.status.toLowerCase() === 'cancelado';
-                    const canComplete = !isCompleted && !isCancelled;
+                    const isNoShow = session.status.toLowerCase() === 'não compareceu' || session.status.toLowerCase() === 'nao compareceu';
+                    const canComplete = !isCompleted && !isCancelled && !isNoShow;
 
                     return (
                       <div
@@ -991,17 +1047,41 @@ export default function CompanyPackages() {
                           {session.hasConflict && (
                             <AlertTriangle className="h-4 w-4 text-yellow-500" />
                           )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                            onClick={() => {
+                              setEditingSession(session);
+                              setEditDate(session.appointmentDate.split("T")[0]);
+                              setEditTime(session.appointmentTime);
+                            }}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </Button>
                           {canComplete ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-xs bg-green-50 text-green-700 border-green-300 hover:bg-green-100 hover:text-green-800"
-                              disabled={completeSessionMutation.isPending}
-                              onClick={() => completeSessionMutation.mutate(session.id)}
-                            >
-                              <Check className="h-3 w-3 mr-1" />
-                              Concluir
-                            </Button>
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs bg-green-50 text-green-700 border-green-300 hover:bg-green-100 hover:text-green-800"
+                                disabled={completeSessionMutation.isPending || noShowMutation.isPending}
+                                onClick={() => setConfirmCompleteId(session.id)}
+                              >
+                                <Check className="h-3 w-3 mr-1" />
+                                Concluir
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs bg-orange-50 text-orange-700 border-orange-300 hover:bg-orange-100 hover:text-orange-800"
+                                disabled={noShowMutation.isPending || completeSessionMutation.isPending}
+                                onClick={() => setConfirmNoShowId(session.id)}
+                              >
+                                <UserX className="h-3 w-3 mr-1" />
+                                Não compareceu
+                              </Button>
+                            </>
                           ) : (
                             getSessionStatusBadge(session.status)
                           )}
@@ -1017,6 +1097,94 @@ export default function CompanyPackages() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Edit Session Dialog */}
+      <Dialog open={!!editingSession} onOpenChange={(open) => !open && setEditingSession(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Editar sessão {editingSession?.sessionNumber}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Data</label>
+              <Input
+                type="date"
+                value={editDate}
+                onChange={(e) => setEditDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Horário</label>
+              <Input
+                type="time"
+                value={editTime}
+                onChange={(e) => setEditTime(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setEditingSession(null)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={!editDate || !editTime || editSessionMutation.isPending}
+              onClick={() => {
+                if (editingSession) {
+                  editSessionMutation.mutate({
+                    id: editingSession.id,
+                    appointmentDate: editDate,
+                    appointmentTime: editTime,
+                  });
+                }
+              }}
+            >
+              Salvar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Complete Session Confirmation */}
+      <AlertDialog open={!!confirmCompleteId} onOpenChange={(open) => !open && setConfirmCompleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar conclusão da sessão?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A sessão será marcada como concluída. Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction
+              className="bg-green-600 hover:bg-green-700"
+              onClick={() => { if (confirmCompleteId) completeSessionMutation.mutate(confirmCompleteId); setConfirmCompleteId(null); }}
+            >
+              Confirmar
+            </AlertDialogAction>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* No-Show Confirmation */}
+      <AlertDialog open={!!confirmNoShowId} onOpenChange={(open) => !open && setConfirmNoShowId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Registrar não comparecimento?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A sessão será marcada como "Não compareceu". Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction
+              className="bg-orange-600 hover:bg-orange-700"
+              onClick={() => { if (confirmNoShowId) noShowMutation.mutate(confirmNoShowId); setConfirmNoShowId(null); }}
+            >
+              Confirmar
+            </AlertDialogAction>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete Confirmation */}
       <AlertDialog open={!!deletePackageId} onOpenChange={(open) => !open && setDeletePackageId(null)}>
