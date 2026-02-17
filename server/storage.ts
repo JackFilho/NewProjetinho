@@ -366,11 +366,17 @@ export interface IStorage {
   deleteClinicalEvolution(id: number): Promise<void>;
 
   // Treatment packages
-  getTreatmentPackagesByCompany(companyId: number): Promise<TreatmentPackage[]>;
+  getTreatmentPackagesByCompany(
+    companyId: number,
+    options?: { page?: number; limit?: number; archived?: number; status?: string; search?: string; }
+  ): Promise<{ data: TreatmentPackage[]; total: number; page: number; totalPages: number }>;
   getTreatmentPackage(id: number): Promise<TreatmentPackage | undefined>;
   createTreatmentPackage(pkg: InsertTreatmentPackage): Promise<TreatmentPackage>;
   updateTreatmentPackage(id: number, data: Partial<InsertTreatmentPackage>): Promise<TreatmentPackage>;
   deleteTreatmentPackage(id: number): Promise<void>;
+  archiveTreatmentPackage(id: number): Promise<void>;
+  unarchiveTreatmentPackage(id: number): Promise<void>;
+  autoArchiveOldPackages(): Promise<number>;
   getAppointmentsByPackage(packageId: number): Promise<Appointment[]>;
 }
 
@@ -4187,11 +4193,53 @@ Obrigado pela preferência! 🙏`;
   }
 
   // Treatment packages
-  async getTreatmentPackagesByCompany(companyId: number): Promise<TreatmentPackage[]> {
+  async getTreatmentPackagesByCompany(
+    companyId: number,
+    options: { page?: number; limit?: number; archived?: number; status?: string; search?: string; } = {}
+  ): Promise<{ data: TreatmentPackage[]; total: number; page: number; totalPages: number }> {
     try {
-      return await db.select().from(treatmentPackages)
-        .where(eq(treatmentPackages.companyId, companyId))
-        .orderBy(desc(treatmentPackages.createdAt));
+      const page = options.page || 1;
+      const limit = options.limit || 10;
+      const offset = (page - 1) * limit;
+      const archived = options.archived ?? 0;
+
+      // Build WHERE conditions
+      const conditions: any[] = [
+        eq(treatmentPackages.companyId, companyId),
+        eq(treatmentPackages.archived, archived),
+      ];
+
+      if (options.status && options.status !== 'all') {
+        conditions.push(eq(treatmentPackages.status, options.status));
+      }
+
+      // Busca textual com subqueries EXISTS (mantém camelCase do Drizzle)
+      if (options.search && options.search.trim()) {
+        const searchTerm = `%${options.search.trim()}%`;
+        conditions.push(sql`(
+          EXISTS (SELECT 1 FROM clients c WHERE c.id = ${treatmentPackages.clientId} AND c.name LIKE ${searchTerm}) OR
+          EXISTS (SELECT 1 FROM professionals p WHERE p.id = ${treatmentPackages.professionalId} AND p.name LIKE ${searchTerm}) OR
+          EXISTS (SELECT 1 FROM services s WHERE s.id = ${treatmentPackages.serviceId} AND s.name LIKE ${searchTerm})
+        )`);
+      }
+
+      const whereClause = and(...conditions);
+
+      // Contar total
+      const [countRow] = await db.select({ count: sql<number>`COUNT(*)` })
+        .from(treatmentPackages)
+        .where(whereClause);
+      const total = Number(countRow?.count || 0);
+      const totalPages = Math.ceil(total / limit);
+
+      // Buscar página
+      const data = await db.select().from(treatmentPackages)
+        .where(whereClause)
+        .orderBy(desc(treatmentPackages.createdAt))
+        .limit(limit)
+        .offset(offset);
+
+      return { data, total, page, totalPages };
     } catch (error: any) {
       console.error("Error getting treatment packages:", error);
       throw error;
@@ -4270,6 +4318,50 @@ Obrigado pela preferência! 🙏`;
     } catch (error: any) {
       console.error("Error deleting treatment package:", error);
       throw error;
+    }
+  }
+
+  async archiveTreatmentPackage(id: number): Promise<void> {
+    try {
+      await db.update(treatmentPackages)
+        .set({ archived: 1, updatedAt: new Date() })
+        .where(eq(treatmentPackages.id, id));
+    } catch (error: any) {
+      console.error("Error archiving treatment package:", error);
+      throw error;
+    }
+  }
+
+  async unarchiveTreatmentPackage(id: number): Promise<void> {
+    try {
+      await db.update(treatmentPackages)
+        .set({ archived: 0, updatedAt: new Date() })
+        .where(eq(treatmentPackages.id, id));
+    } catch (error: any) {
+      console.error("Error unarchiving treatment package:", error);
+      throw error;
+    }
+  }
+
+  async autoArchiveOldPackages(): Promise<number> {
+    try {
+      const threeMonthsAgo = new Date();
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+      const result = await db.update(treatmentPackages)
+        .set({ archived: 1, updatedAt: new Date() })
+        .where(
+          and(
+            eq(treatmentPackages.archived, 0),
+            inArray(treatmentPackages.status, ['completed', 'cancelled']),
+            lte(treatmentPackages.updatedAt, threeMonthsAgo)
+          )
+        );
+
+      return (result as any)[0]?.affectedRows || 0;
+    } catch (error: any) {
+      console.error("Error auto-archiving treatment packages:", error);
+      return 0;
     }
   }
 

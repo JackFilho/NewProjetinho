@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { useForm } from "react-hook-form";
@@ -72,7 +72,13 @@ import {
   Eye,
   UserX,
   Pencil,
+  ChevronLeft,
+  ChevronRight,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 interface TreatmentPackage {
   id: number;
@@ -91,11 +97,19 @@ interface TreatmentPackage {
   status: string;
   notes: string | null;
   totalPrice: string;
+  archived: number;
   clientName: string;
   professionalName: string;
   serviceName: string;
   serviceColor: string;
   createdAt: string;
+}
+
+interface PaginatedResponse {
+  data: TreatmentPackage[];
+  total: number;
+  page: number;
+  totalPages: number;
 }
 
 interface PackageDetail extends TreatmentPackage {
@@ -216,7 +230,10 @@ export default function CompanyPackages() {
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [selectedPackageId, setSelectedPackageId] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [showArchived, setShowArchived] = useState(false);
   const [clientComboboxOpen, setClientComboboxOpen] = useState(false);
   const [deletePackageId, setDeletePackageId] = useState<number | null>(null);
   const [confirmCompleteId, setConfirmCompleteId] = useState<number | null>(null);
@@ -225,10 +242,29 @@ export default function CompanyPackages() {
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
 
-  // Queries
-  const { data: packages = [], isLoading } = useQuery<TreatmentPackage[]>({
-    queryKey: ["/api/company/treatment-packages"],
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchTerm(searchInput);
+      setCurrentPage(1);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  // Reset page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter, showArchived]);
+
+  // Queries — paginação server-side
+  const { data: packagesResponse, isLoading } = useQuery<PaginatedResponse>({
+    queryKey: [`/api/company/treatment-packages?page=${currentPage}&limit=10&archived=${showArchived ? 1 : 0}&status=${statusFilter}&search=${encodeURIComponent(searchTerm)}`],
+    placeholderData: (prev: any) => prev,
   });
+
+  const packages = packagesResponse?.data || [];
+  const totalPages = packagesResponse?.totalPages || 1;
+  const totalItems = packagesResponse?.total || 0;
 
   const { data: packageDetail } = useQuery<PackageDetail>({
     queryKey: [`/api/company/treatment-packages/${selectedPackageId}`],
@@ -292,7 +328,7 @@ export default function CompanyPackages() {
       return response.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/company/treatment-packages"] });
+      queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === 'string' && (query.queryKey[0] as string).startsWith('/api/company/treatment-packages') });
       queryClient.invalidateQueries({ queryKey: ["/api/company/appointments"] });
       setIsCreateOpen(false);
       form.reset();
@@ -330,7 +366,7 @@ export default function CompanyPackages() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/company/treatment-packages"] });
+      queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === 'string' && (query.queryKey[0] as string).startsWith('/api/company/treatment-packages') });
       queryClient.invalidateQueries({ queryKey: ["/api/company/appointments"] });
       toast({ title: "Sessão atualizada com sucesso" });
     },
@@ -351,7 +387,7 @@ export default function CompanyPackages() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/company/treatment-packages"] });
+      queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === 'string' && (query.queryKey[0] as string).startsWith('/api/company/treatment-packages') });
       queryClient.invalidateQueries({ queryKey: [`/api/company/treatment-packages/${selectedPackageId}`] });
       queryClient.invalidateQueries({ queryKey: ["/api/company/appointments"] });
       toast({ title: "Sessão concluída com sucesso" });
@@ -373,7 +409,7 @@ export default function CompanyPackages() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/company/treatment-packages"] });
+      queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === 'string' && (query.queryKey[0] as string).startsWith('/api/company/treatment-packages') });
       queryClient.invalidateQueries({ queryKey: [`/api/company/treatment-packages/${selectedPackageId}`] });
       queryClient.invalidateQueries({ queryKey: ["/api/company/appointments"] });
       toast({ title: "Falta registrada com sucesso" });
@@ -395,7 +431,7 @@ export default function CompanyPackages() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/company/treatment-packages"] });
+      queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === 'string' && (query.queryKey[0] as string).startsWith('/api/company/treatment-packages') });
       queryClient.invalidateQueries({ queryKey: [`/api/company/treatment-packages/${selectedPackageId}`] });
       queryClient.invalidateQueries({ queryKey: ["/api/company/appointments"] });
       toast({ title: "Sessão atualizada com sucesso" });
@@ -416,10 +452,46 @@ export default function CompanyPackages() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/company/treatment-packages"] });
+      queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === 'string' && (query.queryKey[0] as string).startsWith('/api/company/treatment-packages') });
       queryClient.invalidateQueries({ queryKey: ["/api/company/appointments"] });
       setDeletePackageId(null);
       toast({ title: "Sessão excluída com sucesso" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Erro", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const response = await fetch(`/api/company/treatment-packages/${id}/archive`, {
+        method: "PATCH",
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error("Erro ao arquivar sessão");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === 'string' && (query.queryKey[0] as string).startsWith('/api/company/treatment-packages') });
+      toast({ title: "Sessão arquivada com sucesso" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Erro", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const unarchiveMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const response = await fetch(`/api/company/treatment-packages/${id}/unarchive`, {
+        method: "PATCH",
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error("Erro ao desarquivar sessão");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === 'string' && (query.queryKey[0] as string).startsWith('/api/company/treatment-packages') });
+      toast({ title: "Sessão desarquivada com sucesso" });
     },
     onError: (error: Error) => {
       toast({ title: "Erro", description: error.message, variant: "destructive" });
@@ -439,19 +511,7 @@ export default function CompanyPackages() {
     createMutation.mutate(data);
   }
 
-  // Filter packages
-  const filteredPackages = packages.filter((pkg) => {
-    if (statusFilter !== "all" && pkg.status !== statusFilter) return false;
-    if (searchTerm) {
-      const search = searchTerm.toLowerCase();
-      return (
-        pkg.clientName.toLowerCase().includes(search) ||
-        pkg.professionalName.toLowerCase().includes(search) ||
-        pkg.serviceName.toLowerCase().includes(search)
-      );
-    }
-    return true;
-  });
+  // Filtragem agora é feita no server (paginação server-side)
 
   const activeProfessionals = professionals.filter((p) => p.active && !p.archived);
 
@@ -797,16 +857,26 @@ export default function CompanyPackages() {
         </Select>
         <Input
           placeholder="Buscar por paciente, profissional ou serviço..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
           className="flex-1"
         />
+        <div className="flex items-center space-x-2">
+          <Switch
+            id="show-archived-packages"
+            checked={showArchived}
+            onCheckedChange={setShowArchived}
+          />
+          <Label htmlFor="show-archived-packages" className="text-sm font-normal cursor-pointer whitespace-nowrap">
+            Arquivados
+          </Label>
+        </div>
       </div>
 
       {/* Package List */}
       {isLoading ? (
         <div className="text-center py-8 text-muted-foreground">Carregando sessões...</div>
-      ) : filteredPackages.length === 0 ? (
+      ) : packages.length === 0 ? (
         <div className="text-center py-12">
           <Package className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
           <p className="text-lg font-medium text-muted-foreground">
@@ -821,8 +891,9 @@ export default function CompanyPackages() {
           )}
         </div>
       ) : (
+        <>
         <div className="grid gap-4">
-          {filteredPackages.map((pkg) => {
+          {packages.map((pkg) => {
             const progressPercent =
               pkg.totalSessions > 0
                 ? Math.round((pkg.completedSessions / pkg.totalSessions) * 100)
@@ -937,6 +1008,30 @@ export default function CompanyPackages() {
                           Excluir
                         </Button>
                       )}
+
+                      {pkg.archived === 0 && (pkg.status === "completed" || pkg.status === "cancelled") && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => archiveMutation.mutate(pkg.id)}
+                          disabled={archiveMutation.isPending}
+                        >
+                          <Archive className="h-4 w-4 mr-1" />
+                          Arquivar
+                        </Button>
+                      )}
+
+                      {pkg.archived === 1 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => unarchiveMutation.mutate(pkg.id)}
+                          disabled={unarchiveMutation.isPending}
+                        >
+                          <ArchiveRestore className="h-4 w-4 mr-1" />
+                          Desarquivar
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </CardContent>
@@ -944,6 +1039,39 @@ export default function CompanyPackages() {
             );
           })}
         </div>
+
+        {/* Paginação */}
+        {totalPages > 1 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4">
+            <div className="text-xs sm:text-sm text-muted-foreground">
+              {totalItems} sessão(ões) encontrada(s)
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                disabled={currentPage === 1}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                <span className="hidden sm:inline ml-1">Anterior</span>
+              </Button>
+              <span className="text-xs sm:text-sm text-muted-foreground whitespace-nowrap px-2">
+                Página {currentPage} de {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                disabled={currentPage === totalPages}
+              >
+                <span className="hidden sm:inline mr-1">Próxima</span>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+        </>
       )}
 
       {/* Detail Dialog */}

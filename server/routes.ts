@@ -20496,10 +20496,18 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       const companyId = req.session.companyId;
       if (!companyId) return res.status(401).json({ message: "Não autenticado" });
 
-      const packages = await storage.getTreatmentPackagesByCompany(companyId);
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 10;
+      const archived = parseInt(req.query.archived as string) || 0;
+      const status = (req.query.status as string) || 'all';
+      const search = (req.query.search as string) || '';
 
-      // Enrich with client, professional, service names
-      const enriched = await Promise.all(packages.map(async (pkg) => {
+      const result = await storage.getTreatmentPackagesByCompany(companyId, {
+        page, limit, archived, status, search
+      });
+
+      // Enrich ONLY the current page's packages (max 10 instead of all)
+      const enriched = await Promise.all(result.data.map(async (pkg) => {
         const [client, professional, service] = await Promise.all([
           storage.getClient(pkg.clientId),
           storage.getProfessional(pkg.professionalId),
@@ -20522,7 +20530,12 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         };
       }));
 
-      res.json(enriched);
+      res.json({
+        data: enriched,
+        total: result.total,
+        page: result.page,
+        totalPages: result.totalPages,
+      });
     } catch (error: any) {
       console.error("Error getting treatment packages:", error);
       res.status(500).json({ message: "Erro ao buscar pacotes de tratamento" });
@@ -20790,6 +20803,46 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     } catch (error: any) {
       console.error("Error deleting treatment package:", error);
       res.status(500).json({ message: "Erro ao excluir pacote" });
+    }
+  });
+
+  // Archive treatment package
+  app.patch('/api/company/treatment-packages/:id/archive', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+
+      const id = parseInt(req.params.id);
+      const pkg = await storage.getTreatmentPackage(id);
+      if (!pkg || pkg.companyId !== companyId) {
+        return res.status(404).json({ message: "Pacote não encontrado" });
+      }
+
+      await storage.archiveTreatmentPackage(id);
+      res.json({ message: "Pacote arquivado com sucesso" });
+    } catch (error: any) {
+      console.error("Error archiving treatment package:", error);
+      res.status(500).json({ message: "Erro ao arquivar pacote" });
+    }
+  });
+
+  // Unarchive treatment package
+  app.patch('/api/company/treatment-packages/:id/unarchive', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+
+      const id = parseInt(req.params.id);
+      const pkg = await storage.getTreatmentPackage(id);
+      if (!pkg || pkg.companyId !== companyId) {
+        return res.status(404).json({ message: "Pacote não encontrado" });
+      }
+
+      await storage.unarchiveTreatmentPackage(id);
+      res.json({ message: "Pacote desarquivado com sucesso" });
+    } catch (error: any) {
+      console.error("Error unarchiving treatment package:", error);
+      res.status(500).json({ message: "Erro ao desarquivar pacote" });
     }
   });
 

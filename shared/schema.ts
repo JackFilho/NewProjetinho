@@ -516,6 +516,7 @@ export const treatmentPackages = mysqlTable("treatment_packages", {
   status: varchar("status", { length: 20 }).notNull().default("active"),
   notes: text("notes"),
   totalPrice: decimal("total_price", { precision: 10, scale: 2 }).default("0.00"),
+  archived: int("archived").notNull().default(0), // 0 = ativo, 1 = arquivado
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
