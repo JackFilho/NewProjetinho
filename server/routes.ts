@@ -19665,6 +19665,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       });
 
       const appointmentRevenue = monthlyAppointments
+        .filter((apt: any) => ['Concluído', 'concluido'].includes(apt.status))
         .reduce((sum: number, apt: any) => sum + (parseFloat(apt.totalPrice) || 0), 0);
 
       // Calculate transaction-based income and expenses

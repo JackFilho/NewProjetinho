@@ -188,7 +188,10 @@ export default function CompanyReports() {
 
       const clientReport = clientMap.get(key)!;
       clientReport.totalAppointments++;
-      clientReport.totalSpent += appointment.price || 0;
+      const clientAptStatus = (appointment.status || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (clientAptStatus === 'concluido') {
+        clientReport.totalSpent += appointment.price || 0;
+      }
       clientReport.appointments.push(appointment);
 
       // Adicionar profissional à lista se ainda não estiver lá
@@ -227,19 +230,23 @@ export default function CompanyReports() {
 
       const professionalReport = professionalMap.get(key)!;
       professionalReport.totalAppointments++;
-      professionalReport.totalRevenue += appointment.price || 0;
+      const profAptStatus = (appointment.status || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const profAptCompleted = profAptStatus === 'concluido';
+      if (profAptCompleted) {
+        professionalReport.totalRevenue += appointment.price || 0;
+      }
       professionalReport.appointments.push(appointment);
 
       // Processar serviços
       const existingService = professionalReport.services.find(s => s.serviceName === appointment.serviceName);
       if (existingService) {
         existingService.count++;
-        existingService.revenue += appointment.price || 0;
+        if (profAptCompleted) existingService.revenue += appointment.price || 0;
       } else {
         professionalReport.services.push({
           serviceName: appointment.serviceName,
           count: 1,
-          revenue: appointment.price || 0
+          revenue: profAptCompleted ? appointment.price || 0 : 0
         });
       }
     });
@@ -264,7 +271,10 @@ export default function CompanyReports() {
 
       const serviceReport = serviceMap.get(key)!;
       serviceReport.totalAppointments++;
-      serviceReport.totalRevenue += appointment.price || 0;
+      const svcAptStatus = (appointment.status || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (svcAptStatus === 'concluido') {
+        serviceReport.totalRevenue += appointment.price || 0;
+      }
       serviceReport.appointments.push(appointment);
     });
 
@@ -281,7 +291,9 @@ export default function CompanyReports() {
     const professionalReports = generateProfessionalReports();
     const serviceReports = generateServiceReports();
 
-    const totalRevenue = filteredAppointments.reduce((sum, apt) => sum + (apt.price || 0), 0);
+    const totalRevenue = filteredAppointments
+      .filter(apt => (apt.status || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") === 'concluido')
+      .reduce((sum, apt) => sum + (apt.price || 0), 0);
     const totalAppointments = filteredAppointments.length;
 
     return {
