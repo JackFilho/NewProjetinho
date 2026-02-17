@@ -53,16 +53,10 @@ const menuItems = [
     permission: "appointments" as keyof PlanPermissions | null,
   },
   {
-    title: "Serviços",
-    href: "/company/services",
-    icon: Briefcase,
-    permission: "services" as keyof PlanPermissions | null,
-  },
-  {
-    title: "Profissionais",
-    href: "/company/professionals",
-    icon: Users,
-    permission: "professionals" as keyof PlanPermissions | null,
+    title: "Sessões",
+    href: "/company/pacotes",
+    icon: Package,
+    permission: null,
   },
   {
     title: "Pacientes",
@@ -75,6 +69,18 @@ const menuItems = [
     href: "/company/saude",
     icon: HeartPulse,
     permission: null,
+  },
+  {
+    title: "Serviços",
+    href: "/company/services",
+    icon: Briefcase,
+    permission: "services" as keyof PlanPermissions | null,
+  },
+  {
+    title: "Profissionais",
+    href: "/company/professionals",
+    icon: Users,
+    permission: "professionals" as keyof PlanPermissions | null,
   },
   {
     title: "Avaliações",

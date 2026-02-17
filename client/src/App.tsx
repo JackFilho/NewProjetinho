@@ -14,6 +14,7 @@ import CompanyServices from "@/pages/company-services";
 import CompanyProfessionals from "@/pages/company-professionals";
 import CompanyClients from "@/pages/company-clients";
 import CompanyHealth from "@/pages/company-health";
+import CompanyPackages from "@/pages/company-packages";
 import CompanyPatientProfile from "@/pages/company-patient-profile";
 import CompanyReminders from "@/pages/company-reminders";
 import CompanyReviews from "@/pages/company-reviews";
@@ -116,6 +117,11 @@ function Router() {
       <Route path="/company/saude/paciente/:clientId">
         <CompanyLayout>
           <CompanyPatientProfile />
+        </CompanyLayout>
+      </Route>
+      <Route path="/company/pacotes">
+        <CompanyLayout>
+          <CompanyPackages />
         </CompanyLayout>
       </Route>
       <Route path="/company/settings">

@@ -379,6 +379,8 @@ export const appointments = mysqlTable("appointments", {
   reminderSent: int("reminder_sent").default(0),
   asaasPaymentId: varchar("asaas_payment_id", { length: 255 }),
   asaasPaymentStatus: varchar("asaas_payment_status", { length: 50 }),
+  packageId: int("package_id"),
+  sessionNumber: int("session_number"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
@@ -493,6 +495,28 @@ export const clinicalEvolutions = mysqlTable("clinical_evolutions", {
   title: varchar("title", { length: 255 }),
   content: text("content").notNull(),
   evolutionDate: date("evolution_date").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
+// Treatment packages (session-based recurring appointments)
+export const treatmentPackages = mysqlTable("treatment_packages", {
+  id: serial("id").primaryKey(),
+  companyId: int("company_id").notNull(),
+  clientId: int("client_id").notNull(),
+  professionalId: int("professional_id").notNull(),
+  serviceId: int("service_id").notNull(),
+  totalSessions: int("total_sessions").notNull(),
+  completedSessions: int("completed_sessions").notNull().default(0),
+  cancelledSessions: int("cancelled_sessions").notNull().default(0),
+  recurrenceType: varchar("recurrence_type", { length: 20 }).notNull().default("weekly"),
+  recurrenceDays: json("recurrence_days").$type<number[]>(),
+  preferredTime: varchar("preferred_time", { length: 10 }).notNull(),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date"),
+  status: varchar("status", { length: 20 }).notNull().default("active"),
+  notes: text("notes"),
+  totalPrice: decimal("total_price", { precision: 10, scale: 2 }).default("0.00"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
@@ -961,6 +985,13 @@ export type InsertCompanyAlertView = z.infer<typeof insertCompanyAlertViewSchema
 export type PaymentAlert = typeof paymentAlerts.$inferSelect;
 export type InsertPaymentAlert = z.infer<typeof insertPaymentAlertSchema>;
 
+// Treatment packages
+export const insertTreatmentPackageSchema = createInsertSchema(treatmentPackages).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Health module types
 export type AnamnesisTemplate = typeof anamnesisTemplates.$inferSelect;
 export type InsertAnamnesisTemplate = z.infer<typeof insertAnamnesisTemplateSchema>;
@@ -970,6 +1001,8 @@ export type AnamnesisRecord = typeof anamnesisRecords.$inferSelect;
 export type InsertAnamnesisRecord = z.infer<typeof insertAnamnesisRecordSchema>;
 export type ClinicalEvolution = typeof clinicalEvolutions.$inferSelect;
 export type InsertClinicalEvolution = z.infer<typeof insertClinicalEvolutionSchema>;
+export type TreatmentPackage = typeof treatmentPackages.$inferSelect;
+export type InsertTreatmentPackage = z.infer<typeof insertTreatmentPackageSchema>;
 
 // Support ticket types table
 export const supportTicketTypes = mysqlTable("support_ticket_types", {

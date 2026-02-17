@@ -40,6 +40,8 @@ interface Appointment {
   notes?: string;
   status: string;
   totalPrice: number;
+  packageId?: number | null;
+  sessionNumber?: number | null;
   service: {
     name: string;
     color: string;
@@ -550,7 +552,14 @@ export default function DashboardAppointments() {
                 <div className="flex items-center justify-between">
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-white">{appointment.appointmentTime}</div>
-                    <div className="text-white opacity-90 truncate text-xs">{appointment.clientName}</div>
+                    <div className="text-white opacity-90 truncate text-xs">
+                      {appointment.clientName}
+                      {appointment.packageId && (
+                        <span className="ml-1 bg-white bg-opacity-30 rounded px-1 text-[10px]">
+                          S{appointment.sessionNumber}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <Button
                     variant="ghost"
@@ -1430,6 +1439,11 @@ export default function DashboardAppointments() {
                                 style={{ backgroundColor: appointment.service?.color || '#3b82f6' }}
                               />
                               <h4 className="font-semibold text-lg">{appointment.clientName}</h4>
+                              {appointment.packageId && (
+                                <span className="text-xs bg-blue-100 text-blue-700 rounded px-2 py-0.5">
+                                  Sessão {appointment.sessionNumber}
+                                </span>
+                              )}
                             </div>
                             <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
                               <div>
@@ -1685,7 +1699,14 @@ export default function DashboardAppointments() {
                             style={{ backgroundColor: appointment.service.color || '#3b82f6' }}
                           />
                           <div className="min-w-0 flex-1">
-                            <div className="font-medium text-sm truncate">{appointment.clientName}</div>
+                            <div className="font-medium text-sm truncate">
+                              {appointment.clientName}
+                              {appointment.packageId && (
+                                <span className="ml-1 text-[10px] bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">
+                                  Sessão {appointment.sessionNumber}
+                                </span>
+                              )}
+                            </div>
                             <div className="text-xs text-gray-500 truncate">
                               {appointment.service.name}
                             </div>
@@ -1920,6 +1941,11 @@ export default function DashboardAppointments() {
                                       <div className="flex items-start justify-between mb-1">
                                         <div className="flex items-center gap-2 flex-1 min-w-0">
                                           <h4 className="font-medium text-sm truncate">{appointment.clientName}</h4>
+                                          {appointment.packageId && (
+                                            <span className="text-[10px] bg-blue-100 text-blue-700 rounded px-1.5 py-0.5 flex-shrink-0">
+                                              Sessão {appointment.sessionNumber}
+                                            </span>
+                                          )}
                                         </div>
 
                                         <div className="flex items-center gap-1 ml-2 flex-shrink-0">

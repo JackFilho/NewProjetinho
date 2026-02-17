@@ -40,6 +40,8 @@ import {
   updateAnamnesisRecordSchema,
   createClinicalEvolutionSchema,
   updateClinicalEvolutionSchema,
+  createTreatmentPackageSchema,
+  updateTreatmentPackageSchema,
 } from "./validation-schemas";
 import { reminderScheduler, rescheduleRemindersForAppointment } from "./reminder-scheduler";
 import { sql, eq, and, desc, asc, sum, count, gte, lte } from "drizzle-orm";
@@ -12184,13 +12186,32 @@ Obrigado pela preferência! 🙏`;
       // Limpar cache de disponibilidade
       clearAvailabilityCache(companyId);
 
+      // Sync treatment package counters if appointment belongs to a package
+      if (updatedAppointment.packageId) {
+        try {
+          const pkgSessions = await storage.getAppointmentsByPackage(updatedAppointment.packageId);
+          const completedCount = pkgSessions.filter(s => ['Concluído', 'concluido'].includes(s.status)).length;
+          const cancelledCount = pkgSessions.filter(s => ['Cancelado', 'cancelado'].includes(s.status)).length;
+          const updatePkgData: any = { completedSessions: completedCount, cancelledSessions: cancelledCount };
+
+          const currentPkg = await storage.getTreatmentPackage(updatedAppointment.packageId);
+          if (currentPkg && completedCount + cancelledCount >= currentPkg.totalSessions) {
+            updatePkgData.status = 'completed';
+          }
+
+          await storage.updateTreatmentPackage(updatedAppointment.packageId, updatePkgData);
+        } catch (pkgError) {
+          console.error('⚠️ Failed to sync package counters:', pkgError);
+        }
+      }
+
       console.log('🎯 Kanban: Status updated successfully');
       res.json({
         id: updatedAppointment.id,
         status: updatedAppointment.status,
         success: true
       });
-      
+
     } catch (error) {
       console.error("🎯 Kanban: Error updating status:", error);
       res.status(500).json({ message: "Erro ao atualizar status", error: error.message });
@@ -20461,6 +20482,313 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     } catch (error: any) {
       console.error("Error getting health profile:", error);
       res.status(500).json({ message: "Erro ao buscar perfil de saúde" });
+    }
+  });
+
+  // ============================================================================
+  // PACOTES DE TRATAMENTO (Treatment Packages)
+  // ============================================================================
+
+  // List all treatment packages for company
+  app.get('/api/company/treatment-packages', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+
+      const packages = await storage.getTreatmentPackagesByCompany(companyId);
+
+      // Enrich with client, professional, service names
+      const enriched = await Promise.all(packages.map(async (pkg) => {
+        const [client, professional, service] = await Promise.all([
+          storage.getClient(pkg.clientId),
+          storage.getProfessional(pkg.professionalId),
+          storage.getService(pkg.serviceId),
+        ]);
+
+        // Count actual session statuses
+        const sessions = await storage.getAppointmentsByPackage(pkg.id);
+        const completed = sessions.filter(s => ['Concluído', 'concluido'].includes(s.status)).length;
+        const cancelled = sessions.filter(s => ['Cancelado', 'cancelado'].includes(s.status)).length;
+
+        return {
+          ...pkg,
+          completedSessions: completed,
+          cancelledSessions: cancelled,
+          clientName: client?.name || 'Cliente removido',
+          professionalName: professional?.name || 'Profissional removido',
+          serviceName: service?.name || 'Serviço removido',
+          serviceColor: service?.color || '#3B82F6',
+        };
+      }));
+
+      res.json(enriched);
+    } catch (error: any) {
+      console.error("Error getting treatment packages:", error);
+      res.status(500).json({ message: "Erro ao buscar pacotes de tratamento" });
+    }
+  });
+
+  // Get treatment package detail with sessions
+  app.get('/api/company/treatment-packages/:id', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+
+      const pkg = await storage.getTreatmentPackage(parseInt(req.params.id));
+      if (!pkg || pkg.companyId !== companyId) {
+        return res.status(404).json({ message: "Pacote não encontrado" });
+      }
+
+      const [client, professional, service, sessions] = await Promise.all([
+        storage.getClient(pkg.clientId),
+        storage.getProfessional(pkg.professionalId),
+        storage.getService(pkg.serviceId),
+        storage.getAppointmentsByPackage(pkg.id),
+      ]);
+
+      const completed = sessions.filter(s => ['Concluído', 'concluido'].includes(s.status)).length;
+      const cancelled = sessions.filter(s => ['Cancelado', 'cancelado'].includes(s.status)).length;
+
+      res.json({
+        ...pkg,
+        completedSessions: completed,
+        cancelledSessions: cancelled,
+        clientName: client?.name || 'Cliente removido',
+        clientPhone: client?.phone || '',
+        professionalName: professional?.name || 'Profissional removido',
+        serviceName: service?.name || 'Serviço removido',
+        serviceColor: service?.color || '#3B82F6',
+        serviceDuration: service?.duration || 30,
+        sessions,
+      });
+    } catch (error: any) {
+      console.error("Error getting treatment package detail:", error);
+      res.status(500).json({ message: "Erro ao buscar detalhes do pacote" });
+    }
+  });
+
+  // Create treatment package + generate sessions
+  app.post('/api/company/treatment-packages', isCompanyAuthenticated, validateBody(createTreatmentPackageSchema), async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+
+      const {
+        clientId, professionalId, serviceId, totalSessions,
+        recurrenceType, recurrenceDays, preferredTime, startDate,
+        notes, totalPrice
+      } = req.body;
+
+      // Validate entities belong to company
+      const client = await storage.getClient(clientId);
+      if (!client || client.companyId !== companyId) {
+        return res.status(400).json({ message: "Cliente não encontrado" });
+      }
+
+      const professional = await storage.getProfessional(professionalId);
+      if (!professional || professional.companyId !== companyId) {
+        return res.status(400).json({ message: "Profissional não encontrado" });
+      }
+
+      const service = await storage.getService(serviceId);
+      if (!service || service.companyId !== companyId) {
+        return res.status(400).json({ message: "Serviço não encontrado" });
+      }
+
+      // Calculate total price (package price or sessions * service price)
+      const packagePrice = totalPrice != null ? String(totalPrice) : String(Number(service.price || 0) * totalSessions);
+
+      // Create the package record
+      const pkg = await storage.createTreatmentPackage({
+        companyId,
+        clientId,
+        professionalId,
+        serviceId,
+        totalSessions,
+        completedSessions: 0,
+        cancelledSessions: 0,
+        recurrenceType: recurrenceType || 'weekly',
+        recurrenceDays,
+        preferredTime,
+        startDate,
+        status: 'active',
+        notes: notes || null,
+        totalPrice: packagePrice,
+      });
+
+      // Generate sessions
+      const generatedSessions: any[] = [];
+      const conflicts: any[] = [];
+      let sessionsCreated = 0;
+      const sortedDays = [...recurrenceDays].sort((a: number, b: number) => a - b);
+
+      const currentDate = new Date(startDate + 'T12:00:00');
+      const maxDate = new Date(startDate + 'T12:00:00');
+      maxDate.setFullYear(maxDate.getFullYear() + 1);
+
+      // For biweekly: track week parity
+      const startWeekNumber = Math.floor(currentDate.getTime() / (7 * 24 * 60 * 60 * 1000));
+
+      while (sessionsCreated < totalSessions && currentDate <= maxDate) {
+        const dayOfWeek = currentDate.getDay();
+
+        if (sortedDays.includes(dayOfWeek)) {
+          // For biweekly: check if current week is active
+          const currentWeekNumber = Math.floor(currentDate.getTime() / (7 * 24 * 60 * 60 * 1000));
+          const weekDiff = currentWeekNumber - startWeekNumber;
+          const isActiveWeek = recurrenceType === 'biweekly' ? (weekDiff % 2 === 0) : true;
+
+          if (isActiveWeek) {
+            sessionsCreated++;
+            const dateStr = currentDate.toISOString().split('T')[0];
+
+            // Check availability for conflict detection
+            let hasConflict = false;
+            let conflictReason = '';
+            try {
+              const availability = await getAvailableSlots(companyId, professionalId, serviceId, dateStr);
+              if (availability.success && !availability.availableSlots.includes(preferredTime)) {
+                hasConflict = true;
+                conflictReason = 'Horário indisponível ou conflito com outro agendamento';
+              }
+              if (!availability.success) {
+                hasConflict = true;
+                conflictReason = availability.message || 'Profissional não disponível neste dia';
+              }
+            } catch (e) {
+              // If availability check fails, still create the appointment
+              hasConflict = true;
+              conflictReason = 'Não foi possível verificar disponibilidade';
+            }
+
+            if (hasConflict) {
+              conflicts.push({
+                sessionNumber: sessionsCreated,
+                date: dateStr,
+                time: preferredTime,
+                reason: conflictReason,
+              });
+            }
+
+            // ALWAYS create the appointment (company has full autonomy)
+            const sessionPrice = totalPrice != null
+              ? String(Number(totalPrice) / totalSessions)
+              : String(service.price || '0');
+
+            const appointmentData = {
+              companyId,
+              professionalId,
+              serviceId,
+              clientName: client.name,
+              clientPhone: client.phone || '',
+              clientEmail: client.email || null,
+              appointmentDate: dateStr,
+              appointmentTime: preferredTime,
+              status: 'agendado',
+              duration: service.duration || 30,
+              totalPrice: sessionPrice,
+              expense: service.expense ? String(service.expense) : '0',
+              notes: `Sessão ${sessionsCreated}/${totalSessions}${notes ? ' - ' + notes : ''}`,
+              reminderSent: 0,
+              packageId: pkg.id,
+              sessionNumber: sessionsCreated,
+            };
+
+            const appointment = await storage.createAppointment(appointmentData as any);
+            generatedSessions.push({ ...appointment, hasConflict });
+          }
+        }
+
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+
+      // Update package endDate
+      if (generatedSessions.length > 0) {
+        const lastSession = generatedSessions[generatedSessions.length - 1];
+        await storage.updateTreatmentPackage(pkg.id, {
+          endDate: lastSession.appointmentDate,
+        });
+      }
+
+      const updatedPkg = await storage.getTreatmentPackage(pkg.id);
+
+      res.status(201).json({
+        package: {
+          ...updatedPkg,
+          clientName: client.name,
+          professionalName: professional.name,
+          serviceName: service.name,
+        },
+        sessions: generatedSessions,
+        conflicts,
+        totalConflicts: conflicts.length,
+      });
+    } catch (error: any) {
+      console.error("Error creating treatment package:", error);
+      res.status(500).json({ message: "Erro ao criar pacote de tratamento" });
+    }
+  });
+
+  // Update treatment package (status, notes, price)
+  app.patch('/api/company/treatment-packages/:id', isCompanyAuthenticated, validateBody(updateTreatmentPackageSchema), async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+
+      const packageId = parseInt(req.params.id);
+      const pkg = await storage.getTreatmentPackage(packageId);
+      if (!pkg || pkg.companyId !== companyId) {
+        return res.status(404).json({ message: "Pacote não encontrado" });
+      }
+
+      const { status, notes, totalPrice } = req.body;
+      const updateData: any = {};
+      if (status) updateData.status = status;
+      if (notes !== undefined) updateData.notes = notes;
+      if (totalPrice !== undefined) updateData.totalPrice = String(totalPrice);
+
+      // If cancelling, also cancel future pending appointments
+      if (status === 'cancelled') {
+        const sessions = await storage.getAppointmentsByPackage(packageId);
+        const today = new Date().toISOString().split('T')[0];
+        for (const session of sessions) {
+          if (session.appointmentDate >= today && ['agendado', 'Pendente'].includes(session.status)) {
+            await storage.updateAppointment(session.id, { status: 'Cancelado' });
+          }
+        }
+      }
+
+      const updated = await storage.updateTreatmentPackage(packageId, updateData);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating treatment package:", error);
+      res.status(500).json({ message: "Erro ao atualizar pacote" });
+    }
+  });
+
+  // Delete treatment package and its appointments
+  app.delete('/api/company/treatment-packages/:id', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+
+      const packageId = parseInt(req.params.id);
+      const pkg = await storage.getTreatmentPackage(packageId);
+      if (!pkg || pkg.companyId !== companyId) {
+        return res.status(404).json({ message: "Pacote não encontrado" });
+      }
+
+      // Remove all associated appointments
+      const sessions = await storage.getAppointmentsByPackage(packageId);
+      for (const session of sessions) {
+        await storage.deleteAppointment(session.id);
+      }
+
+      await storage.deleteTreatmentPackage(packageId);
+      res.json({ message: "Pacote excluído com sucesso" });
+    } catch (error: any) {
+      console.error("Error deleting treatment package:", error);
+      res.status(500).json({ message: "Erro ao excluir pacote" });
     }
   });
 

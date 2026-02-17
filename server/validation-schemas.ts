@@ -127,6 +127,29 @@ export const updateAppointmentPriceSchema = z.object({
 });
 
 // ============================================================================
+// PACOTES DE TRATAMENTO
+// ============================================================================
+
+export const createTreatmentPackageSchema = z.object({
+  clientId: idSchema,
+  professionalId: idSchema,
+  serviceId: idSchema,
+  totalSessions: z.coerce.number().int().min(1, "Mínimo 1 sessão").max(100, "Máximo 100 sessões"),
+  recurrenceType: z.enum(["weekly", "biweekly", "custom"]).default("weekly"),
+  recurrenceDays: z.array(z.number().int().min(0).max(6)).min(1, "Selecione pelo menos um dia"),
+  preferredTime: timeSchema,
+  startDate: dateSchema,
+  notes: z.string().max(2000).optional().nullable(),
+  totalPrice: z.coerce.number().min(0).optional().nullable(),
+});
+
+export const updateTreatmentPackageSchema = z.object({
+  status: z.enum(["active", "paused", "cancelled"]).optional(),
+  notes: z.string().max(2000).optional().nullable(),
+  totalPrice: z.coerce.number().min(0).optional().nullable(),
+});
+
+// ============================================================================
 // PROFISSIONAIS
 // ============================================================================
 

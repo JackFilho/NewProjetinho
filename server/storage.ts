@@ -76,6 +76,7 @@ import {
   anamnesisTemplateFields,
   anamnesisRecords,
   clinicalEvolutions,
+  treatmentPackages,
   type AnamnesisTemplate,
   type InsertAnamnesisTemplate,
   type AnamnesisTemplateField,
@@ -84,6 +85,8 @@ import {
   type InsertAnamnesisRecord,
   type ClinicalEvolution,
   type InsertClinicalEvolution,
+  type TreatmentPackage,
+  type InsertTreatmentPackage,
 } from "@shared/schema";
 import { normalizePhone, validateBrazilianPhone, comparePhones } from "../shared/phone-utils";
 import { db, pool } from "./db";
@@ -361,6 +364,14 @@ export interface IStorage {
   createClinicalEvolution(evolution: InsertClinicalEvolution): Promise<ClinicalEvolution>;
   updateClinicalEvolution(id: number, evolution: Partial<InsertClinicalEvolution>): Promise<ClinicalEvolution>;
   deleteClinicalEvolution(id: number): Promise<void>;
+
+  // Treatment packages
+  getTreatmentPackagesByCompany(companyId: number): Promise<TreatmentPackage[]>;
+  getTreatmentPackage(id: number): Promise<TreatmentPackage | undefined>;
+  createTreatmentPackage(pkg: InsertTreatmentPackage): Promise<TreatmentPackage>;
+  updateTreatmentPackage(id: number, data: Partial<InsertTreatmentPackage>): Promise<TreatmentPackage>;
+  deleteTreatmentPackage(id: number): Promise<void>;
+  getAppointmentsByPackage(packageId: number): Promise<Appointment[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2203,8 +2214,8 @@ export class DatabaseStorage implements IStorage {
         `INSERT INTO appointments (
           company_id, professional_id, service_id, client_name, client_phone, client_email,
           appointment_date, appointment_time, status, duration, total_price, expense, notes, reminder_sent,
-          asaas_payment_id, asaas_payment_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          asaas_payment_id, asaas_payment_status, package_id, session_number
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           appointmentData.companyId,
           appointmentData.professionalId ?? null,
@@ -2221,7 +2232,9 @@ export class DatabaseStorage implements IStorage {
           appointmentData.notes || null,
           appointmentData.reminderSent || 0,
           appointmentData.asaasPaymentId || null,
-          appointmentData.asaasPaymentStatus || null
+          appointmentData.asaasPaymentStatus || null,
+          (appointmentData as any).packageId || null,
+          (appointmentData as any).sessionNumber || null
         ]
       );
       
@@ -2239,12 +2252,14 @@ export class DatabaseStorage implements IStorage {
 
       console.log('✅ Appointment created with ID:', appointment.id);
 
-      // Send confirmation reminder after creating appointment
-      try {
-        await this.sendAppointmentReminder(appointment.id, 'confirmation');
-      } catch (reminderError) {
-        console.error('⚠️ Failed to send appointment reminder:', reminderError);
-        // Don't throw here, appointment was created successfully
+      // Send confirmation reminder after creating appointment (skip for package batch creation)
+      if (!(appointmentData as any).packageId) {
+        try {
+          await this.sendAppointmentReminder(appointment.id, 'confirmation');
+        } catch (reminderError) {
+          console.error('⚠️ Failed to send appointment reminder:', reminderError);
+          // Don't throw here, appointment was created successfully
+        }
       }
 
       return appointment;
@@ -4167,6 +4182,104 @@ Obrigado pela preferência! 🙏`;
       await db.delete(clinicalEvolutions).where(eq(clinicalEvolutions.id, id));
     } catch (error: any) {
       console.error("Error deleting clinical evolution:", error);
+      throw error;
+    }
+  }
+
+  // Treatment packages
+  async getTreatmentPackagesByCompany(companyId: number): Promise<TreatmentPackage[]> {
+    try {
+      return await db.select().from(treatmentPackages)
+        .where(eq(treatmentPackages.companyId, companyId))
+        .orderBy(desc(treatmentPackages.createdAt));
+    } catch (error: any) {
+      console.error("Error getting treatment packages:", error);
+      throw error;
+    }
+  }
+
+  async getTreatmentPackage(id: number): Promise<TreatmentPackage | undefined> {
+    try {
+      const [pkg] = await db.select().from(treatmentPackages)
+        .where(eq(treatmentPackages.id, id));
+      return pkg;
+    } catch (error: any) {
+      console.error("Error getting treatment package:", error);
+      return undefined;
+    }
+  }
+
+  async createTreatmentPackage(pkgData: InsertTreatmentPackage): Promise<TreatmentPackage> {
+    try {
+      const [insertResult] = await pool.execute(
+        `INSERT INTO treatment_packages (
+          company_id, client_id, professional_id, service_id,
+          total_sessions, completed_sessions, cancelled_sessions,
+          recurrence_type, recurrence_days, preferred_time,
+          start_date, end_date, status, notes, total_price
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          pkgData.companyId,
+          pkgData.clientId,
+          pkgData.professionalId,
+          pkgData.serviceId,
+          pkgData.totalSessions,
+          pkgData.completedSessions ?? 0,
+          pkgData.cancelledSessions ?? 0,
+          pkgData.recurrenceType ?? 'weekly',
+          JSON.stringify(pkgData.recurrenceDays),
+          pkgData.preferredTime,
+          pkgData.startDate,
+          pkgData.endDate || null,
+          pkgData.status ?? 'active',
+          pkgData.notes || null,
+          pkgData.totalPrice ?? '0.00'
+        ]
+      );
+      const insertId = (insertResult as any).insertId;
+      const [pkg] = await db.select().from(treatmentPackages)
+        .where(eq(treatmentPackages.id, insertId));
+      return pkg;
+    } catch (error: any) {
+      console.error("Error creating treatment package:", error);
+      throw error;
+    }
+  }
+
+  async updateTreatmentPackage(id: number, pkgData: Partial<InsertTreatmentPackage>): Promise<TreatmentPackage> {
+    try {
+      const updateData: any = { ...pkgData, updatedAt: new Date() };
+      if (updateData.recurrenceDays) {
+        updateData.recurrenceDays = updateData.recurrenceDays;
+      }
+      await db.update(treatmentPackages)
+        .set(updateData)
+        .where(eq(treatmentPackages.id, id));
+      const [pkg] = await db.select().from(treatmentPackages)
+        .where(eq(treatmentPackages.id, id));
+      return pkg;
+    } catch (error: any) {
+      console.error("Error updating treatment package:", error);
+      throw error;
+    }
+  }
+
+  async deleteTreatmentPackage(id: number): Promise<void> {
+    try {
+      await db.delete(treatmentPackages).where(eq(treatmentPackages.id, id));
+    } catch (error: any) {
+      console.error("Error deleting treatment package:", error);
+      throw error;
+    }
+  }
+
+  async getAppointmentsByPackage(packageId: number): Promise<Appointment[]> {
+    try {
+      return await db.select().from(appointments)
+        .where(eq(appointments.packageId, packageId))
+        .orderBy(appointments.appointmentDate, appointments.appointmentTime);
+    } catch (error: any) {
+      console.error("Error getting appointments by package:", error);
       throw error;
     }
   }
