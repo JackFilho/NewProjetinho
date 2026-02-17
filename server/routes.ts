@@ -19943,6 +19943,14 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       if (existing.companyId !== companyId) {
         return res.status(403).json({ message: "Só é possível excluir modelos próprios" });
       }
+      // Verificar se existem fichas preenchidas usando este modelo
+      const recordCount = await storage.countAnamnesisRecordsByTemplate(templateId);
+      if (recordCount > 0) {
+        return res.status(409).json({
+          message: `Não é possível excluir este modelo pois existem ${recordCount} ficha(s) de anamnese preenchida(s) usando ele. Exclua as fichas primeiro.`
+        });
+      }
+      await storage.deleteAnamnesisTemplateFieldsByTemplate(templateId);
       await storage.deleteAnamnesisTemplate(templateId);
       res.json({ message: "Modelo excluído com sucesso" });
     } catch (error: any) {
@@ -20019,6 +20027,14 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       if (existing.companyId !== null) {
         return res.status(403).json({ message: "Este modelo pertence a uma empresa" });
       }
+      // Verificar se existem fichas preenchidas usando este modelo
+      const recordCount = await storage.countAnamnesisRecordsByTemplate(templateId);
+      if (recordCount > 0) {
+        return res.status(409).json({
+          message: `Não é possível excluir este modelo pois existem ${recordCount} ficha(s) de anamnese preenchida(s) usando ele. Exclua as fichas primeiro.`
+        });
+      }
+      await storage.deleteAnamnesisTemplateFieldsByTemplate(templateId);
       await storage.deleteAnamnesisTemplate(templateId);
       res.json({ message: "Modelo excluído com sucesso" });
     } catch (error: any) {

@@ -347,6 +347,7 @@ export interface IStorage {
   deleteAnamnesisTemplateFieldsByTemplate(templateId: number): Promise<void>;
 
   // Health module - Anamnesis records
+  countAnamnesisRecordsByTemplate(templateId: number): Promise<number>;
   getAnamnesisRecordsByClient(clientId: number, companyId: number): Promise<AnamnesisRecord[]>;
   getAnamnesisRecord(id: number): Promise<AnamnesisRecord | undefined>;
   createAnamnesisRecord(record: InsertAnamnesisRecord): Promise<AnamnesisRecord>;
@@ -3968,6 +3969,18 @@ Obrigado pela preferência! 🙏`;
   // ============================================================================
   // MÓDULO DE SAÚDE - Anamnesis Records
   // ============================================================================
+
+  async countAnamnesisRecordsByTemplate(templateId: number): Promise<number> {
+    try {
+      const result = await db.select({ count: sql<number>`count(*)` })
+        .from(anamnesisRecords)
+        .where(eq(anamnesisRecords.templateId, templateId));
+      return Number(result[0]?.count ?? 0);
+    } catch (error: any) {
+      console.error("Error counting anamnesis records by template:", error);
+      throw error;
+    }
+  }
 
   async getAnamnesisRecordsByClient(clientId: number, companyId: number): Promise<AnamnesisRecord[]> {
     try {

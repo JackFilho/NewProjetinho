@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, HeartPulse, FileText, Activity, Calendar, Plus, Phone, Mail, Cake, Pencil, Download, FileDown } from "lucide-react";
+import { ArrowLeft, HeartPulse, FileText, Activity, Calendar, Plus, Phone, Mail, Cake, Pencil, Download, FileDown, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { AnamnesisTemplate, AnamnesisTemplateField, AnamnesisRecord, ClinicalEvolution, Client, Professional } from "@shared/schema";
 import { AnamnesisForm } from "@/components/health/anamnesis-form";
@@ -48,6 +49,7 @@ export default function CompanyPatientProfile() {
   const [viewingAnamnesisId, setViewingAnamnesisId] = useState<number | null>(null);
   const [editingAnamnesisId, setEditingAnamnesisId] = useState<number | null>(null);
   const [pdfExportType, setPdfExportType] = useState<"digital" | "manual" | null>(null);
+  const [deleteAnamnesisId, setDeleteAnamnesisId] = useState<number | null>(null);
 
   // Fetch health profile
   const { data: profile, isLoading } = useQuery<HealthProfile>({
@@ -158,6 +160,25 @@ export default function CompanyPatientProfile() {
     },
     onError: () => {
       toast({ title: "Erro ao atualizar anamnese", variant: "destructive" });
+    },
+  });
+
+  // Delete anamnesis record mutation
+  const deleteAnamnesisMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/company/anamnesis-records/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.message || 'Erro ao excluir ficha');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/company/clients/${clientId}/health-profile`] });
+      toast({ title: "Ficha de anamnese excluída com sucesso" });
+    },
+    onError: (error: Error) => {
+      toast({ title: error.message, variant: "destructive" });
     },
   });
 
@@ -357,6 +378,18 @@ export default function CompanyPatientProfile() {
                             }}
                           >
                             <Download className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
+                            title="Excluir ficha"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteAnamnesisId(record.id);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
                           </Button>
                           <Badge variant="outline" className="text-xs cursor-pointer" onClick={() => setViewingAnamnesisId(record.id)}>Ver ficha</Badge>
                         </div>
@@ -591,6 +624,31 @@ export default function CompanyPatientProfile() {
           )}
         </DialogContent>
       </Dialog>
+      {/* Modal de confirmação para excluir ficha de anamnese */}
+      <AlertDialog open={deleteAnamnesisId !== null} onOpenChange={(open) => !open && setDeleteAnamnesisId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir ficha de anamnese?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta ação não pode ser desfeita. Todos os dados preenchidos nesta ficha serão perdidos permanentemente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              onClick={() => {
+                if (deleteAnamnesisId) {
+                  deleteAnamnesisMutation.mutate(deleteAnamnesisId);
+                }
+                setDeleteAnamnesisId(null);
+              }}
+            >
+              Excluir
+            </AlertDialogAction>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

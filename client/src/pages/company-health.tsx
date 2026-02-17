@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { HeartPulse, FileText, Users, Plus, Pencil, Trash2, Search, Eye } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -20,6 +21,7 @@ export default function CompanyHealth() {
   const [showTemplateBuilder, setShowTemplateBuilder] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<any>(null);
   const [clientSearch, setClientSearch] = useState("");
+  const [deleteTemplateId, setDeleteTemplateId] = useState<number | null>(null);
 
   // Fetch company health specialty
   const { data: specialtyData } = useQuery<{ healthSpecialty: string | null }>({
@@ -85,15 +87,18 @@ export default function CompanyHealth() {
   const deleteTemplateMutation = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`/api/company/anamnesis-templates/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Erro ao excluir modelo');
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.message || 'Erro ao excluir modelo');
+      }
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/company/anamnesis-templates'] });
       toast({ title: "Modelo excluído com sucesso" });
     },
-    onError: () => {
-      toast({ title: "Erro ao excluir modelo", variant: "destructive" });
+    onError: (error: Error) => {
+      toast({ title: error.message, variant: "destructive" });
     },
   });
 
@@ -193,7 +198,7 @@ export default function CompanyHealth() {
                           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => loadTemplateForEdit(template.id)}>
                             <Pencil className="h-3 w-3 mr-1" /> Editar
                           </Button>
-                          <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500" onClick={() => deleteTemplateMutation.mutate(template.id)}>
+                          <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500" onClick={() => setDeleteTemplateId(template.id)}>
                             <Trash2 className="h-3 w-3 mr-1" /> Excluir
                           </Button>
                         </>
@@ -285,6 +290,31 @@ export default function CompanyHealth() {
           )}
         </DialogContent>
       </Dialog>
+      {/* Modal de confirmação para excluir modelo */}
+      <AlertDialog open={deleteTemplateId !== null} onOpenChange={(open) => !open && setDeleteTemplateId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir modelo de anamnese?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta ação não pode ser desfeita. O modelo será excluído permanentemente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              onClick={() => {
+                if (deleteTemplateId) {
+                  deleteTemplateMutation.mutate(deleteTemplateId);
+                }
+                setDeleteTemplateId(null);
+              }}
+            >
+              Excluir
+            </AlertDialogAction>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
