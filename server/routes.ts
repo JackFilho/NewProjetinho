@@ -18812,12 +18812,22 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       const companyId = req.session.companyId;
       const professional = await storage.getProfessional(professionalId);
       if (!professional) return res.status(404).json({ message: "Profissional nao encontrado" });
-      const specialties = typeof professional.specialties === 'string'
+
+      // Extract professional specialties
+      let specialties = typeof professional.specialties === 'string'
         ? JSON.parse(professional.specialties)
         : professional.specialties;
+
+      // Fallback: if professional has no specialties, use company's healthSpecialty
       if (!specialties || !Array.isArray(specialties) || specialties.length === 0) {
-        return res.json([]);
+        const company = await storage.getCompany(companyId);
+        if (company?.healthSpecialty) {
+          specialties = [company.healthSpecialty];
+        } else {
+          return res.json([]);
+        }
       }
+
       const templates = await storage.getAnamnesisTemplatesBySpecialties(specialties, companyId);
       res.json(templates);
     } catch (error: any) {

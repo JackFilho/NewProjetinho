@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, HeartPulse, FileText, Activity, Calendar, Plus, Phone, Mail, Cake, Pencil, Download, FileDown, Trash2, Home, Users, User } from "lucide-react";
+import { ArrowLeft, HeartPulse, FileText, Activity, Calendar, Plus, Phone, Mail, Cake, Pencil, Download, FileDown, Trash2, Home, Users, User, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { AnamnesisTemplate, AnamnesisTemplateField, AnamnesisRecord, ClinicalEvolution, Client, Professional } from "@shared/schema";
 import { AnamnesisForm } from "@/components/health/anamnesis-form";
@@ -66,7 +66,7 @@ export default function ProfessionalPatientProfile() {
   });
 
   // Fetch health profile
-  const { data: profile, isLoading } = useQuery<HealthProfile>({
+  const { data: profile, isLoading, error: profileError } = useQuery<HealthProfile>({
     queryKey: [`/api/professional/clients/${clientId}/health-profile`],
     enabled: !!clientId,
   });
@@ -254,12 +254,50 @@ export default function ProfessionalPatientProfile() {
   }
 
   if (!profile) {
+    let errorMsg = "Paciente não encontrado.";
+    if (profileError) {
+      const status = (profileError as any)?.status;
+      if (status === 401) {
+        errorMsg = "Sessão expirada. Faça login novamente.";
+      } else {
+        // Try to extract the API error message from the response
+        try {
+          const responseText = (profileError as any)?.response;
+          if (responseText) {
+            const parsed = JSON.parse(responseText);
+            errorMsg = parsed.message || "Erro ao carregar dados do paciente.";
+          } else {
+            errorMsg = "Erro ao carregar dados do paciente.";
+          }
+        } catch {
+          errorMsg = "Erro ao carregar dados do paciente.";
+        }
+      }
+    }
     return (
       <div className="p-6 text-center">
-        <p className="text-muted-foreground">Paciente não encontrado.</p>
-        <Button variant="outline" className="mt-4" onClick={() => navigate("/profissional/clientes")}>
-          <ArrowLeft className="h-4 w-4 mr-1" /> Voltar
-        </Button>
+        <p className="text-muted-foreground">{errorMsg}</p>
+        <div className="flex items-center justify-center gap-2 mt-4">
+          {(profileError as any)?.status === 401 ? (
+            <Button variant="outline" onClick={() => navigate("/profissional/login")}>
+              Fazer Login
+            </Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => navigate("/profissional/clientes")}>
+                <ArrowLeft className="h-4 w-4 mr-1" /> Voltar
+              </Button>
+              {profileError && (
+                <Button
+                  variant="outline"
+                  onClick={() => queryClient.invalidateQueries({ queryKey: [`/api/professional/clients/${clientId}/health-profile`] })}
+                >
+                  <RefreshCw className="h-4 w-4 mr-1" /> Tentar novamente
+                </Button>
+              )}
+            </>
+          )}
+        </div>
       </div>
     );
   }
