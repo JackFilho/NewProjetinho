@@ -12,7 +12,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
-import { useGlobalTheme } from "@/hooks/use-global-theme";
+
 import { FloatingHelpButton } from "@/components/floating-help-button";
 
 interface Service {
@@ -62,7 +62,7 @@ export default function CompanyServices() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const globalSettings = useGlobalTheme();
+
 
   const { data: services = [], isLoading } = useQuery<Service[]>({
     queryKey: ['/api/company/services'],
@@ -259,7 +259,7 @@ export default function CompanyServices() {
               size="sm"
               onClick={() => setViewMode('grid')}
               className={viewMode === 'grid' ? 'text-white' : ''}
-              style={viewMode === 'grid' ? { backgroundColor: globalSettings?.primaryColor || '#5e6d8d' } : {}}
+              style={viewMode === 'grid' ? { backgroundColor: 'var(--primary-color, #5e6d8d)' } : {}}
             >
               <Grid className="h-4 w-4" />
             </Button>
@@ -268,7 +268,7 @@ export default function CompanyServices() {
               size="sm"
               onClick={() => setViewMode('list')}
               className={viewMode === 'list' ? 'text-white' : ''}
-              style={viewMode === 'list' ? { backgroundColor: globalSettings?.primaryColor || '#5e6d8d' } : {}}
+              style={viewMode === 'list' ? { backgroundColor: 'var(--primary-color, #5e6d8d)' } : {}}
             >
               <List className="h-4 w-4" />
             </Button>
@@ -278,7 +278,7 @@ export default function CompanyServices() {
               <Button 
                 onClick={openCreateDialog} 
                 className="text-white"
-                style={{ backgroundColor: globalSettings?.primaryColor || '#5e6d8d' }}
+                style={{ backgroundColor: 'var(--primary-color, #5e6d8d)' }}
               >
                 <Plus className="mr-2 h-4 w-4" />
                 Novo Serviço
@@ -582,7 +582,7 @@ export default function CompanyServices() {
             <Button 
               onClick={openCreateDialog} 
               className="text-white"
-              style={{ backgroundColor: globalSettings?.primaryColor || '#5e6d8d' }}
+              style={{ backgroundColor: 'var(--primary-color, #5e6d8d)' }}
             >
               <Plus className="mr-2 h-4 w-4" />
               Criar Primeiro Serviço
