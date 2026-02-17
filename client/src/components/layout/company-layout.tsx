@@ -231,8 +231,8 @@ export default function CompanyLayout({ children }: CompanyLayoutProps) {
     queryKey: ["/api/public-settings"],
   });
 
-  // Aplica tema global dinamicamente
-  useGlobalTheme();
+  // Aplica tema global com override da cor da empresa (se definida)
+  useGlobalTheme({ companyPrimaryColor: (company as any)?.primaryColor });
 
   // Define o título da página
   useDocumentTitle();

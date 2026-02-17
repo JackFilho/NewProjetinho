@@ -9,7 +9,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { HeartPulse, FileText, Users, Plus, Pencil, Trash2, Search, Eye } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { useGlobalTheme } from "@/hooks/use-global-theme";
 import { HEALTH_SPECIALTY_LABELS } from "@shared/schema";
 import type { AnamnesisTemplate, Client } from "@shared/schema";
 import { AnamnesisTemplateBuilder } from "@/components/health/anamnesis-template-builder";
@@ -17,7 +16,6 @@ import { AnamnesisTemplateBuilder } from "@/components/health/anamnesis-template
 export default function CompanyHealth() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const globalSettings = useGlobalTheme();
   const [, navigate] = useLocation();
   const [showTemplateBuilder, setShowTemplateBuilder] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<any>(null);

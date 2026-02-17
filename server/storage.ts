@@ -469,6 +469,7 @@ export class DatabaseStorage implements IStorage {
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      primaryColor: companies.primaryColor,
       healthSpecialty: companies.healthSpecialty,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
@@ -528,6 +529,7 @@ export class DatabaseStorage implements IStorage {
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      primaryColor: companies.primaryColor,
       healthSpecialty: companies.healthSpecialty,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
@@ -577,6 +579,8 @@ export class DatabaseStorage implements IStorage {
         asaasApiKey: companies.asaasApiKey,
         asaasEnvironment: companies.asaasEnvironment,
         asaasEnabled: companies.asaasEnabled,
+        primaryColor: companies.primaryColor,
+        logoUrl: companies.logoUrl,
         healthSpecialty: companies.healthSpecialty,
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
@@ -631,6 +635,8 @@ export class DatabaseStorage implements IStorage {
         asaasApiKey: companies.asaasApiKey,
         asaasEnvironment: companies.asaasEnvironment,
         asaasEnabled: companies.asaasEnabled,
+        primaryColor: companies.primaryColor,
+        logoUrl: companies.logoUrl,
         healthSpecialty: companies.healthSpecialty,
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
@@ -700,6 +706,7 @@ export class DatabaseStorage implements IStorage {
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      primaryColor: companies.primaryColor,
       healthSpecialty: companies.healthSpecialty,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
@@ -796,6 +803,8 @@ export class DatabaseStorage implements IStorage {
         asaasEnvironment: companies.asaasEnvironment,
         asaasEnabled: companies.asaasEnabled,
         healthSpecialty: companies.healthSpecialty,
+        primaryColor: companies.primaryColor,
+        logoUrl: companies.logoUrl,
         createdAt: companies.createdAt,
         updatedAt: companies.updatedAt
       }).from(companies).where(eq(companies.id, id));
@@ -3494,6 +3503,7 @@ Obrigado pela preferência! 🙏`;
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      primaryColor: companies.primaryColor,
       healthSpecialty: companies.healthSpecialty,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
@@ -3781,6 +3791,7 @@ Obrigado pela preferência! 🙏`;
       financialPasswordEnabled: companies.financialPasswordEnabled,
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
+      primaryColor: companies.primaryColor,
       healthSpecialty: companies.healthSpecialty,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
