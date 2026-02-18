@@ -20698,7 +20698,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
               clientEmail: client.email || null,
               appointmentDate: dateStr,
               appointmentTime: preferredTime,
-              status: 'agendado',
+              status: 'Pendente',
               duration: service.duration || 30,
               totalPrice: sessionPrice,
               expense: service.expense ? String(service.expense) : '0',
@@ -20764,9 +20764,13 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       // If cancelling, also cancel future pending appointments
       if (status === 'cancelled') {
         const sessions = await storage.getAppointmentsByPackage(packageId);
-        const today = new Date().toISOString().split('T')[0];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
         for (const session of sessions) {
-          if (session.appointmentDate >= today && ['agendado', 'Agendado', 'Pendente', 'pendente', 'confirmado', 'Confirmado'].includes(session.status)) {
+          const sessionDate = new Date(session.appointmentDate);
+          sessionDate.setHours(0, 0, 0, 0);
+          const statusLower = session.status?.toLowerCase() || '';
+          if (sessionDate >= today && ['agendado', 'pendente', 'confirmado'].includes(statusLower)) {
             await storage.updateAppointment(session.id, { status: 'Cancelado' });
           }
         }
