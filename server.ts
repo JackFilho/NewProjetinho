@@ -1144,13 +1144,39 @@ INSTRUÇÕES OBRIGATÓRIAS:
             // Check if this is a confirmation response (SIM/OK) after AI summary
             const isConfirmationResponse = /\b(sim|ok|confirmo|tudo correto|tudo certo)\b/i.test(messageText.toLowerCase().trim());
 
+            // Verificar contexto: se a última mensagem da IA é sobre reagendamento ou cancelamento, não criar agendamento
+            const lastAssistantMsgCtx = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
+            const isRescheduleCtx =
+                lastAssistantMsgCtx.includes('mudar seu agendamento') || lastAssistantMsgCtx.includes('mudar o agendamento') ||
+                lastAssistantMsgCtx.includes('reagendar') || lastAssistantMsgCtx.includes('remarcar') ||
+                lastAssistantMsgCtx.includes('trocar o dia') || lastAssistantMsgCtx.includes('trocar a data') ||
+                lastAssistantMsgCtx.includes('trocar o horário') || lastAssistantMsgCtx.includes('trocar o horario') ||
+                lastAssistantMsgCtx.includes('alterar o agendamento') || lastAssistantMsgCtx.includes('alterar seu agendamento') ||
+                lastAssistantMsgCtx.includes('alterar a data') || lastAssistantMsgCtx.includes('alterar o horário') ||
+                lastAssistantMsgCtx.includes('adiar') || lastAssistantMsgCtx.includes('mudar para') ||
+                lastAssistantMsgCtx.includes('Para reagendar') || lastAssistantMsgCtx.includes('necessário cancelar o agendamento atual') ||
+                (lastAssistantMsgCtx.includes('mudar') && lastAssistantMsgCtx.includes('agendamento')) ||
+                (lastAssistantMsgCtx.includes('alterar') && lastAssistantMsgCtx.includes('agendamento'));
+            const isCancelCtx =
+                lastAssistantMsgCtx.includes('Confirma o cancelamento?') || lastAssistantMsgCtx.includes('SIM para cancelar') ||
+                lastAssistantMsgCtx.includes('deseja cancelar') || (lastAssistantMsgCtx.includes('cancelar') && lastAssistantMsgCtx.includes('prosseguir'));
+
+            if (isRescheduleCtx) {
+              console.log('🔄 Confirmação detectada em contexto de reagendamento - ignorando criação de agendamento');
+            }
+            if (isCancelCtx) {
+              console.log('🚫 Confirmação detectada em contexto de cancelamento - ignorando criação de agendamento');
+            }
+
             console.log('🔍 Verificando se é confirmação:', {
               messageText: messageText,
               messageLower: messageText.toLowerCase().trim(),
-              isConfirmationResponse: isConfirmationResponse
+              isConfirmationResponse: isConfirmationResponse,
+              isRescheduleCtx: isRescheduleCtx,
+              isCancelCtx: isCancelCtx
             });
 
-            if (isConfirmationResponse) {
+            if (isConfirmationResponse && !isRescheduleCtx && !isCancelCtx) {
               console.log('🎯 Confirmação SIM/OK detectada! Buscando dados do agendamento para criar...');
 
               // PRIMEIRO: Verificar se a resposta atual da IA (aiResponse) contém dados de agendamento
@@ -4670,17 +4696,43 @@ INSTRUÇÕES OBRIGATÓRIAS:
             
               // Always check conversation for appointment data after AI response
               console.log('🔍 Verificando conversa para dados de agendamento...');
-            
+
               // Check if this is a confirmation response (SIM/OK) after AI summary
               const isConfirmationResponse = /\b(sim|ok|confirmo|tudo correto|tudo certo)\b/i.test(messageText.toLowerCase().trim());
+
+              // Verificar contexto: se a última mensagem da IA é sobre reagendamento ou cancelamento, não criar agendamento
+              const lastAsstMsgCtx = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
+              const isReschedCtx =
+                  lastAsstMsgCtx.includes('mudar seu agendamento') || lastAsstMsgCtx.includes('mudar o agendamento') ||
+                  lastAsstMsgCtx.includes('reagendar') || lastAsstMsgCtx.includes('remarcar') ||
+                  lastAsstMsgCtx.includes('trocar o dia') || lastAsstMsgCtx.includes('trocar a data') ||
+                  lastAsstMsgCtx.includes('trocar o horário') || lastAsstMsgCtx.includes('trocar o horario') ||
+                  lastAsstMsgCtx.includes('alterar o agendamento') || lastAsstMsgCtx.includes('alterar seu agendamento') ||
+                  lastAsstMsgCtx.includes('alterar a data') || lastAsstMsgCtx.includes('alterar o horário') ||
+                  lastAsstMsgCtx.includes('adiar') || lastAsstMsgCtx.includes('mudar para') ||
+                  lastAsstMsgCtx.includes('Para reagendar') || lastAsstMsgCtx.includes('necessário cancelar o agendamento atual') ||
+                  (lastAsstMsgCtx.includes('mudar') && lastAsstMsgCtx.includes('agendamento')) ||
+                  (lastAsstMsgCtx.includes('alterar') && lastAsstMsgCtx.includes('agendamento'));
+              const isCancCtx =
+                  lastAsstMsgCtx.includes('Confirma o cancelamento?') || lastAsstMsgCtx.includes('SIM para cancelar') ||
+                  lastAsstMsgCtx.includes('deseja cancelar') || (lastAsstMsgCtx.includes('cancelar') && lastAsstMsgCtx.includes('prosseguir'));
+
+              if (isReschedCtx) {
+                console.log('🔄 Confirmação detectada em contexto de reagendamento - ignorando criação de agendamento');
+              }
+              if (isCancCtx) {
+                console.log('🚫 Confirmação detectada em contexto de cancelamento - ignorando criação de agendamento');
+              }
 
               console.log('🔍 Verificando se é confirmação:', {
                 messageText: messageText,
                 messageLower: messageText.toLowerCase().trim(),
-                isConfirmationResponse: isConfirmationResponse
+                isConfirmationResponse: isConfirmationResponse,
+                isReschedCtx: isReschedCtx,
+                isCancCtx: isCancCtx
               });
 
-              if (isConfirmationResponse) {
+              if (isConfirmationResponse && !isReschedCtx && !isCancCtx) {
                 console.log('🎯 Confirmação SIM/OK detectada! Buscando dados do agendamento para criar...');
 
                 // Get the recent messages from THIS conversation to find appointment summary
@@ -8043,17 +8095,43 @@ INSTRUÇÕES OBRIGATÓRIAS:
             
               // Always check conversation for appointment data after AI response
               console.log('🔍 Verificando conversa para dados de agendamento...');
-            
+
               // Check if this is a confirmation response (SIM/OK) after AI summary
               const isConfirmationResponse = /\b(sim|ok|confirmo|tudo correto|tudo certo)\b/i.test(messageText.toLowerCase().trim());
+
+              // Verificar contexto: se a última mensagem da IA é sobre reagendamento ou cancelamento, não criar agendamento
+              const lastAsstMsgCtx = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
+              const isReschedCtx =
+                  lastAsstMsgCtx.includes('mudar seu agendamento') || lastAsstMsgCtx.includes('mudar o agendamento') ||
+                  lastAsstMsgCtx.includes('reagendar') || lastAsstMsgCtx.includes('remarcar') ||
+                  lastAsstMsgCtx.includes('trocar o dia') || lastAsstMsgCtx.includes('trocar a data') ||
+                  lastAsstMsgCtx.includes('trocar o horário') || lastAsstMsgCtx.includes('trocar o horario') ||
+                  lastAsstMsgCtx.includes('alterar o agendamento') || lastAsstMsgCtx.includes('alterar seu agendamento') ||
+                  lastAsstMsgCtx.includes('alterar a data') || lastAsstMsgCtx.includes('alterar o horário') ||
+                  lastAsstMsgCtx.includes('adiar') || lastAsstMsgCtx.includes('mudar para') ||
+                  lastAsstMsgCtx.includes('Para reagendar') || lastAsstMsgCtx.includes('necessário cancelar o agendamento atual') ||
+                  (lastAsstMsgCtx.includes('mudar') && lastAsstMsgCtx.includes('agendamento')) ||
+                  (lastAsstMsgCtx.includes('alterar') && lastAsstMsgCtx.includes('agendamento'));
+              const isCancCtx =
+                  lastAsstMsgCtx.includes('Confirma o cancelamento?') || lastAsstMsgCtx.includes('SIM para cancelar') ||
+                  lastAsstMsgCtx.includes('deseja cancelar') || (lastAsstMsgCtx.includes('cancelar') && lastAsstMsgCtx.includes('prosseguir'));
+
+              if (isReschedCtx) {
+                console.log('🔄 Confirmação detectada em contexto de reagendamento - ignorando criação de agendamento');
+              }
+              if (isCancCtx) {
+                console.log('🚫 Confirmação detectada em contexto de cancelamento - ignorando criação de agendamento');
+              }
 
               console.log('🔍 Verificando se é confirmação:', {
                 messageText: messageText,
                 messageLower: messageText.toLowerCase().trim(),
-                isConfirmationResponse: isConfirmationResponse
+                isConfirmationResponse: isConfirmationResponse,
+                isReschedCtx: isReschedCtx,
+                isCancCtx: isCancCtx
               });
 
-              if (isConfirmationResponse) {
+              if (isConfirmationResponse && !isReschedCtx && !isCancCtx) {
                 console.log('🎯 Confirmação SIM/OK detectada! Buscando dados do agendamento para criar...');
 
                 // Get the recent messages from THIS conversation to find appointment summary
