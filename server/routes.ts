@@ -7759,16 +7759,41 @@ if (ignoredNumbers !== undefined) {
                 }
 
                 if (confirmationDetected && phoneConversations.length > 0) {
-                  // Look for conversation with recent AI confirmation message
+                  // Check if confirmation is in reschedule context - if so, skip booking flow
+                  let isInRescheduleContext = false;
                   for (const conv of phoneConversations) {
-                    const recentMessages = await storage.getMessagesByConversation(conv.id);
-                    // Query retorna DESC, então [0] é a mais recente
-                    const lastAiMessage = recentMessages.filter(m => m.role === 'assistant')[0];
+                    const recentMsgs = await storage.getMessagesByConversation(conv.id);
+                    const lastAiMsg = recentMsgs.filter(m => m.role === 'assistant')[0];
+                    if (lastAiMsg) {
+                      const msg = lastAiMsg.content;
+                      if (msg.includes('mudar seu agendamento') || msg.includes('mudar o agendamento') ||
+                          msg.includes('reagendar') || msg.includes('remarcar') ||
+                          msg.includes('trocar o dia') || msg.includes('trocar a data') ||
+                          msg.includes('trocar o horário') || msg.includes('trocar o horario') ||
+                          msg.includes('alterar o agendamento') || msg.includes('alterar seu agendamento') ||
+                          msg.includes('adiar') || msg.includes('mudar para') ||
+                          msg.includes('Para reagendar') || msg.includes('necessário cancelar o agendamento atual') ||
+                          (msg.includes('mudar') && msg.includes('agendamento')) ||
+                          (msg.includes('alterar') && msg.includes('agendamento'))) {
+                        isInRescheduleContext = true;
+                        console.log('🔄 Confirmação detectada em contexto de reagendamento - ignorando busca de agendamento');
+                        break;
+                      }
+                    }
+                  }
 
-                    if (lastAiMessage && lastAiMessage.content.includes('confirmado')) {
-                      conversation = conv;
-                      console.log('✅ Encontrada conversa com confirmação da IA ID:', conversation.id);
-                      break;
+                  if (!isInRescheduleContext) {
+                    // Look for conversation with recent AI confirmation message
+                    for (const conv of phoneConversations) {
+                      const recentMessages = await storage.getMessagesByConversation(conv.id);
+                      // Query retorna DESC, então [0] é a mais recente
+                      const lastAiMessage = recentMessages.filter(m => m.role === 'assistant')[0];
+
+                      if (lastAiMessage && lastAiMessage.content.includes('confirmado')) {
+                        conversation = conv;
+                        console.log('✅ Encontrada conversa com confirmação da IA ID:', conversation.id);
+                        break;
+                      }
                     }
                   }
                 }
@@ -8626,6 +8651,36 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                                      (lastAssistantMsgPreCheck.includes('cancelar') && lastAssistantMsgPreCheck.includes('prosseguir'));
               const isConfirmingCancel = isUserConfirming && isCancelContext;
 
+              // ========================================
+              // VERIFICAR CONTEXTO DE REAGENDAMENTO
+              // Evita que "Sim" em contexto de reagendamento seja tratado
+              // como confirmação de novo agendamento (que causa conflito de horário)
+              // ========================================
+              const isRescheduleContext =
+                  lastAssistantMsgPreCheck.includes('mudar seu agendamento') ||
+                  lastAssistantMsgPreCheck.includes('mudar o agendamento') ||
+                  lastAssistantMsgPreCheck.includes('reagendar') ||
+                  lastAssistantMsgPreCheck.includes('remarcar') ||
+                  lastAssistantMsgPreCheck.includes('trocar o dia') ||
+                  lastAssistantMsgPreCheck.includes('trocar a data') ||
+                  lastAssistantMsgPreCheck.includes('trocar o horário') ||
+                  lastAssistantMsgPreCheck.includes('trocar o horario') ||
+                  lastAssistantMsgPreCheck.includes('alterar o agendamento') ||
+                  lastAssistantMsgPreCheck.includes('alterar seu agendamento') ||
+                  lastAssistantMsgPreCheck.includes('alterar a data') ||
+                  lastAssistantMsgPreCheck.includes('alterar o horário') ||
+                  lastAssistantMsgPreCheck.includes('alterar o horario') ||
+                  lastAssistantMsgPreCheck.includes('adiar') ||
+                  lastAssistantMsgPreCheck.includes('mudar para') ||
+                  lastAssistantMsgPreCheck.includes('Para reagendar') ||
+                  lastAssistantMsgPreCheck.includes('necessário cancelar o agendamento atual') ||
+                  (lastAssistantMsgPreCheck.includes('mudar') && lastAssistantMsgPreCheck.includes('agendamento')) ||
+                  (lastAssistantMsgPreCheck.includes('alterar') && lastAssistantMsgPreCheck.includes('agendamento'));
+
+              if (isRescheduleContext && isUserConfirming) {
+                console.log('🔄 PRÉ-PROCESSAMENTO: "Sim" detectado em contexto de reagendamento - ignorando pré-validação, deixando IA processar');
+              }
+
               // Detectar "Não" em contexto de cancelamento
               const isDecliningCancel = isCancelContext && /^(não|nao|n|no|cancela não|cancela nao|não quero|nao quero)$/i.test(messageText.toLowerCase().trim());
 
@@ -8637,7 +8692,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 );
               }
 
-              if (isUserConfirming && !isConfirmingCancel) {
+              if (isUserConfirming && !isConfirmingCancel && !isRescheduleContext) {
                 console.log('==================================================');
                 console.log('🔍 PRÉ-VALIDAÇÃO: Cliente confirmou com SIM/OK');
                 console.log('==================================================');
