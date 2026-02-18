@@ -911,7 +911,7 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
           
           // Force fresh fetch of global settings to ensure we have the latest API key
           const freshSettings = await storage.getGlobalSettings();
-          console.log('🔑 OpenAI API Key status:', freshSettings?.openaiApiKey ? `Key found (${freshSettings.openaiApiKey.substring(0, 10)}...)` : 'No key found');
+          console.log('🔑 OpenAI API Key status:', freshSettings?.openaiApiKey ? 'Key configured' : 'No key found');
           
           const openai = new OpenAI({ apiKey: freshSettings?.openaiApiKey || globalSettings.openaiApiKey });
 
@@ -4441,7 +4441,7 @@ const broadcastEvent = (eventData: any) => {
           
             // Force fresh fetch of global settings to ensure we have the latest API key
             const freshSettings = await storage.getGlobalSettings();
-            console.log('🔑 OpenAI API Key status:', freshSettings?.openaiApiKey ? `Key found (${freshSettings.openaiApiKey.substring(0, 10)}...)` : 'No key found');
+            console.log('🔑 OpenAI API Key status:', freshSettings?.openaiApiKey ? 'Key configured' : 'No key found');
           
             const openai = new OpenAI({ apiKey: freshSettings?.openaiApiKey || globalSettings.openaiApiKey });
 
@@ -7814,7 +7814,7 @@ const broadcastEvent = (eventData: any) => {
           
             // Force fresh fetch of global settings to ensure we have the latest API key
             const freshSettings = await storage.getGlobalSettings();
-            console.log('🔑 OpenAI API Key status:', freshSettings?.openaiApiKey ? `Key found (${freshSettings.openaiApiKey.substring(0, 10)}...)` : 'No key found');
+            console.log('🔑 OpenAI API Key status:', freshSettings?.openaiApiKey ? 'Key configured' : 'No key found');
           
             const openai = new OpenAI({ apiKey: freshSettings?.openaiApiKey || globalSettings.openaiApiKey });
 

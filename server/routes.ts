@@ -4195,12 +4195,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id);
       const company = await storage.getCompany(id);
-      
+
       if (!company) {
         return res.status(404).json({ message: "Empresa não encontrada" });
       }
-      
-      res.json(company);
+
+      // Remove sensitive keys from response - return only boolean flags
+      const { openaiApiKey, asaasApiKey, password, resetToken, resetTokenExpires, financialPassword, ...safeCompany } = company as any;
+      res.json({
+        ...safeCompany,
+        hasOpenaiApiKey: !!openaiApiKey,
+        hasAsaasApiKey: !!asaasApiKey,
+        hasFinancialPassword: !!financialPassword,
+      });
     } catch (error) {
       console.error("Error fetching company:", error);
       res.status(500).json({ message: "Falha ao buscar empresa" });
@@ -4270,7 +4277,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const company = await storage.updateCompany(id, validatedData);
       console.log('Updated company ID:', company?.id);
-      res.json(company);
+
+      // Remove sensitive keys from response
+      const { openaiApiKey, asaasApiKey, password: _pw, resetToken, resetTokenExpires, financialPassword, ...safeCompany } = company as any;
+      res.json({
+        ...safeCompany,
+        hasOpenaiApiKey: !!openaiApiKey,
+        hasAsaasApiKey: !!asaasApiKey,
+        hasFinancialPassword: !!financialPassword,
+      });
     } catch (error) {
       if (error instanceof z.ZodError) {
         console.error("Validation error:", error.errors);
@@ -4588,7 +4603,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/settings', isAuthenticated, async (req, res) => {
     try {
       const settings = await storage.getGlobalSettings();
-      res.json(settings);
+      if (settings) {
+        // Remove sensitive keys from response - return only boolean flags
+        const { evolutionApiGlobalKey, openaiApiKey, ...safeSettings } = settings as any;
+        res.json({
+          ...safeSettings,
+          hasEvolutionApiGlobalKey: !!evolutionApiGlobalKey,
+          hasOpenaiApiKey: !!openaiApiKey,
+        });
+      } else {
+        res.json(settings);
+      }
     } catch (error) {
       console.error("Error fetching settings:", error);
       res.status(500).json({ message: "Falha ao buscar configurações" });
@@ -4603,7 +4628,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Clear meta tags cache when settings are updated
       clearMetaTagsCache();
 
-      res.json(settings);
+      // Remove sensitive keys from response
+      const { evolutionApiGlobalKey, openaiApiKey, ...safeSettings } = settings as any;
+      res.json({
+        ...safeSettings,
+        hasEvolutionApiGlobalKey: !!evolutionApiGlobalKey,
+        hasOpenaiApiKey: !!openaiApiKey,
+      });
     } catch (error) {
       if (error instanceof z.ZodError) {
         console.error("Validation errors:", error.errors);
