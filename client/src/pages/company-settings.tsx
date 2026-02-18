@@ -944,7 +944,7 @@ export default function CompanySettings() {
 
       toast({
         title: "Detalhes da Instância",
-        description: `URL da API: ${apiUrl || 'Não configurada'}\nChave da API: ${apiKey ? apiKey.substring(0, 20) + '...' : 'Não configurada'}`,
+        description: `URL da API: ${apiUrl || 'Não configurada'}\nChave da API: ${apiKey ? '••••••••••••••••••••' : 'Não configurada'}`,
       });
     },
     onError: (error: any) => {
