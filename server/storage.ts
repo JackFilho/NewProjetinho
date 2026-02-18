@@ -3256,7 +3256,7 @@ export class DatabaseStorage implements IStorage {
 
       // Generate review URL - use the configured system URL or default
       const settings = await this.getGlobalSettings();
-      let reviewUrl = `http://localhost:5000/review/${token}`;
+      let reviewUrl = `http://localhost:${process.env.PORT || '5001'}/review/${token}`;
       
       if (settings?.systemUrl) {
         reviewUrl = `${settings.systemUrl}/review/${token}`;
