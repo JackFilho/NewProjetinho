@@ -11695,7 +11695,7 @@ Parece que ocorreu uma falha inesperada em nosso sistema.
 Pedimos, por gentileza, que aguarde alguns instantes e tente novamente.
 
 Se o erro persistir, você pode entrar em contato com nosso Suporte pelo WhatsApp: (81) 9 9316-7159
-ou pelo e-mail: contato@inhouseaida.com
+ou pelo e-mail: contato@inhousesaude.com
 
 Agradecemos a compreensão e pedimos desculpas pelo transtorno.
 Obrigado pela preferência! 🙏`;

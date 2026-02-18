@@ -24,7 +24,7 @@ let globalSettingsCacheTime = 0;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 async function getMetaTagsForRoute(url: string, req: any): Promise<MetaTags> {
-  const baseUrl = process.env.BASE_URL || "https://sistema.inhouseaida.com";
+  const baseUrl = process.env.BASE_URL || "https://sistema.inhousesaude.com";
 
   // Fetch global settings from database with caching
   let globalSettings = globalSettingsCache;
@@ -118,7 +118,7 @@ async function getMetaTagsForRoute(url: string, req: any): Promise<MetaTags> {
 
 async function injectDynamicMetaTags(template: string, url: string, req: any): Promise<string> {
   const meta = await getMetaTagsForRoute(url, req);
-  const baseUrl = process.env.BASE_URL || "https://sistema.inhouseaida.com";
+  const baseUrl = process.env.BASE_URL || "https://sistema.inhousesaude.com";
 
   // Replace title
   template = template.replace(
