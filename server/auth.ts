@@ -18,11 +18,11 @@ export function getSession() {
     }),
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: process.env.COOKIE_SECURE === 'true',
       maxAge: 7 * 24 * 60 * 60 * 1000,
       sameSite: 'lax',
     },
-    name: 'connect.sid',
+    name: 'inhousesaude.sid',
   });
 }
 
