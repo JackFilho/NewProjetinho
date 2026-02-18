@@ -373,7 +373,7 @@ export const appointments = mysqlTable("appointments", {
   duration: int("duration").default(30),
   totalPrice: decimal("total_price", { precision: 10, scale: 2 }).default("0.00"),
   expense: decimal("expense", { precision: 10, scale: 2 }).default("0.00"),
-  status: varchar("status", { length: 50 }).notNull().default("agendado"),
+  status: varchar("status", { length: 50 }).notNull().default("Pendente"),
   notes: text("notes"),
   reminderSent: int("reminder_sent").default(0),
   asaasPaymentId: varchar("asaas_payment_id", { length: 255 }),

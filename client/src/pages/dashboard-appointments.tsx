@@ -542,7 +542,7 @@ export default function DashboardAppointments() {
                   setIsAppointmentDetailsOpen(true);
                 }}
               >
-                {(appointment.status === 'cancelled' || appointment.status === 'Cancelado') && (
+                {(['cancelled', 'cancelado'].includes(appointment.status?.toLowerCase())) && (
                   <div className="absolute -top-1 -right-1 bg-red-500 rounded-full p-0.5">
                     <X className="h-3 w-3 text-white" />
                   </div>
@@ -1597,7 +1597,7 @@ export default function DashboardAppointments() {
                             setIsAppointmentDetailsOpen(true);
                           }}
                         >
-                          {(appointment.status === 'cancelled' || appointment.status === 'Cancelado') && (
+                          {(['cancelled', 'cancelado'].includes(appointment.status?.toLowerCase())) && (
                             <div className="absolute -top-1 -right-1 bg-red-500 rounded-full p-0.5">
                               <X className="h-3 w-3 text-white" />
                             </div>
@@ -1620,10 +1620,7 @@ export default function DashboardAppointments() {
                               {appointment.professional?.name || 'Profissional não encontrado'}
                             </span>
                             <Badge variant="outline" className="text-xs">
-                              {appointment.status === 'scheduled' && 'Agendado'}
-                              {appointment.status === 'confirmed' && 'Confirmado'}
-                              {appointment.status === 'cancelled' && 'Cancelado'}
-                              {appointment.status === 'completed' && 'Concluído'}
+                              {appointment.status}
                             </Badge>
                           </div>
                         </div>
@@ -1720,10 +1717,7 @@ export default function DashboardAppointments() {
                           {format(parseISO(appointment.appointmentDate), 'dd/MM')} às {appointment.appointmentTime}
                         </div>
                         <Badge variant="outline" className="text-xs">
-                          {appointment.status === 'scheduled' && 'Agendado'}
-                          {appointment.status === 'confirmed' && 'Confirmado'}
-                          {appointment.status === 'cancelled' && 'Cancelado'}
-                          {appointment.status === 'completed' && 'Concluído'}
+                          {appointment.status}
                         </Badge>
                       </div>
                       <div className="text-xs text-gray-500 mt-1">
@@ -1752,10 +1746,7 @@ export default function DashboardAppointments() {
                           </div>
                           <div className="text-sm text-gray-500">{appointment.clientPhone}</div>
                           <Badge variant="outline" className="mt-1">
-                            {appointment.status === 'scheduled' && 'Agendado'}
-                            {appointment.status === 'confirmed' && 'Confirmado'}
-                            {appointment.status === 'cancelled' && 'Cancelado'}
-                            {appointment.status === 'completed' && 'Concluído'}
+                            {appointment.status}
                           </Badge>
                         </div>
                         <div className="flex gap-2">
@@ -1868,11 +1859,11 @@ export default function DashboardAppointments() {
                     if (appointmentDate > endDate) isInDateRange = false;
                   }
 
-                  return apt.status === status.name &&
+                  return apt.status?.toLowerCase() === status.name?.toLowerCase() &&
                     (filterProfessional === 'all' || apt.professionalId.toString() === filterProfessional) &&
                     isInDateRange;
                 });
-                
+
                 return (
                   <Card key={status.id} className="flex flex-col">
                     <CardHeader className="pb-2">
@@ -2013,11 +2004,11 @@ export default function DashboardAppointments() {
                     if (appointmentDate > endDate) isInDateRange = false;
                   }
 
-                  return apt.status === status.name &&
+                  return apt.status?.toLowerCase() === status.name?.toLowerCase() &&
                     (filterProfessional === 'all' || apt.professionalId.toString() === filterProfessional) &&
                     isInDateRange;
                 });
-                
+
                 return (
                   <Card key={status.id} className="flex flex-col">
                     <CardHeader className="pb-3">
