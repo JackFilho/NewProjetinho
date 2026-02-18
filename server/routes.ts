@@ -2152,6 +2152,8 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       aiResponse.includes('Está tudo correto?') ||
       aiResponse.includes('Responda SIM para confirmar') ||
       aiResponse.includes('Responda SIM para cancelar') ||
+      aiResponse.includes('CANCELAR* para confirmar') ||
+      aiResponse.includes('CANCELAR para confirmar') ||
       aiResponse.includes('Confirma a remarcação?') ||
       aiResponse.includes('Confirma o cancelamento?') ||
       aiResponse.includes('confirmar seu agendamento') ||
@@ -3549,6 +3551,8 @@ async function createAppointmentFromConversation(conversationId: number, company
       const isAskingForConfirmation = lastAIMessage.content.includes('Está tudo correto?') ||
                                       lastAIMessage.content.includes('Responda SIM para confirmar') ||
                                       lastAIMessage.content.includes('Responda SIM para cancelar') ||
+                                      lastAIMessage.content.includes('CANCELAR* para confirmar') ||
+                                      lastAIMessage.content.includes('CANCELAR para confirmar') ||
                                       lastAIMessage.content.includes('Confirma a remarcação?') ||
                                       lastAIMessage.content.includes('Confirma o cancelamento?') ||
                                       lastAIMessage.content.includes('confirmar seu agendamento');
@@ -8487,15 +8491,18 @@ Quando o cliente mencionar qualquer uma dessas frases:
 IMPORTANTE: O comando [LISTAR_AGENDAMENTOS_CANCELAR] DEVE estar na sua resposta!
 O sistema vai substituir automaticamente pela lista de agendamentos do cliente.
 
-→ Após o cliente responder com um NÚMERO (1, 2, 3...), confirme: "Confirma o cancelamento do agendamento X? Responda SIM para cancelar."
+→ Após o cliente responder com um NÚMERO (1, 2, 3...), confirme: "Confirma o cancelamento do agendamento X? Digite CANCELAR para confirmar."
 
 REAGENDAMENTO (REMARCAR):
 Quando o cliente mencionar qualquer uma dessas frases:
 "remarcar", "alterar horário", "mudar data", "reagendar", "trocar horário", "mudar horário", "adiar"
+Ou quando o cliente indicar que agendou no dia/horário errado e quer mudar:
 
 → Informe ao cliente que para remarcar é necessário PRIMEIRO CANCELAR o agendamento atual e depois fazer um novo agendamento.
-→ Pergunte se ele deseja cancelar o agendamento atual.
-→ Se sim, siga o fluxo de cancelamento acima.
+→ JÁ INICIE O FLUXO DE CANCELAMENTO AUTOMATICAMENTE! Não pergunte "você gostaria de cancelar?" - já ofereça direto.
+→ Responda algo como: "Para remarcar, primeiro preciso cancelar o agendamento atual. Vou verificar seus agendamentos... [LISTAR_AGENDAMENTOS_CANCELAR]"
+→ IMPORTANTE: SEMPRE inclua [LISTAR_AGENDAMENTOS_CANCELAR] na resposta de reagendamento!
+→ NUNCA pergunte "Você gostaria de mudar seu agendamento?" ou "Posso te ajudar com isso?" - já inicie o cancelamento direto.
 
 REGRAS CRÍTICAS PARA CANCELAMENTO:
 - SEMPRE inclua o comando [LISTAR_AGENDAMENTOS_CANCELAR] na sua resposta quando for cancelar
@@ -8534,9 +8541,19 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               const hasCancelKeyword = cancelKeywords.some(kw => lowerMsg.includes(kw));
               const hasRescheduleKeyword = rescheduleKeywords.some(kw => lowerMsg.includes(kw));
 
+              // Verificar se "cancelar" está sendo usado como CONFIRMAÇÃO de cancelamento (não como novo pedido)
+              // Se a última mensagem do bot pediu confirmação, "cancelar" é uma resposta, não um novo pedido
+              const lastBotMsgForIntercept = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
+              const isAlreadyInCancelConfirmation = lastBotMsgForIntercept.includes('Confirma o cancelamento?') ||
+                                                     lastBotMsgForIntercept.includes('CANCELAR* para confirmar') ||
+                                                     lastBotMsgForIntercept.includes('CANCELAR para confirmar') ||
+                                                     lastBotMsgForIntercept.includes('SIM* para cancelar') ||
+                                                     lastBotMsgForIntercept.includes('SIM para cancelar');
+              const isCancelAsConfirmation = isAlreadyInCancelConfirmation && /^(cancelar|cancela|cancelamento)$/i.test(lowerMsg);
+
               let interceptedResponse: string | null = null;
 
-              if (hasCancelKeyword && !hasRescheduleKeyword) {
+              if (hasCancelKeyword && !hasRescheduleKeyword && !isCancelAsConfirmation) {
                 // Cancelamento direto - listar agendamentos
                 console.log('🚫 INTERCEPTAÇÃO: Keyword de cancelamento detectada - disparando fluxo de cancelamento');
                 const appointmentsList = await listClientAppointmentsNumbered(phoneNumber, company.id, 'cancelar');
@@ -8640,6 +8657,8 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               // ========================================
               const lastAssistantMsgPreCheck = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
               const isCancelContext = lastAssistantMsgPreCheck.includes('Confirma o cancelamento?') ||
+                                     lastAssistantMsgPreCheck.includes('CANCELAR* para confirmar') ||
+                                     lastAssistantMsgPreCheck.includes('CANCELAR para confirmar') ||
                                      lastAssistantMsgPreCheck.includes('SIM* para cancelar') ||
                                      lastAssistantMsgPreCheck.includes('SIM para cancelar') ||
                                      lastAssistantMsgPreCheck.includes('deseja cancelar o agendamento') ||
@@ -8649,7 +8668,9 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                                      lastAssistantMsgPreCheck.includes('Qual agendamento você deseja cancelar') ||
                                      (lastAssistantMsgPreCheck.includes('cancelar') && lastAssistantMsgPreCheck.includes('Posso prosseguir')) ||
                                      (lastAssistantMsgPreCheck.includes('cancelar') && lastAssistantMsgPreCheck.includes('prosseguir'));
-              const isConfirmingCancel = isUserConfirming && isCancelContext;
+              // Detectar se usuário digitou "cancelar" como confirmação de cancelamento
+              const isUserConfirmingCancelWord = /^(cancelar|cancela|cancelamento)$/i.test(messageText.toLowerCase().trim());
+              const isConfirmingCancel = (isUserConfirming || isUserConfirmingCancelWord) && isCancelContext;
 
               // ========================================
               // VERIFICAR CONTEXTO DE REAGENDAMENTO
@@ -8674,11 +8695,86 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                   lastAssistantMsgPreCheck.includes('mudar para') ||
                   lastAssistantMsgPreCheck.includes('Para reagendar') ||
                   lastAssistantMsgPreCheck.includes('necessário cancelar o agendamento atual') ||
+                  lastAssistantMsgPreCheck.includes('preciso cancelar o horário anterior') ||
+                  lastAssistantMsgPreCheck.includes('cancelar o horário anterior') ||
+                  lastAssistantMsgPreCheck.includes('gostaria de mudar') ||
+                  (lastAssistantMsgPreCheck.includes('cancelar') && lastAssistantMsgPreCheck.includes('agendar para a nova data')) ||
+                  (lastAssistantMsgPreCheck.includes('cancelar') && lastAssistantMsgPreCheck.includes('nova data')) ||
                   (lastAssistantMsgPreCheck.includes('mudar') && lastAssistantMsgPreCheck.includes('agendamento')) ||
                   (lastAssistantMsgPreCheck.includes('alterar') && lastAssistantMsgPreCheck.includes('agendamento'));
 
               if (isRescheduleContext && isUserConfirming) {
-                console.log('🔄 PRÉ-PROCESSAMENTO: "Sim" detectado em contexto de reagendamento - ignorando pré-validação, deixando IA processar');
+                console.log('🔄 PRÉ-PROCESSAMENTO: "Sim" detectado em contexto de reagendamento - interceptando para listar agendamentos');
+
+                // Interceptar e listar agendamentos para cancelar (ao invés de deixar a IA processar)
+                const appointmentsListReschedule = await listClientAppointmentsNumbered(phoneNumber, company.id, 'cancelar');
+                const rescheduleInterceptResponse = `Para reagendar, primeiro vamos cancelar o agendamento atual.\n\n${appointmentsListReschedule}`;
+
+                // Salvar mensagem do usuário
+                await storage.createMessage({
+                  conversationId: conversation.id,
+                  role: 'user',
+                  content: messageText,
+                  messageType: 'text',
+                  delivered: true,
+                  timestamp: new Date(),
+                });
+
+                // Formatar telefone para Evolution API
+                let formattedPhoneReschedule = phoneNumber.replace(/\D/g, '');
+                if (!formattedPhoneReschedule.startsWith('55') && formattedPhoneReschedule.length >= 10) {
+                  formattedPhoneReschedule = '55' + formattedPhoneReschedule;
+                }
+
+                // Enviar via Evolution API
+                const correctedApiUrlReschedule = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+                await sendTypingPresence(correctedApiUrlReschedule, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneReschedule, 2000);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+
+                try {
+                  const sendResponseReschedule = await fetch(`${correctedApiUrlReschedule}/message/sendText/${instanceName}`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'apikey': globalSettings.evolutionApiGlobalKey!,
+                    },
+                    body: JSON.stringify({
+                      number: formattedPhoneReschedule,
+                      text: rescheduleInterceptResponse,
+                    }),
+                  });
+
+                  if (sendResponseReschedule.ok) {
+                    console.log(`✅ [REAGENDAMENTO INTERCEPTADO] Resposta enviada para ${phoneNumber}`);
+                  } else {
+                    console.error(`❌ [REAGENDAMENTO INTERCEPTADO] Falha ao enviar: Status ${sendResponseReschedule.status}`);
+                  }
+                } catch (error) {
+                  console.error('❌ Erro ao enviar mensagem de reagendamento interceptado:', error);
+                }
+
+                // Salvar resposta no banco
+                await storage.createMessage({
+                  conversationId: conversation.id,
+                  role: 'assistant',
+                  content: rescheduleInterceptResponse,
+                  messageType: 'text',
+                  delivered: true,
+                  timestamp: new Date(),
+                });
+
+                // Liberar lock e retornar
+                const lockKeyReschedule = `${company.id}:${instanceName}:${phoneNumber}`;
+                if (processingLocks.has(lockKeyReschedule)) {
+                  processingLocks.delete(lockKeyReschedule);
+                }
+
+                return res.status(200).json({
+                  received: true,
+                  processed: true,
+                  intercepted: true,
+                  message: 'Fluxo de reagendamento interceptado - listando agendamentos para cancelar'
+                });
               }
 
               // Detectar "Não" em contexto de cancelamento
@@ -8692,7 +8788,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 );
               }
 
-              if (isUserConfirming && !isConfirmingCancel && !isRescheduleContext) {
+              if ((isUserConfirming || isUserConfirmingCancelWord) && !isConfirmingCancel && !isRescheduleContext) {
                 console.log('==================================================');
                 console.log('🔍 PRÉ-VALIDAÇÃO: Cliente confirmou com SIM/OK');
                 console.log('==================================================');
@@ -9412,7 +9508,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 💼 ${service?.name || 'Serviço'}
 👤 ${professional?.name || 'Profissional'}
 
-Confirma o cancelamento? Responda *SIM* para cancelar ou *NÃO* para manter o agendamento.`;
+Confirma o cancelamento? Digite *CANCELAR* para confirmar ou *NÃO* para manter o agendamento.`;
 
                   // Salvar ID do agendamento no contexto para quando confirmar
                   await pool.execute(
@@ -9427,9 +9523,12 @@ Confirma o cancelamento? Responda *SIM* para cancelar ou *NÃO* para manter o ag
               // ========================================
               // PROCESSAR CONFIRMAÇÃO DE CANCELAMENTO (SIM após escolha de número)
               // ========================================
+              const isConfirmingCancelWord = messageText.match(/^(cancelar|cancela|cancelamento)$/i);
               const isConfirmingSIM = messageText.match(/^(sim|s|ok|confirmo|confirmar)$/i);
               const lastAssistantMsg = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
               const isAskingCancelConfirmation = lastAssistantMsg.includes('Confirma o cancelamento?') ||
+                                                 lastAssistantMsg.includes('CANCELAR* para confirmar') ||
+                                                 lastAssistantMsg.includes('CANCELAR para confirmar') ||
                                                  lastAssistantMsg.includes('SIM* para cancelar') ||
                                                  lastAssistantMsg.includes('SIM para cancelar') ||
                                                  lastAssistantMsg.includes('deseja cancelar o agendamento') ||
@@ -9442,12 +9541,13 @@ Confirma o cancelamento? Responda *SIM* para cancelar ou *NÃO* para manter o ag
 
               console.log('🔍 DEBUG CANCELAMENTO:');
               console.log('   - Mensagem do usuário:', messageText);
+              console.log('   - É confirmação CANCELAR?', !!isConfirmingCancelWord);
               console.log('   - É confirmação SIM?', !!isConfirmingSIM);
               console.log('   - Última msg do assistente (100 chars):', lastAssistantMsg.substring(0, 100));
               console.log('   - Está pedindo confirmação de cancelamento?', isAskingCancelConfirmation);
 
-              if (isConfirmingSIM && isAskingCancelConfirmation) {
-                console.log('✅ Usuário confirmou cancelamento com SIM');
+              if ((isConfirmingCancelWord || isConfirmingSIM) && isAskingCancelConfirmation) {
+                console.log('✅ Usuário confirmou cancelamento com', isConfirmingCancelWord ? 'CANCELAR' : 'SIM');
 
                 // Buscar o ID do agendamento pendente nas mensagens do sistema
                 const allMessages = await storage.getMessagesByConversation(conversation.id);
@@ -10539,6 +10639,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
                         // Padrões de remarcação/cancelamento (mais flexíveis)
                         (
                           (m.content.includes('Responda SIM para cancelar') ||
+                           m.content.includes('CANCELAR* para confirmar') ||
+                           m.content.includes('CANCELAR para confirmar') ||
                            m.content.includes('Confirma o cancelamento?') ||
                            m.content.includes('Confirma a remarcação?') ||
                            // Novos padrões mais flexíveis
@@ -10595,7 +10697,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                   if (summaryMessage) {
                     console.log('📋 Conteúdo do resumo:', summaryMessage.content.substring(0, 200) + '...');
                     console.log('🔍 VERIFICANDO TIPO DE OPERAÇÃO:');
-                    console.log('   - É cancelamento?', summaryMessage.content.includes('Confirma o cancelamento?') || summaryMessage.content.includes('Responda SIM para cancelar'));
+                    console.log('   - É cancelamento?', summaryMessage.content.includes('Confirma o cancelamento?') || summaryMessage.content.includes('Responda SIM para cancelar') || summaryMessage.content.includes('CANCELAR para confirmar'));
                     console.log('   - É remarcação?', summaryMessage.content.includes('Confirma a remarcação?') || (summaryMessage.content.includes('DE:') && summaryMessage.content.includes('PARA:')));
                     console.log('   - É agendamento normal?', !summaryMessage.content.includes('Confirma o cancelamento?') && !summaryMessage.content.includes('Confirma a remarcação?'));
                   } else {
@@ -10686,6 +10788,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
                     // ========================================
                     const isCancellation = (
                       summaryMessage.content.includes('Confirma o cancelamento?') ||
+                      summaryMessage.content.includes('CANCELAR* para confirmar') ||
+                      summaryMessage.content.includes('CANCELAR para confirmar') ||
                       summaryMessage.content.includes('Responda SIM para cancelar')
                     );
 
@@ -14732,6 +14836,8 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       aiResponse.includes('Está tudo correto?') ||
       aiResponse.includes('Responda SIM para confirmar') ||
       aiResponse.includes('Responda SIM para cancelar') ||
+      aiResponse.includes('CANCELAR* para confirmar') ||
+      aiResponse.includes('CANCELAR para confirmar') ||
       aiResponse.includes('Confirma a remarcação?') ||
       aiResponse.includes('Confirma o cancelamento?') ||
       aiResponse.includes('confirmar seu agendamento') ||
@@ -16129,6 +16235,8 @@ async function createAppointmentFromConversation(conversationId: number, company
       const isAskingForConfirmation = lastAIMessage.content.includes('Está tudo correto?') ||
                                       lastAIMessage.content.includes('Responda SIM para confirmar') ||
                                       lastAIMessage.content.includes('Responda SIM para cancelar') ||
+                                      lastAIMessage.content.includes('CANCELAR* para confirmar') ||
+                                      lastAIMessage.content.includes('CANCELAR para confirmar') ||
                                       lastAIMessage.content.includes('Confirma a remarcação?') ||
                                       lastAIMessage.content.includes('Confirma o cancelamento?') ||
                                       lastAIMessage.content.includes('confirmar seu agendamento');
