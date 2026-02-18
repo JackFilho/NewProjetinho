@@ -8643,12 +8643,18 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 /^(sim|s|ok|confirmo|confirmar|confirmado)$/i,
                 /^(sim|ok),?\s*(pode|por favor|obrigado|está correto|confirmo)?$/i,
                 /^(está correto|tudo certo|tudo correto|pode confirmar|confirmo sim)$/i,
-                /^sim,?\s*(tudo correto|tudo certo|tudo)$/i
+                /^sim,?\s*(tudo correto|tudo certo|tudo)$/i,
+                /^tudo\s*(ok|certo|correto)$/i
               ];
 
+              // Verificar confirmação na mensagem inteira E em cada linha individual
+              // (para mensagens agrupadas via debounce, ex: "Tudo ok\nSim")
+              const messageLines = messageText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
               const isUserConfirming = confirmationPatterns.some(pattern =>
                 pattern.test(messageText.toLowerCase().trim())
-              );
+              ) || (messageLines.length > 1 && messageLines.some(line =>
+                confirmationPatterns.some(pattern => pattern.test(line.toLowerCase()))
+              ));
 
               // ========================================
               // VERIFICAR CONTEXTO DE CANCELAMENTO ANTES da pré-validação de agendamento
@@ -10566,12 +10572,18 @@ Por favor, escolha um dos horários disponíveis acima.`;
                   /^(sim|s|ok|confirmo|confirmar|confirmado)$/i,
                   /^(sim|ok),?\s*(pode|por favor|obrigado|está correto|confirmo)?$/i,
                   /^(está correto|tudo certo|tudo correto|pode confirmar|confirmo sim)$/i,
-                  /^sim,?\s*(tudo correto|tudo certo|tudo)$/i
+                  /^sim,?\s*(tudo correto|tudo certo|tudo)$/i,
+                  /^tudo\s*(ok|certo|correto)$/i
                 ];
 
+                // Verificar confirmação na mensagem inteira E em cada linha individual
+                // (para mensagens agrupadas via debounce, ex: "Tudo ok\nSim")
+                const msgLines = messageText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
                 const isConfirmationResponse = confirmationPatterns.some(pattern =>
                   pattern.test(messageText.toLowerCase().trim())
-                );
+                ) || (msgLines.length > 1 && msgLines.some(line =>
+                  confirmationPatterns.some(pattern => pattern.test(line.toLowerCase()))
+                ));
 
                 console.log('==================================================');
                 console.log('🔍 VERIFICANDO SE MENSAGEM É CONFIRMAÇÃO');
