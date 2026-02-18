@@ -1921,7 +1921,7 @@ export default function CompanySettings() {
                           : "Notificações N8N foram desativadas"
                       });
                     }).catch(err => {
-                      console.error('Erro ao atualizar webhook n8n');
+                      // webhook update failed
                       toast({
                         title: "Erro",
                         description: "Falha ao atualizar configuração",
@@ -1960,7 +1960,7 @@ export default function CompanySettings() {
                           toast({ title: "Erro", description: data.message || "URL inválida", variant: "destructive" });
                         }
                       }).catch(err => {
-                        console.error('Erro ao atualizar webhook n8n');
+                        // webhook update failed
                         toast({ title: "Erro", description: "Falha ao salvar URL", variant: "destructive" });
                       });
                     }}
@@ -1993,7 +1993,7 @@ export default function CompanySettings() {
                             });
                           }
                         }).catch(err => {
-                          console.error('Erro ao testar webhook');
+                          // webhook test failed
                           toast({
                             title: "Erro",
                             description: "Falha ao enviar teste",

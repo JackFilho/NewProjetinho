@@ -218,7 +218,6 @@ export default function CompanyPatientProfile() {
         primaryColor: (company as any)?.primaryColor,
       })
         .catch((err) => {
-          console.error("Erro ao gerar PDF:", err);
           toast({ title: "Erro ao gerar PDF", variant: "destructive" });
         })
         .finally(() => {
@@ -552,7 +551,6 @@ export default function CompanyPatientProfile() {
                         companyName: company?.fantasyName,
                         primaryColor: (company as any)?.primaryColor,
                       }).catch((err) => {
-                        console.error("Erro ao gerar PDF:", err);
                         toast({ title: "Erro ao gerar PDF", variant: "destructive" });
                       });
                     }
@@ -575,7 +573,6 @@ export default function CompanyPatientProfile() {
                         companyName: company?.fantasyName,
                         primaryColor: (company as any)?.primaryColor,
                       }).catch((err) => {
-                        console.error("Erro ao gerar PDF:", err);
                         toast({ title: "Erro ao gerar PDF", variant: "destructive" });
                       });
                     }

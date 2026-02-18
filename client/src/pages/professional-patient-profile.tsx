@@ -232,7 +232,6 @@ export default function ProfessionalPatientProfile() {
         primaryColor: companyInfo?.primaryColor,
       })
         .catch((err) => {
-          console.error("Erro ao gerar PDF:", err);
           toast({ title: "Erro ao gerar PDF", variant: "destructive" });
         })
         .finally(() => {

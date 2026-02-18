@@ -548,11 +548,6 @@ async function listClientAppointmentsNumbered(clientPhone: string, companyId: nu
     const nowBrasilia = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
     const todayStr = nowBrasilia.toISOString().split('T')[0]; // YYYY-MM-DD
 
-    console.log('📋 [listClientAppointmentsNumbered] OTIMIZADO:');
-    console.log('   📞 Telefone:', cleanClientPhone);
-    console.log('   🏢 Company ID:', companyId);
-    console.log('   📅 Data de hoje (Brasília):', todayStr);
-
     // Consulta direta no banco - MUITO mais eficiente!
     // Busca apenas agendamentos futuros deste cliente com status válido
     const [rows] = await pool.execute(`
@@ -3144,32 +3139,24 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
     const normalizedPhone = phoneNumber.replace(/\D/g, '');
     const existingClients = await storage.getClientsByCompany(companyId);
     
-    console.log(`🔍 Looking for existing client with phone: ${normalizedPhone}`);
-    console.log(`📋 Existing clients:`, existingClients.map(c => ({ name: c.name, phone: c.phone })));
-    
     // Try to find existing client by phone or name
-    let client = existingClients.find(c => 
+    let client = existingClients.find(c =>
       (c.phone && c.phone.replace(/\D/g, '') === normalizedPhone) ||
       (c.name && extractedName && c.name.toLowerCase() === extractedName.toLowerCase())
     );
-    
+
     if (!client) {
       // Use proper Brazilian phone formatting from phone-utils
-      console.log(`📞 Processing phone: ${phoneNumber}`);
       const normalizedPhone = normalizePhone(phoneNumber);
-      console.log(`📞 Normalized: ${normalizedPhone}`);
       const formattedPhone = formatBrazilianPhone(normalizedPhone);
-      console.log(`📞 Formatted: ${formattedPhone}`);
-      
+
       if (!formattedPhone) {
-        console.log(`❌ Invalid phone number format: ${phoneNumber}`);
         throw new Error('Formato de telefone inválido');
       }
-      
+
       // Usar contactName (pushName) como fallback se não tiver nome extraído
       const clientName = extractedName || contactName || `Cliente ${formattedPhone}`;
-      console.log(`🆕 Creating new client: ${clientName} with phone ${formattedPhone}`);
-      
+
       client = await storage.createClient({
         companyId,
         name: clientName,
@@ -3179,18 +3166,15 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
         birthDate: null
       });
     } else {
-      console.log(`✅ Found existing client: ${client.name} (ID: ${client.id})`);
       // Se não temos nome extraído, usar o nome do cliente existente
       if (!extractedName && client.name) {
         extractedName = client.name;
-        console.log(`📝 Usando nome do cliente existente: "${extractedName}"`);
       }
     }
 
     // Fallback final: usar contactName (pushName) da Evolution API
     if (!extractedName && contactName) {
       extractedName = contactName;
-      console.log(`📝 Usando contactName (pushName) da Evolution: "${extractedName}"`);
     }
 
     // Format date for conflict check without timezone conversion
@@ -3267,7 +3251,6 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 
     // Create or get existing client before creating appointment
     try {
-      console.log('👤 Criando/verificando cliente:', { name: extractedName, phone: phoneNumber, companyId });
       const client = await storage.createClient({
         companyId,
         name: extractedName,
@@ -3276,7 +3259,6 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
         birthDate: null,
         notes: 'Cliente criado automaticamente via WhatsApp'
       });
-      console.log('✅ Cliente criado/encontrado:', client.id, client.name);
     } catch (clientError) {
       console.error('⚠️ Erro ao criar cliente (continuando com agendamento):', clientError);
       // Continue with appointment creation even if client creation fails
@@ -3898,9 +3880,9 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
             notes: 'Cliente criado via WhatsApp',
             birthDate: null
           });
-          console.log('👤 New client created:', client.name);
+          // client created
         } else {
-          console.log('👤 Existing client found:', client.name);
+          // existing client found
         }
       } catch (error) {
         console.error('Error creating/finding client:', error);
@@ -5194,8 +5176,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/auth/company-login', async (req: any, res) => {
     try {
       const { email, password } = req.body;
-      console.log('Company login attempt:', { email, password: '***' });
-      
       if (!email || !password) {
         return res.status(400).json({ message: "Email e senha são obrigatórios" });
       }
@@ -5787,14 +5767,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/company/profile', isCompanyAuthenticated, checkSubscriptionStatus, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
-      console.log('🔧 [PROFILE] Update request - CompanyId:', companyId);
-
       if (!companyId) {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
       const { fantasyName, document, email, address, phone, zipCode, googleMapsLocation, coursesDescription, coursesImages, coursesPdfs } = req.body;
-      console.log('🔧 [PROFILE] Received data:', { fantasyName, document, email, address, phone, zipCode, googleMapsLocation, coursesDescription, coursesImages, coursesPdfs });
 
       if (!fantasyName || !address) {
         return res.status(400).json({ message: "Nome fantasia e endereço são obrigatórios" });
@@ -5808,49 +5785,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Add basic profile fields if provided
       if (document !== undefined) {
         updateData.document = document;
-        console.log('🔧 [PROFILE] Adding document to updateData:', document);
       }
       if (email !== undefined) {
         updateData.email = email;
-        console.log('🔧 [PROFILE] Adding email to updateData:', email);
       }
       if (phone !== undefined) {
         updateData.phone = phone;
-        console.log('🔧 [PROFILE] Adding phone to updateData:', phone);
       }
       if (zipCode !== undefined) {
         updateData.zipCode = zipCode;
-        console.log('🔧 [PROFILE] Adding zipCode to updateData:', zipCode);
       }
 
       // Add googleMapsLocation if provided
       if (googleMapsLocation !== undefined) {
         updateData.googleMapsLocation = googleMapsLocation;
-        console.log('🔧 [PROFILE] Adding googleMapsLocation to updateData:', googleMapsLocation);
       }
 
       // Add courses fields if provided
       if (coursesDescription !== undefined) {
         updateData.coursesDescription = coursesDescription;
-        console.log('🔧 [PROFILE] Adding coursesDescription to updateData');
       }
       if (coursesImages !== undefined) {
         updateData.coursesImages = coursesImages;
-        console.log('🔧 [PROFILE] Adding coursesImages to updateData');
       }
       if (coursesPdfs !== undefined) {
         updateData.coursesPdfs = coursesPdfs;
-        console.log('🔧 [PROFILE] Adding coursesPdfs to updateData');
       }
 
-      console.log('🔧 [PROFILE] Update data to be saved:', updateData);
       const company = await storage.updateCompany(companyId, updateData);
-      console.log('🔧 [PROFILE] Updated company googleMapsLocation:', company.googleMapsLocation);
-      console.log('🔧 [PROFILE] Updated company courses fields:', {
-        coursesDescription: company.coursesDescription,
-        coursesImages: company.coursesImages,
-        coursesPdfs: company.coursesPdfs
-      });
 
       // Remove password from response
       const { password, ...companyData } = company;
@@ -8916,7 +8878,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                           if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
                             formattedPhone = '55' + formattedPhone;
                           }
-                          console.log(`📤 [CONFLITO] Telefone formatado: ${formattedPhone}`);
+                          // phone formatted for conflict notification
 
                           const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
                           console.log(`📤 [CONFLITO] URL corrigida: ${correctedApiUrl}`);
@@ -10744,13 +10706,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                                    lastAssistantMsgFromDb.includes('1️⃣') ||
                                                    lastAssistantMsgFromDb.includes('PIX') && lastAssistantMsgFromDb.includes('Cartão');
 
-                    console.log('💳 DEBUG - askedForPaymentMethod:', askedForPaymentMethod);
-
-                    if (false) { // CPF flow removed - Mercado Pago não precisa de CPF
-                      console.log('💳 ========================================');
-                      console.log('💳 CPF RECEBIDO - GERANDO QR CODE PIX');
-                      console.log('💳 CPF:', cleanedCpfInput);
-                      console.log('💳 ========================================');
+                                  if (false) { // CPF flow removed - Mercado Pago não precisa de CPF
 
                       // Buscar dados pendentes do PIX na mensagem anterior
                       const pendingPixDataMsg = allMsgsForPaymentCheck.find(m =>
@@ -12049,9 +12005,9 @@ Obrigado pela preferência! 🙏`;
             notes: notes || null,
             birthDate: null
           });
-          console.log('👤 New client created:', client.name);
+          // client created
         } else {
-          console.log('👤 Existing client found:', client.name);
+          // existing client found
         }
       } catch (clientError) {
         console.error('Error handling client:', clientError);
@@ -15664,32 +15620,24 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
     const normalizedPhone = phoneNumber.replace(/\D/g, '');
     const existingClients = await storage.getClientsByCompany(companyId);
     
-    console.log(`🔍 Looking for existing client with phone: ${normalizedPhone}`);
-    console.log(`📋 Existing clients:`, existingClients.map(c => ({ name: c.name, phone: c.phone })));
-    
     // Try to find existing client by phone or name
-    let client = existingClients.find(c => 
+    let client = existingClients.find(c =>
       (c.phone && c.phone.replace(/\D/g, '') === normalizedPhone) ||
       (c.name && extractedName && c.name.toLowerCase() === extractedName.toLowerCase())
     );
-    
+
     if (!client) {
       // Use proper Brazilian phone formatting from phone-utils
-      console.log(`📞 Processing phone: ${phoneNumber}`);
       const normalizedPhone = normalizePhone(phoneNumber);
-      console.log(`📞 Normalized: ${normalizedPhone}`);
       const formattedPhone = formatBrazilianPhone(normalizedPhone);
-      console.log(`📞 Formatted: ${formattedPhone}`);
-      
+
       if (!formattedPhone) {
-        console.log(`❌ Invalid phone number format: ${phoneNumber}`);
         throw new Error('Formato de telefone inválido');
       }
-      
+
       // Usar contactName (pushName) como fallback se não tiver nome extraído
       const clientName = extractedName || contactName || `Cliente ${formattedPhone}`;
-      console.log(`🆕 Creating new client: ${clientName} with phone ${formattedPhone}`);
-      
+
       client = await storage.createClient({
         companyId,
         name: clientName,
@@ -15699,18 +15647,15 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
         birthDate: null
       });
     } else {
-      console.log(`✅ Found existing client: ${client.name} (ID: ${client.id})`);
       // Se não temos nome extraído, usar o nome do cliente existente
       if (!extractedName && client.name) {
         extractedName = client.name;
-        console.log(`📝 Usando nome do cliente existente: "${extractedName}"`);
       }
     }
 
     // Fallback final: usar contactName (pushName) da Evolution API
     if (!extractedName && contactName) {
       extractedName = contactName;
-      console.log(`📝 Usando contactName (pushName) da Evolution: "${extractedName}"`);
     }
 
     // Format date for conflict check without timezone conversion
@@ -15787,7 +15732,6 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 
     // Create or get existing client before creating appointment
     try {
-      console.log('👤 Criando/verificando cliente:', { name: extractedName, phone: phoneNumber, companyId });
       const client = await storage.createClient({
         companyId,
         name: extractedName,
@@ -15796,7 +15740,6 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
         birthDate: null,
         notes: 'Cliente criado automaticamente via WhatsApp'
       });
-      console.log('✅ Cliente criado/encontrado:', client.id, client.name);
     } catch (clientError) {
       console.error('⚠️ Erro ao criar cliente (continuando com agendamento):', clientError);
       // Continue with appointment creation even if client creation fails
@@ -16418,9 +16361,9 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
             notes: 'Cliente criado via WhatsApp',
             birthDate: null
           });
-          console.log('👤 New client created:', client.name);
+          // client created
         } else {
-          console.log('👤 Existing client found:', client.name);
+          // existing client found
         }
       } catch (error) {
         console.error('Error creating/finding client:', error);
@@ -18407,11 +18350,8 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         console.log('❌ Professional not found for login attempt');
         return res.status(401).json({ message: "Email ou senha incorretos" });
       }
-      console.log(`👤 Found professional ID: ${professional.id}, hasPassword: ${!!professional.password}`);
-
       // Check if professional has a password set
       if (!professional.password) {
-        console.log(`❌ No password set for professional ID: ${professional.id}`);
         return res.status(401).json({ message: "Acesso não configurado. Entre em contato com a empresa." });
       }
 
@@ -18651,9 +18591,9 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
             birthDate: null,
             notes: 'Cliente criado via agendamento do profissional'
           });
-          console.log('👤 Novo cliente criado:', client.name);
+          // client created
         } else {
-          console.log('👤 Cliente existente encontrado:', existingClient.name);
+          // existing client found
         }
       } catch (clientError) {
         console.error('⚠️ Erro ao criar cliente (continuando com agendamento):', clientError);

@@ -258,7 +258,6 @@ export default function CompanyLayout({ children }: CompanyLayoutProps) {
         if (response.ok) {
           const result = await response.json();
           if (result.updated > 0) {
-            console.log(`✅ ${result.updated} agendamentos pendentes antigos foram marcados como concluídos`);
             // Invalidate appointments query to refresh the data
             queryClient.invalidateQueries({ queryKey: ['/api/company/appointments'] });
 
@@ -270,7 +269,7 @@ export default function CompanyLayout({ children }: CompanyLayoutProps) {
           }
         }
       } catch (error) {
-        console.error('Erro ao auto-completar agendamentos antigos');
+        // silently fail - non-critical auto-complete
       }
     };
 
