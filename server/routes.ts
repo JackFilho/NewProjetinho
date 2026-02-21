@@ -95,6 +95,17 @@ const pendingConfirmationTimers = new Map<string, {
   phoneNumber: string;
 }>();
 
+// 💬 FOLLOW-UP DE CONVERSA: Timer de 30 minutos para clientes que param de responder durante o atendimento
+const conversationFollowUpTimers = new Map<string, {
+  timer: NodeJS.Timeout;
+  conversationId: number;
+  instanceName: string;
+  companyId: number;
+  phoneNumber: string;
+}>();
+// Rastreia conversas que já receberam follow-up (só envia uma vez por conversa)
+const conversationFollowUpSent = new Set<string>();
+
 /**
  * Verifica se uma resposta da IA é um resumo de confirmação de agendamento.
  * Usa os mesmos padrões da detecção em PRÉ-VALIDAÇÃO (linhas 8489-8503).
@@ -112,6 +123,56 @@ function isConfirmationSummary(text: string): boolean {
   const hasTimeMarker = text.includes('🕐') || text.includes('Horário:');
 
   return hasConfirmationPrompt && hasNameMarker && hasDateMarker && hasTimeMarker;
+}
+
+/**
+ * Verifica se uma resposta da IA indica que o atendimento foi concluído.
+ * Usado para NÃO agendar follow-up de 30 min quando a conversa já terminou.
+ * Cobre: agendamento confirmado/cancelado/remarcado, despedidas e agradecimentos.
+ */
+function isConversationConcluded(text: string): boolean {
+  const lowerText = text.toLowerCase();
+
+  // Palavras-chave de conclusão de agendamento
+  const conclusionKeywords = [
+    'agendamento realizado com sucesso',
+    'agendamento está confirmado',
+    'agendamento confirmado',
+    'realizado com sucesso',
+    'agendamento cancelado com sucesso',
+    'agendamento remarcado com sucesso',
+    'nos vemos',
+    'te aguardo',
+    'aguardamos você',
+    'até lá',
+  ];
+
+  // Palavras-chave de despedida/encerramento (quando a IA responde a "obrigada", "tchau", etc)
+  const farewellKeywords = [
+    'de nada',
+    'por nada',
+    'disponha',
+    'foi um prazer',
+    'estou à disposição',
+    'estou a disposição',
+    'fico à disposição',
+    'fico a disposição',
+    'qualquer coisa é só chamar',
+    'qualquer dúvida é só chamar',
+    'até mais',
+    'até logo',
+    'tenha um bom dia',
+    'tenha uma boa tarde',
+    'tenha uma boa noite',
+    'bom dia pra você',
+    'boa tarde pra você',
+    'boa noite pra você',
+  ];
+
+  const hasConclusionKeyword = conclusionKeywords.some(keyword => lowerText.includes(keyword));
+  const hasFarewellKeyword = farewellKeywords.some(keyword => lowerText.includes(keyword));
+
+  return hasConclusionKeyword || hasFarewellKeyword;
 }
 
 // 🧹 LIMPEZA PERIÓDICA: Remove entradas órfãs dos Maps em memória a cada 5 minutos
@@ -151,8 +212,30 @@ setInterval(() => {
     }
   }
 
-  if (cleanedProcessing > 0 || cleanedLastMsg > 0 || cleanedTimers > 0) {
-    console.log(`🧹 Limpeza de Maps: processingLocks=${cleanedProcessing}, lastMessageTime=${cleanedLastMsg}, pendingTimers=${cleanedTimers}`);
+  // conversationFollowUpTimers: entradas mais velhas que 35 minutos são órfãs
+  // (o timer de follow-up é 30 min, então 35 min já passou do timeout)
+  let cleanedFollowUp = 0;
+  for (const [key, entry] of conversationFollowUpTimers) {
+    const lastActivity = lastMessageTime.get(key) || 0;
+    if (lastActivity > 0 && now - lastActivity > 35 * 60 * 1000) {
+      clearTimeout(entry.timer);
+      conversationFollowUpTimers.delete(key);
+      cleanedFollowUp++;
+    }
+  }
+
+  // conversationFollowUpSent: limpar entradas antigas (mais de 2 horas sem atividade)
+  let cleanedFollowUpSent = 0;
+  for (const key of conversationFollowUpSent) {
+    const lastActivity = lastMessageTime.get(key) || 0;
+    if (lastActivity > 0 && now - lastActivity > 2 * 60 * 60 * 1000) {
+      conversationFollowUpSent.delete(key);
+      cleanedFollowUpSent++;
+    }
+  }
+
+  if (cleanedProcessing > 0 || cleanedLastMsg > 0 || cleanedTimers > 0 || cleanedFollowUp > 0 || cleanedFollowUpSent > 0) {
+    console.log(`🧹 Limpeza de Maps: processingLocks=${cleanedProcessing}, lastMessageTime=${cleanedLastMsg}, pendingTimers=${cleanedTimers}, followUpTimers=${cleanedFollowUp}, followUpSent=${cleanedFollowUpSent}`);
   }
 }, 5 * 60 * 1000); // 5 minutos
 
@@ -7654,6 +7737,20 @@ if (ignoredNumbers !== undefined) {
             }
 
             // ========================================
+            // 💬 CANCELAR TIMER DE FOLLOW-UP DE CONVERSA
+            // Se o cliente respondeu, cancelar o timer de follow-up e resetar flag
+            // ========================================
+            const followUpKey = `${company.id}:${phoneNumber}`;
+            if (conversationFollowUpTimers.has(followUpKey)) {
+              const pendingFollowUp = conversationFollowUpTimers.get(followUpKey)!;
+              clearTimeout(pendingFollowUp.timer);
+              conversationFollowUpTimers.delete(followUpKey);
+              console.log(`💬 Timer de follow-up de conversa CANCELADO para ${followUpKey}`);
+            }
+            // Resetar flag de follow-up enviado quando o cliente responde (permite novo ciclo)
+            conversationFollowUpSent.delete(followUpKey);
+
+            // ========================================
             // ⏸️  CHECK IF AI AGENT IS PAUSED FOR THIS COMPANY
             // ========================================
             if (company.agentPaused === 1 || company.agentPaused === true) {
@@ -10312,6 +10409,173 @@ Por favor, escolha um dos horários disponíveis acima.`;
                   });
 
                   console.log(`⏰ Timer agendado com sucesso. Total de timers ativos: ${pendingConfirmationTimers.size}`);
+                }
+
+                // ========================================
+                // 💬 AGENDAR FOLLOW-UP DE CONVERSA (30 MINUTOS)
+                // Se a IA NÃO enviou confirmação de agendamento, NÃO é conclusão de atendimento,
+                // e ainda não enviou follow-up, agendar lembrete contextual caso o cliente pare de responder
+                // ========================================
+                if (!isConfirmationSummary(aiResponse) && !isConversationConcluded(aiResponse)) {
+                  const followUpKeySched = `${company.id}:${phoneNumber}`;
+
+                  // Só agendar se ainda não enviou follow-up nesta conversa
+                  if (!conversationFollowUpSent.has(followUpKeySched)) {
+                    // Cancelar timer anterior se existir (cada nova mensagem da IA reseta o timer)
+                    if (conversationFollowUpTimers.has(followUpKeySched)) {
+                      const existingFollowUp = conversationFollowUpTimers.get(followUpKeySched)!;
+                      clearTimeout(existingFollowUp.timer);
+                      conversationFollowUpTimers.delete(followUpKeySched);
+                    }
+
+                    const followUpConversationId = conversation.id;
+                    const followUpInstanceName = instanceName;
+                    const followUpCompanyId = company.id;
+                    const followUpPhoneNumber = phoneNumber;
+                    const followUpOpenaiKey = company.openaiApiKey;
+                    const followUpModel = company.openaiModel || 'gpt-4o-mini';
+
+                    console.log(`💬 Agendando follow-up de conversa para ${followUpKeySched} em 30 minutos`);
+
+                    const followUpTimer = setTimeout(async () => {
+                      try {
+                        console.log(`💬 Timer de follow-up disparado para ${followUpKeySched}`);
+
+                        // Marcar como enviado ANTES de enviar (evita duplicatas)
+                        conversationFollowUpSent.add(followUpKeySched);
+
+                        // Buscar configurações atualizadas
+                        const currentGlobalSettings = await storage.getGlobalSettings();
+                        if (!currentGlobalSettings?.evolutionApiUrl || !currentGlobalSettings?.evolutionApiGlobalKey) {
+                          console.error('❌ Evolution API não configurada para follow-up');
+                          conversationFollowUpTimers.delete(followUpKeySched);
+                          return;
+                        }
+
+                        // Verificar se a conversa ainda está em modo agente (não foi assumida por humano)
+                        const currentConversation = await storage.getConversation(
+                          followUpCompanyId,
+                          conversation.whatsappInstanceId,
+                          followUpPhoneNumber
+                        );
+                        if (currentConversation && currentConversation.takeoverMode === 'human') {
+                          console.log('💬 Conversa em modo humano, cancelando follow-up');
+                          conversationFollowUpTimers.delete(followUpKeySched);
+                          return;
+                        }
+
+                        // Buscar últimas mensagens para contexto
+                        const recentMsgs = await storage.getRecentMessages(followUpConversationId, 10);
+                        const lastMessages = recentMsgs
+                          .reverse()
+                          .filter((msg: any) => msg.role === 'user' || msg.role === 'assistant')
+                          .map((msg: any) => ({
+                            role: msg.role as 'user' | 'assistant',
+                            content: msg.content
+                          }));
+
+                        // Usar IA para gerar mensagem contextual de follow-up
+                        const OpenAIFollowUp = (await import('openai')).default;
+                        const followUpOpenai = new OpenAIFollowUp({ apiKey: followUpOpenaiKey });
+
+                        const followUpCompletion = await followUpOpenai.chat.completions.create({
+                          model: followUpModel,
+                          messages: [
+                            {
+                              role: 'system',
+                              content: `Você é um assistente de atendimento via WhatsApp. O cliente parou de responder há 30 minutos durante a conversa. Gere UMA mensagem curta e amigável (máximo 2 frases) pedindo para o cliente continuar o atendimento. A mensagem deve ser contextual baseada no histórico da conversa. Não repita informações já dadas. Use tom amigável e informal. Não use markdown. Não mencione o tempo que passou.`
+                            },
+                            ...lastMessages,
+                            {
+                              role: 'user',
+                              content: '[SISTEMA: O cliente não respondeu há 30 minutos. Gere uma mensagem de follow-up contextual para retomar o atendimento.]'
+                            }
+                          ],
+                          temperature: 0.7,
+                          max_tokens: 100,
+                        });
+
+                        const followUpMessage = followUpCompletion.choices[0]?.message?.content || 'Oi! 😊 Estou por aqui caso precise de algo. Posso te ajudar em alguma coisa?';
+
+                        const followUpApiUrl = ensureEvolutionApiEndpoint(currentGlobalSettings.evolutionApiUrl);
+
+                        // Formatar número para API
+                        let followUpPhone = followUpPhoneNumber.replace(/\D/g, '');
+                        if (!followUpPhone.startsWith('55') && followUpPhone.length >= 10) {
+                          followUpPhone = '55' + followUpPhone;
+                        }
+
+                        // Enviar presença "digitando"
+                        await sendTypingPresence(
+                          followUpApiUrl,
+                          currentGlobalSettings.evolutionApiGlobalKey!,
+                          followUpInstanceName,
+                          followUpPhone,
+                          2000
+                        );
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+
+                        // Enviar follow-up via WhatsApp
+                        const followUpResponse = await fetch(
+                          `${followUpApiUrl}/message/sendText/${followUpInstanceName}`,
+                          {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              'apikey': currentGlobalSettings.evolutionApiGlobalKey!
+                            },
+                            body: JSON.stringify({
+                              number: followUpPhone,
+                              text: followUpMessage
+                            })
+                          }
+                        );
+
+                        if (followUpResponse.ok) {
+                          console.log(`✅ Follow-up de conversa enviado para ${followUpPhoneNumber}: ${followUpMessage}`);
+
+                          // Salvar no histórico da conversa
+                          await storage.createMessage({
+                            conversationId: followUpConversationId,
+                            content: followUpMessage,
+                            role: 'assistant',
+                            messageType: 'text',
+                            delivered: true,
+                            timestamp: new Date(),
+                          });
+                          console.log('✅ Follow-up salvo no histórico da conversa');
+                        } else {
+                          console.error(`❌ Falha ao enviar follow-up: Status ${followUpResponse.status}`);
+                        }
+                      } catch (error) {
+                        console.error('❌ Erro ao enviar follow-up de conversa:', error);
+                      } finally {
+                        conversationFollowUpTimers.delete(followUpKeySched);
+                      }
+                    }, 30 * 60 * 1000); // 30 minutos
+
+                    conversationFollowUpTimers.set(followUpKeySched, {
+                      timer: followUpTimer,
+                      conversationId: followUpConversationId,
+                      instanceName: followUpInstanceName,
+                      companyId: followUpCompanyId,
+                      phoneNumber: followUpPhoneNumber,
+                    });
+
+                    console.log(`💬 Follow-up agendado. Total de follow-ups ativos: ${conversationFollowUpTimers.size}`);
+                  } else {
+                    console.log(`💬 Follow-up já enviado para ${followUpKeySched}, não agendar novamente`);
+                  }
+                } else {
+                  // Conversa concluída (agendamento confirmado, cancelado, etc) ou confirmação pendente
+                  // Cancelar qualquer timer de follow-up pendente - não faz sentido enviar
+                  const followUpKeyCancel = `${company.id}:${phoneNumber}`;
+                  if (conversationFollowUpTimers.has(followUpKeyCancel)) {
+                    const pendingFollowUp = conversationFollowUpTimers.get(followUpKeyCancel)!;
+                    clearTimeout(pendingFollowUp.timer);
+                    conversationFollowUpTimers.delete(followUpKeyCancel);
+                    console.log(`💬 Timer de follow-up CANCELADO (conversa concluída/confirmação) para ${followUpKeyCancel}`);
+                  }
                 }
 
                 // ========================================
