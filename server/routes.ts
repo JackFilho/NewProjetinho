@@ -9929,16 +9929,36 @@ Seu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é 
                           }
 
                           // Substituir resposta da IA
-                          const availableTimesStr = availableTimes.length > 0
-                            ? availableTimes.slice(0, 6).join(', ')
-                            : 'Não há horários disponíveis neste dia';
-
-                          aiResponse = `❌ O horário ${parsedTime} não está disponível para ${professional.name} no dia ${appointmentData.date}.
+                          if (availableTimes.length > 0) {
+                            const availableTimesStr = availableTimes.slice(0, 6).join(', ');
+                            aiResponse = `❌ O horário ${parsedTime} não está disponível para ${professional.name} no dia ${appointmentData.date}.
 
 📅 Horários disponíveis para este dia:
 ${availableTimesStr}${availableTimes.length > 6 ? ' e outros' : ''}
 
 Por favor, escolha um dos horários disponíveis acima.`;
+                          } else {
+                            // Nenhum horário no dia — sugerir próximos dias com disponibilidade
+                            let alternativeDaysMsg = '';
+                            if (service) {
+                              try {
+                                const nextDaySuggestions = await getAvailabilitySummary(company.id, professional.id, service.id, parsedDate, 8);
+                                const daysWithSlots = nextDaySuggestions
+                                  .filter(d => d.date !== parsedDate && (d.status === 'available' || d.status === 'partial') && d.slotsCount > 0);
+
+                                if (daysWithSlots.length > 0) {
+                                  const suggestions = daysWithSlots.slice(0, 5).map(d =>
+                                    `📅 *${d.dayName}*, ${d.dateFormatted} — ${d.slotsCount} horário${d.slotsCount > 1 ? 's' : ''} disponível${d.slotsCount > 1 ? 'is' : ''}`
+                                  ).join('\n');
+                                  alternativeDaysMsg = `\n\nMas temos disponibilidade nos seguintes dias:\n\n${suggestions}\n\nQual desses dias fica melhor pra você?`;
+                                }
+                              } catch (err) {
+                                console.error('⚠️ Erro ao buscar sugestões de dias:', err);
+                              }
+                            }
+
+                            aiResponse = `❌ O horário ${parsedTime} não está disponível para ${professional.name} no dia ${appointmentData.date} e não há mais horários livres neste dia.${alternativeDaysMsg || '\n\nQue tal escolher outro dia?'}`;
+                          }
 
                           console.log('✅ Resposta substituída - cliente será informado sobre conflito');
                           console.log('📝 Nova resposta:', aiResponse);
