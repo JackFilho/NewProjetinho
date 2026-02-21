@@ -8709,6 +8709,27 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                   (lastAssistantMsgPreCheck.includes('mudar') && lastAssistantMsgPreCheck.includes('agendamento')) ||
                   (lastAssistantMsgPreCheck.includes('alterar') && lastAssistantMsgPreCheck.includes('agendamento'));
 
+              // ========================================
+              // VERIFICAR CONTEXTO PÓS-CONFIRMAÇÃO
+              // Evita que "Ok"/"Sim" APÓS "Agendamento realizado com sucesso!"
+              // seja tratado como nova confirmação de agendamento (que causa conflito de horário)
+              // ========================================
+              const isPostConfirmationContext =
+                  lastAssistantMsgPreCheck.includes('Agendamento realizado com sucesso') ||
+                  lastAssistantMsgPreCheck.includes('Nos vemos no dia') ||
+                  lastAssistantMsgPreCheck.includes('Nos vemos na') ||
+                  lastAssistantMsgPreCheck.includes('Nos vemos no') ||
+                  lastAssistantMsgPreCheck.includes('agendamento foi confirmado') ||
+                  lastAssistantMsgPreCheck.includes('Agendamento Confirmado!') ||
+                  lastAssistantMsgPreCheck.includes('Obrigado por escolher nossos serviços') ||
+                  (lastAssistantMsgPreCheck.includes('confirmado para') && lastAssistantMsgPreCheck.includes('às'));
+
+              if (isPostConfirmationContext && isUserConfirming) {
+                console.log('✅ PRÉ-PROCESSAMENTO: "Ok/Sim" detectado APÓS confirmação de agendamento - ignorando como confirmação de agendamento');
+                console.log('📩 Mensagem do usuário:', messageText);
+                console.log('🤖 Última msg IA:', lastAssistantMsgPreCheck.substring(0, 150));
+              }
+
               if (isRescheduleContext && isUserConfirming) {
                 console.log('🔄 PRÉ-PROCESSAMENTO: "Sim" detectado em contexto de reagendamento - interceptando para listar agendamentos');
 
@@ -8794,7 +8815,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 );
               }
 
-              if ((isUserConfirming || isUserConfirmingCancelWord) && !isConfirmingCancel && !isRescheduleContext) {
+              if ((isUserConfirming || isUserConfirmingCancelWord) && !isConfirmingCancel && !isRescheduleContext && !isPostConfirmationContext) {
                 console.log('==================================================');
                 console.log('🔍 PRÉ-VALIDAÇÃO: Cliente confirmou com SIM/OK');
                 console.log('==================================================');
@@ -9986,7 +10007,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                   aiResponse.includes('está confirmado')
                 );
 
-              if (isConfirmationResponse) {
+              if (isConfirmationResponse && !isPostConfirmationContext) {
                 console.log('💳 Resposta é confirmação de agendamento - verificando Asaas...');
 
                 // Check if company has Asaas configured
@@ -10593,7 +10614,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 console.log('✅ É confirmação?', isConfirmationResponse);
                 console.log('==================================================');
 
-                if (isConfirmationResponse) {
+                if (isConfirmationResponse && !isPostConfirmationContext) {
                   console.log('==================================================');
                   console.log('🎯 CONFIRMAÇÃO SIM/OK DETECTADA!');
                   console.log('==================================================');
