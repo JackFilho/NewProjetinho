@@ -1740,7 +1740,22 @@ async function getAvailableTimesForService(
 
     // Verificar se é dia de folga
     if (professionalDaysOff.length > 0) {
-      return `❌ ${professional.name} não está disponível nesta data (dia de folga ou indisponível)`;
+      try {
+        const nextDaySuggestions = await getAvailabilitySummary(companyId, professionalId, serviceId, dateStr, 8);
+        const daysWithSlots = nextDaySuggestions
+          .filter(d => d.date !== dateStr && (d.status === 'available' || d.status === 'partial') && d.slotsCount > 0);
+
+        if (daysWithSlots.length > 0) {
+          const suggestions = daysWithSlots.slice(0, 5).map(d =>
+            `📅 *${d.dayName}*, ${d.dateFormatted} — ${d.slotsCount} horário${d.slotsCount > 1 ? 's' : ''} disponível${d.slotsCount > 1 ? 'is' : ''}`
+          ).join('\n');
+
+          return `😕 ${professional.name} não está disponível nesta data.\n\nMas temos disponibilidade nos seguintes dias:\n\n${suggestions}\n\nQual desses dias fica melhor pra você?`;
+        }
+      } catch (err) {
+        console.error('⚠️ Erro ao buscar sugestões de dias:', err);
+      }
+      return `❌ ${professional.name} não está disponível nesta data (dia de folga ou indisponível).\n\nQue tal escolher outro dia?`;
     }
 
     // Determinar dia da semana (0 = domingo, 1 = segunda, etc.)
@@ -1767,14 +1782,24 @@ async function getAvailableTimesForService(
 
       if (!daySchedule) {
         const dayNames = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
-        const noWorkMessages = [
-          `😕 ${professional.name} não trabalha às ${dayNames[dayOfWeek]}.\n\nQue tal escolher outro dia? Estou aqui para ajudar!`,
-          `Poxa, ${professional.name} não atende às ${dayNames[dayOfWeek]}.\n\nMe conta outro dia que funcione melhor pra você! 📅`,
-          `${professional.name} folga às ${dayNames[dayOfWeek]}.\n\nVamos tentar outro dia? Qual seria bom pra você?`,
-          `Infelizmente ${professional.name} não trabalha às ${dayNames[dayOfWeek]}.\n\nPode me dizer outra data de sua preferência? 😊`,
-          `${professional.name} não está disponível às ${dayNames[dayOfWeek]}.\n\nQual outro dia seria melhor pra você?`
-        ];
-        return noWorkMessages[Math.floor(Math.random() * noWorkMessages.length)];
+
+        try {
+          const nextDaySuggestions = await getAvailabilitySummary(companyId, professionalId, serviceId, dateStr, 8);
+          const daysWithSlots = nextDaySuggestions
+            .filter(d => d.date !== dateStr && (d.status === 'available' || d.status === 'partial') && d.slotsCount > 0);
+
+          if (daysWithSlots.length > 0) {
+            const suggestions = daysWithSlots.slice(0, 5).map(d =>
+              `📅 *${d.dayName}*, ${d.dateFormatted} — ${d.slotsCount} horário${d.slotsCount > 1 ? 's' : ''} disponível${d.slotsCount > 1 ? 'is' : ''}`
+            ).join('\n');
+
+            return `😕 ${professional.name} não trabalha às ${dayNames[dayOfWeek]}.\n\nMas temos disponibilidade nos seguintes dias:\n\n${suggestions}\n\nQual desses dias fica melhor pra você?`;
+          }
+        } catch (err) {
+          console.error('⚠️ Erro ao buscar sugestões de dias:', err);
+        }
+
+        return `😕 ${professional.name} não trabalha às ${dayNames[dayOfWeek]}.\n\nQue tal escolher outro dia? Estou aqui para ajudar!`;
       }
 
       workStartTime = daySchedule.startTime;
@@ -1897,14 +1922,25 @@ async function getAvailableTimesForService(
 
     // Formatar resposta - apenas os horários de forma simples
     if (availableTimes.length === 0) {
-      const noSlotsMessages = [
-        `😕 Não temos horários disponíveis nesta data.\n\nQue tal escolher outro dia? Estou aqui para ajudar!`,
-        `Poxa, esse dia já está todo preenchido!\n\nMe conta outra data que funcione pra você 📅`,
-        `Infelizmente todos os horários já foram preenchidos nesta data.\n\nVamos tentar outro dia? Qual seria bom pra você?`,
-        `Ops! Não há mais horários livres neste dia.\n\nPode me dizer outra data de sua preferência? 😊`,
-        `Este dia está com a agenda cheia!\n\nQual outro dia seria melhor pra você?`
-      ];
-      return noSlotsMessages[Math.floor(Math.random() * noSlotsMessages.length)];
+      // Buscar disponibilidade nos próximos 7 dias úteis para sugerir alternativas
+      try {
+        const nextDaySuggestions = await getAvailabilitySummary(companyId, professionalId, serviceId, dateStr, 8);
+        const daysWithSlots = nextDaySuggestions
+          .filter(d => d.date !== dateStr && (d.status === 'available' || d.status === 'partial') && d.slotsCount > 0);
+
+        if (daysWithSlots.length > 0) {
+          const suggestions = daysWithSlots.slice(0, 5).map(d =>
+            `📅 *${d.dayName}*, ${d.dateFormatted} — ${d.slotsCount} horário${d.slotsCount > 1 ? 's' : ''} disponível${d.slotsCount > 1 ? 'is' : ''}`
+          ).join('\n');
+
+          return `😕 Esse dia já está com a agenda cheia!\n\nMas temos disponibilidade nos seguintes dias:\n\n${suggestions}\n\nQual desses dias fica melhor pra você?`;
+        }
+      } catch (err) {
+        console.error('⚠️ Erro ao buscar sugestões de dias:', err);
+      }
+
+      // Fallback caso não encontre nenhum dia com disponibilidade
+      return `😕 Não temos horários disponíveis nesta data.\n\nQue tal escolher outro dia? Estou aqui para ajudar!`;
     }
 
     // Retorna apenas os horários agrupados
