@@ -75,7 +75,7 @@ import {
 } from "@shared/schema";
 import { normalizePhone, validateBrazilianPhone, comparePhones } from "../shared/phone-utils";
 import { db, pool } from "./db";
-import { eq, desc, and, sql, gte, lte, lt } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lte, lt, inArray } from "drizzle-orm";
 
 // Helper function to create conversation and message tables
 // Ensure professional password column exists
