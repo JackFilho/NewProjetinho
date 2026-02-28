@@ -5,7 +5,7 @@ import { setupAuth, isAuthenticated, isCompanyAuthenticated } from "./auth";
 import { db, pool } from "./db";
 import { loadCompanyPlan, requirePermission, checkProfessionalsLimit, RequestWithPlan } from "./plan-middleware";
 import { checkSubscriptionStatus, getCompanyPaymentAlerts, markAlertAsShown } from "./subscription-middleware";
-import { insertCompanySchema, insertPlanSchema, insertGlobalSettingsSchema, insertAdminSchema, financialCategories, paymentMethods, financialTransactions, companies, appointments, adminAlerts, companyAlertViews, insertCouponSchema, supportTickets, supportTicketTypes, supportTicketStatuses, tasks, insertTaskSchema, trainingVideos, whatsappInstances } from "@shared/schema";
+import { insertCompanySchema, insertPlanSchema, insertGlobalSettingsSchema, insertAdminSchema, financialCategories, paymentMethods, financialTransactions, companies, appointments, adminAlerts, companyAlertViews, insertCouponSchema, supportTickets, supportTicketTypes, supportTicketStatuses, tasks, insertTaskSchema, trainingVideos, whatsappInstances, conversations } from "@shared/schema";
 import bcrypt from "bcrypt";
 import { z } from "zod";
 import QRCode from "qrcode";
@@ -6535,6 +6535,227 @@ if (ignoredNumbers !== undefined) {
   });
 
   // REMOVIDO: endpoints /api/debug/* e /api/test/gilliard-appointment (sem autenticação, expõem dados)
+
+  // ========================================
+  // 🔗 CHATWOOT WEBHOOK - Human Takeover Detection
+  // ========================================
+  // 🔗 CHATWOOT WEBHOOK - Human Takeover & Label-based AI Control
+  // ========================================
+  // Handles two scenarios:
+  // 1. Agent sends message (message_created + outgoing) → activates human takeover with timeout
+  // 2. Label "humano" added/removed (conversation_updated) → permanent AI block until label removed
+  //
+  // Configure this URL as an account-level webhook in Chatwoot:
+  //   Settings → Integrations → Webhooks → Add Webhook
+  //   URL: https://seu-dominio.com/api/webhook/chatwoot
+  //   Events: message_created, conversation_updated
+  app.post('/api/webhook/chatwoot', async (req: any, res) => {
+    try {
+      const payload = req.body;
+      const event = payload.event;
+
+      // Label name that blocks AI (case-insensitive)
+      const HUMAN_LABEL = 'humano';
+
+      // Only process relevant events
+      if (event !== 'message_created' && event !== 'conversation_updated') {
+        return res.status(200).json({ received: true, ignored: true, reason: 'Event not relevant' });
+      }
+
+      // ────────────────────────────────────────────────
+      // HANDLER: Label-based AI control (conversation_updated)
+      // ────────────────────────────────────────────────
+      if (event === 'conversation_updated') {
+        // Extract labels from payload - Chatwoot sends them in different locations
+        const labels: string[] = payload.labels
+          || payload.conversation?.labels
+          || payload.changed_attributes?.labels?.current_value
+          || [];
+
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('🏷️ [CHATWOOT WEBHOOK] Conversation updated');
+        console.log('🏷️ [CHATWOOT WEBHOOK] Labels:', JSON.stringify(labels));
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        // Check if "humano" label is present (case-insensitive)
+        const hasHumanLabel = Array.isArray(labels) && labels.some(
+          (label: string) => label.toLowerCase() === HUMAN_LABEL
+        );
+
+        // Extract phone number from conversation
+        const cwConversation = payload.conversation || payload;
+        const cwContact = cwConversation.meta?.sender || cwConversation.contact || {};
+        const cwContactInbox = cwConversation.contact_inbox || {};
+
+        let phoneNumber = cwContact.phone_number
+          || cwContactInbox.source_id
+          || cwContact.identifier
+          || '';
+
+        phoneNumber = phoneNumber.replace(/[\s+\-()]/g, '').replace(/@s\.whatsapp\.net$/, '');
+
+        if (!phoneNumber) {
+          console.log('❌ [CHATWOOT WEBHOOK] Could not extract phone number for label check');
+          return res.status(200).json({ received: true, error: 'No phone number found' });
+        }
+
+        console.log('📞 [CHATWOOT WEBHOOK] Phone:', phoneNumber);
+        console.log('🏷️ [CHATWOOT WEBHOOK] Has "humano" label:', hasHumanLabel);
+
+        // Find conversation in our database
+        let conv = await db
+          .select()
+          .from(conversations)
+          .where(eq(conversations.phoneNumber, phoneNumber))
+          .limit(1)
+          .then(rows => rows[0]);
+
+        if (!conv) {
+          const phoneWithSuffix = phoneNumber + '@s.whatsapp.net';
+          conv = await db
+            .select()
+            .from(conversations)
+            .where(eq(conversations.phoneNumber, phoneWithSuffix))
+            .limit(1)
+            .then(rows => rows[0]);
+        }
+
+        if (!conv) {
+          console.log('⚠️ [CHATWOOT WEBHOOK] No conversation found for phone:', phoneNumber);
+          return res.status(200).json({ received: true, ignored: true, reason: 'Conversation not found' });
+        }
+
+        if (hasHumanLabel) {
+          // Label "humano" is present → block AI permanently (far future date = never expires)
+          await storage.updateConversation(conv.id, {
+            takeoverMode: 'human',
+            lastMessageAt: new Date('2099-01-01T00:00:00Z'),
+          });
+          console.log('🏷️ [CHATWOOT WEBHOOK] Label "humano" DETECTED → AI BLOCKED permanently for conversation', conv.id);
+          console.log('🚫 [CHATWOOT WEBHOOK] AI will NOT respond until label is removed');
+        } else {
+          // Label "humano" removed → restore AI
+          if (conv.takeoverMode === 'human') {
+            await storage.updateConversation(conv.id, {
+              takeoverMode: 'agent',
+              lastMessageAt: new Date(),
+            });
+            console.log('🏷️ [CHATWOOT WEBHOOK] Label "humano" REMOVED → AI RESTORED for conversation', conv.id);
+            console.log('✅ [CHATWOOT WEBHOOK] AI will respond to next messages');
+          } else {
+            console.log('🏷️ [CHATWOOT WEBHOOK] No label change needed - already in agent mode');
+          }
+        }
+
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        return res.status(200).json({ received: true, processed: true, label: hasHumanLabel ? 'humano_added' : 'humano_removed' });
+      }
+
+      // ────────────────────────────────────────────────
+      // HANDLER: Agent message detection (message_created)
+      // ────────────────────────────────────────────────
+      const messageType = payload.message_type;
+
+      // message_type: "outgoing" = agent sent, "incoming" = customer sent
+      // Also check sender type: "user" = agent in Chatwoot
+      const senderType = payload.sender?.type;
+      const isAgentMessage = messageType === 'outgoing' || messageType === 1 || senderType === 'user';
+
+      if (!isAgentMessage) {
+        return res.status(200).json({ received: true, ignored: true, reason: 'Not an agent message' });
+      }
+
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🔗 [CHATWOOT WEBHOOK] Agent message detected');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+      // Extract phone number from Chatwoot payload
+      const conversation = payload.conversation || {};
+      const contact = conversation.meta?.sender || conversation.contact || {};
+      const contactInbox = conversation.contact_inbox || {};
+
+      let phoneNumber = contact.phone_number
+        || contactInbox.source_id
+        || contact.identifier
+        || '';
+
+      phoneNumber = phoneNumber.replace(/[\s+\-()]/g, '').replace(/@s\.whatsapp\.net$/, '');
+
+      if (!phoneNumber) {
+        console.log('❌ [CHATWOOT WEBHOOK] Could not extract phone number from payload');
+        console.log('📦 Payload keys:', Object.keys(payload));
+        console.log('📦 Conversation meta:', JSON.stringify(conversation.meta || {}).substring(0, 500));
+        return res.status(200).json({ received: true, error: 'No phone number found' });
+      }
+
+      console.log('📞 [CHATWOOT WEBHOOK] Phone:', phoneNumber);
+      console.log('👤 [CHATWOOT WEBHOOK] Agent:', payload.sender?.name || 'Unknown');
+      console.log('💬 [CHATWOOT WEBHOOK] Content:', (payload.content || '').substring(0, 100));
+
+      // Find conversation in our database by phone number
+      const [matchingConversation] = await db
+        .select()
+        .from(conversations)
+        .where(eq(conversations.phoneNumber, phoneNumber))
+        .limit(1);
+
+      if (!matchingConversation) {
+        const phoneWithSuffix = phoneNumber + '@s.whatsapp.net';
+        const [matchWithSuffix] = await db
+          .select()
+          .from(conversations)
+          .where(eq(conversations.phoneNumber, phoneWithSuffix))
+          .limit(1);
+
+        if (!matchWithSuffix) {
+          console.log('⚠️ [CHATWOOT WEBHOOK] No matching conversation found for phone:', phoneNumber);
+          return res.status(200).json({ received: true, ignored: true, reason: 'Conversation not found' });
+        }
+
+        console.log('✅ [CHATWOOT WEBHOOK] Found conversation (with suffix):', matchWithSuffix.id);
+
+        await storage.updateConversation(matchWithSuffix.id, {
+          takeoverMode: 'human',
+          lastMessageAt: new Date(),
+        });
+
+        console.log('🤝 [CHATWOOT WEBHOOK] Human takeover activated for conversation', matchWithSuffix.id);
+        return res.status(200).json({ received: true, processed: true, takeover: true });
+      }
+
+      console.log('✅ [CHATWOOT WEBHOOK] Found conversation:', matchingConversation.id);
+
+      // Activate human takeover mode
+      await storage.updateConversation(matchingConversation.id, {
+        takeoverMode: 'human',
+        lastMessageAt: new Date(),
+      });
+
+      // Save agent message to conversation history
+      const agentContent = payload.content || '';
+      if (agentContent) {
+        await storage.createMessage({
+          conversationId: matchingConversation.id,
+          messageId: `chatwoot_${payload.id || Date.now()}`,
+          content: agentContent,
+          role: 'assistant',
+          messageType: 'text',
+          timestamp: new Date(),
+        });
+        console.log('💾 [CHATWOOT WEBHOOK] Agent message saved to conversation history');
+      }
+
+      console.log('🤝 [CHATWOOT WEBHOOK] Human takeover activated for conversation', matchingConversation.id);
+      console.log('🚫 [CHATWOOT WEBHOOK] AI blocked for this conversation');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+      return res.status(200).json({ received: true, processed: true, takeover: true });
+
+    } catch (error: any) {
+      console.error('❌ [CHATWOOT WEBHOOK] Error:', error.message);
+      return res.status(200).json({ received: true, error: error.message });
+    }
+  });
 
   // Webhook endpoint for WhatsApp integration with AI agent
   app.post('/api/webhook/whatsapp/:instanceName', async (req: any, res) => {
