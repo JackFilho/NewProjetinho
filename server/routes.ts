@@ -7553,65 +7553,43 @@ if (ignoredNumbers !== undefined) {
               console.log('🔍 Audio base64 found:', !!audioBase64);
               console.log('🔍 Audio length:', audioBase64?.length || 0);
 
-              // If no base64 but we have audio message, try multiple methods to download it
+              // If no base64 but we have audio message, try UAZAPI /message/download endpoint
               if (!audioBase64 && message.message?.audioMessage) {
-                console.log('📥 No base64 found, attempting to download audio...');
+                console.log('📥 No base64 found, attempting to download audio via UAZAPI...');
                 const globalSettings = await storage.getGlobalSettings();
 
-                if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
-                  const correctedApiUrl = ensureUAZAPIApiEndpoint(globalSettings.uazapiUrl);
+                if (globalSettings?.uazapiUrl) {
+                  const instanceData = await getInstanceToken(companyId);
 
-                  // Method 1: Try getBase64FromMediaMessage endpoint
-                  try {
-                    console.log('🔄 Method 1: Trying /chat/getBase64FromMediaMessage...');
-                    const downloadResponse = await fetch(`${correctedApiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': globalSettings.uazapiAdminToken
-                      },
-                      body: JSON.stringify({
-                        message: message
-                      })
-                    });
-
-                    if (downloadResponse.ok) {
-                      const downloadData = await downloadResponse.json();
-                      audioBase64 = downloadData.base64;
-                      console.log('✅ Method 1 succeeded - Audio downloaded');
-                      console.log('🔍 Downloaded audio length:', audioBase64?.length || 0);
-                    } else {
-                      console.log('⚠️ Method 1 failed:', downloadResponse.status);
-                    }
-                  } catch (error) {
-                    console.log('⚠️ Method 1 error:', error);
-                  }
-
-                  // Method 2: Try using message key to download
-                  if (!audioBase64 && message.key?.id) {
+                  // Method 1: UAZAPI /message/download with message ID
+                  if (instanceData?.token && message.key?.id) {
                     try {
-                      console.log('🔄 Method 2: Trying message key download...');
-                      const keyDownloadResponse = await fetch(`${correctedApiUrl}/chat/fetchMediaMessage/${instanceName}`, {
+                      console.log('🔄 Method 1: Trying UAZAPI /message/download...');
+                      const baseUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+                      const downloadResponse = await fetch(`${baseUrl}/message/download`, {
                         method: 'POST',
                         headers: {
                           'Content-Type': 'application/json',
-                          'apikey': globalSettings.uazapiAdminToken
+                          'token': instanceData.token
                         },
                         body: JSON.stringify({
-                          key: message.key
+                          id: message.key.id,
+                          return_base64: true,
+                          return_link: false,
+                          generate_mp3: true
                         })
                       });
 
-                      if (keyDownloadResponse.ok) {
-                        const keyDownloadData = await keyDownloadResponse.json();
-                        audioBase64 = keyDownloadData.base64 || keyDownloadData.media?.base64;
-                        console.log('✅ Method 2 succeeded - Audio downloaded via key');
+                      if (downloadResponse.ok) {
+                        const downloadData = await downloadResponse.json();
+                        audioBase64 = downloadData.base64 || downloadData.file?.base64;
+                        console.log('✅ Method 1 succeeded - Audio downloaded via UAZAPI');
                         console.log('🔍 Downloaded audio length:', audioBase64?.length || 0);
                       } else {
-                        console.log('⚠️ Method 2 failed:', keyDownloadResponse.status);
+                        console.log('⚠️ Method 1 failed:', downloadResponse.status);
                       }
                     } catch (error) {
-                      console.log('⚠️ Method 2 error:', error);
+                      console.log('⚠️ Method 1 error:', error);
                     }
                   }
 
@@ -17574,6 +17552,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
   });
 
   // Configure WhatsApp instance settings
+  // UAZAPI não tem /settings/set genérico — configura webhook e delay settings
   app.post('/api/company/whatsapp/instances/:instanceName/configure', async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
@@ -17582,9 +17561,8 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       }
 
       const { instanceName } = req.params;
-      const settings = req.body;
-      
-      console.log(`⚙️ Configuring WhatsApp instance: ${instanceName} with settings:`, settings);
+
+      console.log(`⚙️ Configuring WhatsApp instance: ${instanceName}`);
 
       // Get global settings for UAZAPI
       const globalSettings = await storage.getGlobalSettings();
@@ -17595,39 +17573,69 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       // Verify instance belongs to company
       const instances = await storage.getWhatsappInstancesByCompany(companyId);
       const instance = instances.find(i => i.instanceName === instanceName);
-      
+
       if (!instance) {
         return res.status(404).json({ message: "Instância não encontrada" });
       }
 
-      // Configure settings via UAZAPI
-      const correctedApiUrl = ensureUAZAPIApiEndpoint(globalSettings.uazapiUrl);
-      const configUrl = `${correctedApiUrl}/settings/set/${instanceName}`;
-      
-      const uazapiResponse = await fetch(configUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': globalSettings.uazapiAdminToken
-        },
-        body: JSON.stringify(settings)
-      });
-
-      if (!uazapiResponse.ok) {
-        const errorData = await uazapiResponse.text();
-        console.error(`❌ UAZAPI configure error:`, errorData);
-        return res.status(400).json({ 
-          message: "Erro ao configurar instância no UAZAPI",
-          details: errorData
-        });
+      if (!instance.instanceToken) {
+        return res.status(400).json({ message: "Token da instância não encontrado. Recrie a instância." });
       }
 
-      const result = await uazapiResponse.json();
-      console.log(`✅ WhatsApp instance configured successfully:`, result);
+      const uazapi = await getUazapiService();
+      const results: any = {};
 
-      res.json({ 
-        message: "Configurações do WhatsApp aplicadas com sucesso",
-        result 
+      // 1. Configure webhook (most important)
+      try {
+        const webhookUrl = await generateWebhookUrl(req, instanceName);
+        await uazapi.configureWebhook(instance.instanceToken, {
+          url: webhookUrl,
+          events: ['messages', 'connection'],
+          excludeMessages: ['wasSentByApi']
+        });
+        results.webhook = { success: true, url: webhookUrl };
+        console.log(`✅ Webhook configured: ${webhookUrl}`);
+
+        // Update webhook URL in database
+        await storage.updateWhatsappInstance(instance.id, { webhook: webhookUrl });
+      } catch (webhookError: any) {
+        console.error(`❌ Webhook configure error:`, webhookError);
+        results.webhook = { success: false, error: webhookError.message };
+      }
+
+      // 2. Configure delay settings (optional)
+      try {
+        const baseUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+        const delayRes = await fetch(`${baseUrl}/instance/updateDelaySettings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'token': instance.instanceToken },
+          body: JSON.stringify({ msg_delay_min: 1, msg_delay_max: 3 })
+        });
+        if (delayRes.ok) {
+          results.delay = { success: true };
+          console.log(`✅ Delay settings configured`);
+        }
+      } catch (delayError) {
+        console.warn(`⚠️ Delay settings failed (non-critical):`, delayError);
+      }
+
+      // 3. Get instance status
+      try {
+        const status = await uazapi.getStatus(instance.instanceToken);
+        results.status = status;
+      } catch (statusError) {
+        console.warn(`⚠️ Could not get status:`, statusError);
+      }
+
+      const allSuccess = results.webhook?.success !== false;
+
+      console.log(`${allSuccess ? '✅' : '⚠️'} WhatsApp instance configuration completed:`, results);
+
+      res.json({
+        message: allSuccess
+          ? "Configurações do WhatsApp aplicadas com sucesso"
+          : "Configuração parcial — verifique os detalhes",
+        result: results
       });
     } catch (error) {
       console.error("Error configuring WhatsApp instance:", error);
