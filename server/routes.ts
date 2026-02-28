@@ -6502,12 +6502,12 @@ if (ignoredNumbers !== undefined) {
 
   // Webhook endpoint for WhatsApp integration with AI agent
   app.post('/api/webhook/whatsapp/:instanceName', async (req: any, res) => {
-    // Set DEBUG_WHATSAPP_WEBHOOK=true in .env to see detailed logs
-    if (process.env.DEBUG_WHATSAPP_WEBHOOK === 'true') {
-      console.log('🔔 WhatsApp webhook received');
-      console.log('📋 Instance:', req.params.instanceName);
-      console.log('📋 Event:', req.body.event);
-    }
+    // Always log webhook payload for debugging UAZAPI integration
+    console.log('🔔 WhatsApp webhook received');
+    console.log('📋 Instance:', req.params.instanceName);
+    console.log('📋 Full payload keys:', Object.keys(req.body));
+    console.log('📋 Event:', req.body.event);
+    console.log('📋 Payload (first 500 chars):', JSON.stringify(req.body).substring(0, 500));
 
     try {
       const { instanceName } = req.params;
@@ -6664,9 +6664,12 @@ if (ignoredNumbers !== undefined) {
       }
 
       if (!isMessageEvent) {
-        if (process.env.DEBUG_WHATSAPP_WEBHOOK === 'true') {
-          console.log('❌ Event not processed:', webhookData.event);
-        }
+        console.log('❌ Event not recognized as message. event:', webhookData.event);
+        console.log('❌ Detection results: isLegacy:', isLegacyMessageEvent, '| isUazapi:', isUazapiMessage);
+        console.log('❌ Has sender:', !!webhookData.sender, '| Has chatid:', !!webhookData.chatid);
+        console.log('❌ Has data.sender:', !!webhookData.data?.sender, '| Has data.chatid:', !!webhookData.data?.chatid);
+        console.log('❌ Full webhook keys:', Object.keys(webhookData));
+        if (webhookData.data) console.log('❌ data keys:', Object.keys(webhookData.data));
         return res.status(200).json({ received: true, processed: false, reason: `Event: ${webhookData.event}` });
       }
 
