@@ -6719,27 +6719,31 @@ if (ignoredNumbers !== undefined) {
       let message;
       if (isUazapiMessage) {
         // UAZAPI format: EventType="messages", data at root level with message and chat objects
-        // Real payload: { BaseUrl, EventType, chat: {id, image, ...}, chatSource, instanceName, message: {...}, owner, token }
+        // Real payload structure:
+        //   message: { chatid, sender, sender_pn, text, fromMe, senderName, messageType, type, id, content, ... }
+        //   chat: { id (INTERNAL ID, not phone!), wa_chatid, phone, name, wa_contactName, ... }
+        // IMPORTANT: chat.id is an internal UAZAPI ID (e.g. "r1628f4c709b14c"), NOT the phone number!
         const uazMsg = webhookData.message || {};
         const uazChat = webhookData.chat || {};
 
-        // Extract chat/sender ID from chat.id (e.g. "5511999999999@s.whatsapp.net")
-        const chatId = uazChat.id || uazMsg.chatid || uazMsg.sender || uazMsg.from || webhookData.chatid || webhookData.sender || '';
+        // Extract real phone/chat ID - DO NOT use chat.id (it's an internal UAZAPI ID, not a phone number)
+        // Priority: message.chatid > message.sender > message.sender_pn > chat.wa_chatid
+        const chatId = uazMsg.chatid || uazMsg.sender || uazMsg.sender_pn || uazMsg.from || uazChat.wa_chatid || '';
 
-        // Extract message text from various possible fields
-        const msgText = uazMsg.body || uazMsg.text || uazMsg.conversation || uazMsg.caption || '';
+        // Extract message text
+        const msgText = uazMsg.text || uazMsg.body || uazMsg.conversation || uazMsg.caption || (uazMsg.content?.text) || '';
 
-        // Extract message type
+        // Extract message type (UAZAPI uses type="text" and messageType="ExtendedTextMessage")
         const msgType = uazMsg.type || uazMsg.messageType || (msgText ? 'conversation' : 'unknown');
 
         // Determine if message was sent by the instance (fromMe)
         const fromMe = uazMsg.fromMe === true || uazMsg.fromMe === 'true';
 
-        // Extract message ID
-        const msgId = uazMsg.id || uazMsg.messageId || uazMsg.key?.id || '';
+        // Extract message ID (UAZAPI uses messageid field)
+        const msgId = uazMsg.messageid || uazMsg.id || uazMsg.messageId || uazMsg.key?.id || '';
 
         // Extract sender display name
-        const pushName = uazMsg.pushName || uazMsg.senderName || uazMsg.name || uazChat.name || '';
+        const pushName = uazMsg.senderName || uazMsg.pushName || uazMsg.name || uazChat.wa_contactName || uazChat.name || '';
 
         message = {
           key: {
@@ -6762,23 +6766,10 @@ if (ignoredNumbers !== undefined) {
           message.messageType = 'audioMessage';
         }
 
-        console.log('📦 [UAZAPI] Normalized message format');
-        console.log('📞 [UAZAPI] ChatID:', chatId);
+        console.log('📦 [UAZAPI] Normalized message');
+        console.log('📞 [UAZAPI] Phone (chatid):', chatId);
         console.log('💬 [UAZAPI] Text:', msgText.substring(0, 100));
-        console.log('👤 [UAZAPI] fromMe:', fromMe, '| pushName:', pushName);
-        console.log('📝 [UAZAPI] Type:', msgType, '| ID:', msgId);
-        // Log FULL objects to find where the real phone number is
-        console.log('🔑 [UAZAPI] FULL message obj:', JSON.stringify(uazMsg).substring(0, 2000));
-        console.log('🔑 [UAZAPI] FULL chat obj:', JSON.stringify(uazChat));
-        console.log('🔑 [UAZAPI] chatSource:', webhookData.chatSource);
-        console.log('🔑 [UAZAPI] owner:', webhookData.owner);
-        console.log('🔑 [UAZAPI] Root keys & values:');
-        for (const key of Object.keys(webhookData)) {
-          if (key !== 'message' && key !== 'chat') {
-            const val = typeof webhookData[key] === 'object' ? JSON.stringify(webhookData[key]) : webhookData[key];
-            console.log(`   ${key}:`, typeof val === 'string' ? val.substring(0, 200) : val);
-          }
-        }
+        console.log('👤 [UAZAPI] fromMe:', fromMe, '| pushName:', pushName, '| Type:', msgType);
       } else if (isMessageEventArray) {
         message = webhookData.data.messages[0];
       } else if (isDirectMessage || isAudioMessageDirect) {
