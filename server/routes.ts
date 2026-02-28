@@ -6529,6 +6529,41 @@ if (ignoredNumbers !== undefined) {
       // Label name that blocks AI (case-insensitive)
       const HUMAN_LABEL = 'humano';
 
+      // Helper: generates all phone number variants to handle format mismatches
+      // Chatwoot stores: 558194526071 (country code + old 8-digit local)
+      // DB stores:       81994526071  (no country code + new 9-digit local)
+      const buildPhoneVariants = (raw: string): string[] => {
+        const variants = new Set<string>();
+        variants.add(raw);
+        // Strip Brazil country code 55
+        if (raw.startsWith('55') && raw.length >= 12) {
+          const withoutCC = raw.slice(2); // e.g. "8194526071"
+          variants.add(withoutCC);
+          // Brazilian 9th digit: insert 9 after 2-digit area code (10-digit → 11-digit)
+          if (withoutCC.length === 10) {
+            variants.add(withoutCC.slice(0, 2) + '9' + withoutCC.slice(2)); // "81994526071"
+          }
+        }
+        // Also try each variant with @s.whatsapp.net suffix
+        for (const v of [...variants]) {
+          variants.add(v + '@s.whatsapp.net');
+        }
+        return [...variants];
+      };
+
+      // Helper: search conversation by any phone variant
+      const findConvByPhoneVariants = async (variants: string[]) => {
+        for (const variant of variants) {
+          const [row] = await db
+            .select()
+            .from(conversations)
+            .where(eq(conversations.phoneNumber, variant))
+            .limit(1);
+          if (row) return row;
+        }
+        return null;
+      };
+
       // Only process relevant events
       if (event !== 'message_created' && event !== 'conversation_updated') {
         return res.status(200).json({ received: true, ignored: true, reason: 'Event not relevant' });
@@ -6574,26 +6609,13 @@ if (ignoredNumbers !== undefined) {
         console.log('📞 [CHATWOOT WEBHOOK] Phone:', phoneNumber);
         console.log('🏷️ [CHATWOOT WEBHOOK] Has "humano" label:', hasHumanLabel);
 
-        // Find conversation in our database
-        let conv = await db
-          .select()
-          .from(conversations)
-          .where(eq(conversations.phoneNumber, phoneNumber))
-          .limit(1)
-          .then(rows => rows[0]);
+        // Find conversation in our database - try multiple phone format variants
+        const labelPhoneVariants = buildPhoneVariants(phoneNumber);
+        console.log('🔍 [CHATWOOT WEBHOOK] Trying phone variants:', labelPhoneVariants);
+        const conv = await findConvByPhoneVariants(labelPhoneVariants);
 
         if (!conv) {
-          const phoneWithSuffix = phoneNumber + '@s.whatsapp.net';
-          conv = await db
-            .select()
-            .from(conversations)
-            .where(eq(conversations.phoneNumber, phoneWithSuffix))
-            .limit(1)
-            .then(rows => rows[0]);
-        }
-
-        if (!conv) {
-          console.log('⚠️ [CHATWOOT WEBHOOK] No conversation found for phone:', phoneNumber);
+          console.log('⚠️ [CHATWOOT WEBHOOK] No conversation found for phone:', phoneNumber, '(tried', labelPhoneVariants.length, 'variants)');
           return res.status(200).json({ received: true, ignored: true, reason: 'Conversation not found' });
         }
 
@@ -6664,35 +6686,14 @@ if (ignoredNumbers !== undefined) {
       console.log('👤 [CHATWOOT WEBHOOK] Agent:', payload.sender?.name || 'Unknown');
       console.log('💬 [CHATWOOT WEBHOOK] Content:', (payload.content || '').substring(0, 100));
 
-      // Find conversation in our database by phone number
-      const [matchingConversation] = await db
-        .select()
-        .from(conversations)
-        .where(eq(conversations.phoneNumber, phoneNumber))
-        .limit(1);
+      // Find conversation in our database - try multiple phone format variants
+      const msgPhoneVariants = buildPhoneVariants(phoneNumber);
+      console.log('🔍 [CHATWOOT WEBHOOK] Trying phone variants:', msgPhoneVariants);
+      const matchingConversation = await findConvByPhoneVariants(msgPhoneVariants);
 
       if (!matchingConversation) {
-        const phoneWithSuffix = phoneNumber + '@s.whatsapp.net';
-        const [matchWithSuffix] = await db
-          .select()
-          .from(conversations)
-          .where(eq(conversations.phoneNumber, phoneWithSuffix))
-          .limit(1);
-
-        if (!matchWithSuffix) {
-          console.log('⚠️ [CHATWOOT WEBHOOK] No matching conversation found for phone:', phoneNumber);
-          return res.status(200).json({ received: true, ignored: true, reason: 'Conversation not found' });
-        }
-
-        console.log('✅ [CHATWOOT WEBHOOK] Found conversation (with suffix):', matchWithSuffix.id);
-
-        await storage.updateConversation(matchWithSuffix.id, {
-          takeoverMode: 'human',
-          lastMessageAt: new Date(),
-        });
-
-        console.log('🤝 [CHATWOOT WEBHOOK] Human takeover activated for conversation', matchWithSuffix.id);
-        return res.status(200).json({ received: true, processed: true, takeover: true });
+        console.log('⚠️ [CHATWOOT WEBHOOK] No matching conversation found for phone:', phoneNumber, '(tried', msgPhoneVariants.length, 'variants)');
+        return res.status(200).json({ received: true, ignored: true, reason: 'Conversation not found' });
       }
 
       console.log('✅ [CHATWOOT WEBHOOK] Found conversation:', matchingConversation.id);
