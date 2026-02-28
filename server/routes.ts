@@ -7025,6 +7025,17 @@ if (ignoredNumbers !== undefined) {
           console.log('📞 remoteJid:', remoteJid);
           console.log('📞 remoteJidAlt:', remoteJidAlt);
 
+          // Skip group messages: @g.us = WhatsApp group chat
+          // Also check UAZAPI fields: message.chatid, chat.wa_chatid may contain group JIDs
+          const uazChatId = webhookData?.message?.chatid || webhookData?.chat?.wa_chatid || '';
+          const isGroupMessage = remoteJid.includes('@g.us') || uazChatId.includes('@g.us');
+          if (isGroupMessage) {
+            console.log('🚫 [IGNORED] Group message detected (@g.us) - skipping');
+            console.log('📞 remoteJid:', remoteJid);
+            console.log('📞 UAZAPI chatid:', uazChatId);
+            return res.status(200).json({ received: true, processed: false, reason: 'Group message ignored' });
+          }
+
           // Strategy: Always use the field that contains a REAL number (not @lid)
           // The real number is identified by @s.whatsapp.net or @c.us
 
