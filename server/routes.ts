@@ -6530,35 +6530,37 @@ if (ignoredNumbers !== undefined) {
 
   // Webhook endpoint for WhatsApp integration with AI agent
   app.post('/api/webhook/whatsapp/:instanceName', async (req: any, res) => {
-    // Always log webhook payload for debugging UAZAPI integration
-    console.log('🔔 WhatsApp webhook received');
-    console.log('📋 Instance:', req.params.instanceName);
-    console.log('📋 Full payload keys:', Object.keys(req.body));
-    console.log('📋 Event:', req.body.event);
-    console.log('📋 Payload (first 500 chars):', JSON.stringify(req.body).substring(0, 500));
-
     try {
       const { instanceName } = req.params;
       const webhookData = req.body;
 
-      // Handle CONNECTION_UPDATE events to update instance status
-      const isConnectionEvent = webhookData.event === 'connection.update' || webhookData.event === 'CONNECTION_UPDATE' || webhookData.event === 'connection';
+      // UAZAPI uses "EventType" (PascalCase), normalize to a single variable
+      const eventType = webhookData.EventType || webhookData.event || '';
+
+      console.log('🔔 WhatsApp webhook received');
+      console.log('📋 Instance:', instanceName);
+      console.log('📋 EventType:', eventType);
+      console.log('📋 Payload keys:', Object.keys(webhookData).join(', '));
+
+      // Handle CONNECTION events to update instance status
+      // UAZAPI sends EventType: "connection", legacy used "connection.update" or "CONNECTION_UPDATE"
+      const isConnectionEvent = eventType === 'connection' || eventType === 'connection.update' || eventType === 'CONNECTION_UPDATE';
       
       if (isConnectionEvent) {
         console.log('🔄 Processing connection update event');
-        
-        // UAZAPI may send state in root or in data property
+
+        // UAZAPI sends connection state at root level or in data property
         const connectionData = webhookData.data || webhookData;
         let newStatus = 'disconnected'; // default status
 
-        // Map UAZAPI connection states to our status
-        // Evolution (legacy) used: 'open', 'connecting', 'close'
-        // UAZAPI uses: 'connected', 'connecting', 'disconnected'
-        if (connectionData?.state === 'open' || connectionData?.state === 'connected') {
+        // Map connection states to our status
+        // UAZAPI uses: 'connected', 'connecting', 'disconnected' (or boolean connected field)
+        const state = connectionData?.state || connectionData?.status;
+        if (state === 'open' || state === 'connected' || connectionData?.connected === true) {
           newStatus = 'connected';
-        } else if (connectionData?.state === 'connecting') {
+        } else if (state === 'connecting') {
           newStatus = 'connecting';
-        } else if (connectionData?.state === 'close' || connectionData?.state === 'disconnected') {
+        } else if (state === 'close' || state === 'disconnected' || connectionData?.connected === false) {
           newStatus = 'disconnected';
         }
         
@@ -6579,17 +6581,17 @@ if (ignoredNumbers !== undefined) {
           console.error("Error updating instance status:", dbError);
         }
         
-        return res.status(200).json({ 
-          received: true, 
-          processed: true, 
+        return res.status(200).json({
+          received: true,
+          processed: true,
           instanceName,
           newStatus,
-          event: 'connection.update'
+          event: eventType
         });
       }
 
       // Check if it's a QR code update event
-      const isQrCodeEvent = webhookData.event === 'qrcode.updated' || webhookData.event === 'QRCODE_UPDATED';
+      const isQrCodeEvent = eventType === 'qrcode.updated' || eventType === 'QRCODE_UPDATED' || eventType === 'qrcode';
       
       if (isQrCodeEvent) {
         console.log('📱 QR code updated for instance:', instanceName);
@@ -6669,66 +6671,96 @@ if (ignoredNumbers !== undefined) {
         return res.json({ received: true, processed: true, type: 'qrcode' });
       }
 
-      // Check if it's a message event (handle multiple formats)
-      const isLegacyMessageEvent = webhookData.event === 'messages.upsert' || webhookData.event === 'MESSAGES_UPSERT';
+      // Check if it's a message event (handle UAZAPI and legacy formats)
+      // UAZAPI sends EventType: "messages" with message and chat objects at root level
+      const isUazapiMessage = (eventType === 'messages' || eventType === 'message') && (webhookData.message || webhookData.chat);
+      // Legacy formats (Evolution API)
+      const isLegacyMessageEvent = eventType === 'messages.upsert' || eventType === 'MESSAGES_UPSERT';
       const isMessageEventArray = isLegacyMessageEvent && webhookData.data?.messages?.length > 0;
       const isMessageEventDirect = isLegacyMessageEvent && webhookData.data?.key && webhookData.data?.message;
-      // Check for direct message structure without specific event (like from our test)
-      const isDirectMessage = !!webhookData.key && !!webhookData.message && !webhookData.event;
-      // Check for message data wrapped in data property
+      const isDirectMessage = !!webhookData.key && !!webhookData.message && !eventType;
       const isWrappedMessage = webhookData.data?.key && webhookData.data?.message;
-      // Check for audio message without message wrapper
       const isAudioMessageDirect = !!webhookData.key && webhookData.messageType === 'audioMessage' && !!webhookData.audio;
-      // UAZAPI format: event === 'messages' with sender, text, chatid fields
-      const isUazapiMessage = webhookData.event === 'messages' && (webhookData.sender || webhookData.chatid || (webhookData.data?.sender || webhookData.data?.chatid));
-      const isMessageEvent = isMessageEventArray || isMessageEventDirect || isDirectMessage || isWrappedMessage || isAudioMessageDirect || isUazapiMessage;
+      const isMessageEvent = isUazapiMessage || isMessageEventArray || isMessageEventDirect || isDirectMessage || isWrappedMessage || isAudioMessageDirect;
 
       if (process.env.DEBUG_WHATSAPP_WEBHOOK === 'true') {
-        console.log('🔍 Debug - isMessageEventArray:', isMessageEventArray);
-        console.log('🔍 Debug - isMessageEventDirect:', isMessageEventDirect);
-        console.log('🔍 Debug - isDirectMessage:', isDirectMessage);
-        console.log('🔍 Debug - isWrappedMessage:', isWrappedMessage);
+        console.log('🔍 Debug - eventType:', eventType);
         console.log('🔍 Debug - isUazapiMessage:', isUazapiMessage);
+        console.log('🔍 Debug - isLegacyMessageEvent:', isLegacyMessageEvent);
+        console.log('🔍 Debug - Has message obj:', !!webhookData.message);
+        console.log('🔍 Debug - Has chat obj:', !!webhookData.chat);
+        if (webhookData.message) console.log('🔍 Debug - message keys:', Object.keys(webhookData.message).join(', '));
+        if (webhookData.chat) console.log('🔍 Debug - chat keys:', Object.keys(webhookData.chat).join(', '));
       }
 
       if (!isMessageEvent) {
-        console.log('❌ Event not recognized as message. event:', webhookData.event);
-        console.log('❌ Detection results: isLegacy:', isLegacyMessageEvent, '| isUazapi:', isUazapiMessage);
-        console.log('❌ Has sender:', !!webhookData.sender, '| Has chatid:', !!webhookData.chatid);
-        console.log('❌ Has data.sender:', !!webhookData.data?.sender, '| Has data.chatid:', !!webhookData.data?.chatid);
-        console.log('❌ Full webhook keys:', Object.keys(webhookData));
-        if (webhookData.data) console.log('❌ data keys:', Object.keys(webhookData.data));
-        return res.status(200).json({ received: true, processed: false, reason: `Event: ${webhookData.event}` });
+        console.log('❌ Event not recognized as message. EventType:', eventType);
+        console.log('❌ Payload keys:', Object.keys(webhookData).join(', '));
+        return res.status(200).json({ received: true, processed: false, reason: `Event: ${eventType}` });
       }
 
       // Skip messages sent by API (UAZAPI wasSentByApi flag) to avoid processing our own outbound messages
-      if (webhookData.wasSentByApi === true || webhookData.data?.wasSentByApi === true) {
+      const wasSentByApi = webhookData.wasSentByApi === true || webhookData.data?.wasSentByApi === true
+        || webhookData.message?.wasSentByApi === true;
+      if (wasSentByApi) {
         console.log('🚫 [SKIP] Message was sent by API (wasSentByApi=true), skipping processing');
         return res.status(200).json({ received: true, processed: false, reason: 'Message sent by API (wasSentByApi)' });
       }
 
-      // Handle multiple formats: array format, direct format, wrapped format, and UAZAPI format
+      // Handle multiple formats: UAZAPI format, array format, direct format, wrapped format
       let message;
       if (isUazapiMessage) {
-        // UAZAPI format: normalize to standard message structure for downstream compatibility
-        const uazapiData = webhookData.data || webhookData;
-        const senderField = uazapiData.sender || uazapiData.chatid || '';
+        // UAZAPI format: EventType="messages", data at root level with message and chat objects
+        // Real payload: { BaseUrl, EventType, chat: {id, image, ...}, chatSource, instanceName, message: {...}, owner, token }
+        const uazMsg = webhookData.message || {};
+        const uazChat = webhookData.chat || {};
+
+        // Extract chat/sender ID from chat.id (e.g. "5511999999999@s.whatsapp.net")
+        const chatId = uazChat.id || uazMsg.chatid || uazMsg.sender || uazMsg.from || webhookData.chatid || webhookData.sender || '';
+
+        // Extract message text from various possible fields
+        const msgText = uazMsg.body || uazMsg.text || uazMsg.conversation || uazMsg.caption || '';
+
+        // Extract message type
+        const msgType = uazMsg.type || uazMsg.messageType || (msgText ? 'conversation' : 'unknown');
+
+        // Determine if message was sent by the instance (fromMe)
+        const fromMe = uazMsg.fromMe === true || uazMsg.fromMe === 'true';
+
+        // Extract message ID
+        const msgId = uazMsg.id || uazMsg.messageId || uazMsg.key?.id || '';
+
+        // Extract sender display name
+        const pushName = uazMsg.pushName || uazMsg.senderName || uazMsg.name || uazChat.name || '';
+
         message = {
           key: {
-            remoteJid: senderField,
-            fromMe: uazapiData.fromMe === true,
-            id: uazapiData.id || uazapiData.messageId || '',
+            remoteJid: chatId,
+            fromMe: fromMe,
+            id: msgId,
           },
           message: {
-            conversation: uazapiData.text || uazapiData.body || '',
+            conversation: msgText,
           },
-          messageType: uazapiData.messageType || 'conversation',
-          pushName: uazapiData.senderName || uazapiData.pushName || '',
+          messageType: msgType,
+          pushName: pushName,
+          // Keep raw UAZAPI data for audio/media handling
+          _uazapiRaw: uazMsg,
         };
-        console.log('📦 [UAZAPI] Normalized UAZAPI message format');
-        console.log('📞 [UAZAPI] Sender:', uazapiData.sender, '| ChatID:', uazapiData.chatid);
-        console.log('💬 [UAZAPI] Text:', (uazapiData.text || uazapiData.body || '').substring(0, 100));
-        console.log('👤 [UAZAPI] fromMe:', uazapiData.fromMe, '| senderName:', uazapiData.senderName);
+
+        // Detect audio messages from UAZAPI
+        if (msgType === 'audio' || msgType === 'ptt' || msgType === 'audioMessage') {
+          message.message.audioMessage = uazMsg;
+          message.messageType = 'audioMessage';
+        }
+
+        console.log('📦 [UAZAPI] Normalized message format');
+        console.log('📞 [UAZAPI] ChatID:', chatId);
+        console.log('💬 [UAZAPI] Text:', msgText.substring(0, 100));
+        console.log('👤 [UAZAPI] fromMe:', fromMe, '| pushName:', pushName);
+        console.log('📝 [UAZAPI] Type:', msgType, '| ID:', msgId);
+        console.log('🔑 [UAZAPI] message keys:', Object.keys(uazMsg).join(', '));
+        console.log('🔑 [UAZAPI] chat keys:', Object.keys(uazChat).join(', '));
       } else if (isMessageEventArray) {
         message = webhookData.data.messages[0];
       } else if (isDirectMessage || isAudioMessageDirect) {
@@ -6802,18 +6834,20 @@ if (ignoredNumbers !== undefined) {
             rawPhoneNumber = remoteJidAlt.replace('@s.whatsapp.net', '').replace('@c.us', '');
             console.log('✅ Using real number from remoteJidAlt:', remoteJidAlt);
           }
-          // Fallback: search in participant fields and UAZAPI sender/chatid
+          // Fallback: search in UAZAPI chat/message fields and participant fields
           else {
-            console.log('⚠️ Real number not found in remoteJid/remoteJidAlt, searching in participant fields and UAZAPI fields...');
+            console.log('⚠️ Real number not found in remoteJid/remoteJidAlt, searching in UAZAPI and participant fields...');
 
-            // UAZAPI fallback: try sender and chatid fields from raw webhook data
-            const uazapiSender = webhookData?.sender || webhookData?.data?.sender || '';
-            const uazapiChatId = webhookData?.chatid || webhookData?.data?.chatid || '';
-            if (uazapiSender || uazapiChatId) {
-              const uazapiPhone = (uazapiSender || uazapiChatId).replace('@c.us', '').replace('@s.whatsapp.net', '');
+            // UAZAPI fallback: try chat.id, message.sender, message.from, and root-level fields
+            const uazapiChat = webhookData?.chat?.id || '';
+            const uazapiMsgSender = webhookData?.message?.sender || webhookData?.message?.from || webhookData?.message?.chatid || '';
+            const uazapiRootSender = webhookData?.sender || webhookData?.chatid || webhookData?.data?.sender || webhookData?.data?.chatid || '';
+            const uazapiSource = uazapiChat || uazapiMsgSender || uazapiRootSender;
+            if (uazapiSource) {
+              const uazapiPhone = uazapiSource.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@g.us', '');
               if (uazapiPhone && /^\d{10,}$/.test(uazapiPhone)) {
                 rawPhoneNumber = uazapiPhone;
-                console.log('✅ Using phone number from UAZAPI sender/chatid:', uazapiPhone);
+                console.log('✅ Using phone number from UAZAPI chat/message:', uazapiPhone);
               }
             }
 
