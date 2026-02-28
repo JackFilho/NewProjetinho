@@ -8140,7 +8140,11 @@ if (ignoredNumbers !== undefined) {
                     const lastAiMsg = recentMsgs.filter(m => m.role === 'assistant')[0];
                     if (lastAiMsg) {
                       const msg = lastAiMsg.content;
-                      if (msg.includes('mudar seu agendamento') || msg.includes('mudar o agendamento') ||
+                      // Verificar se é um lembrete de confirmação (não deve ser tratado como reagendamento)
+                      const isReminderMsg = msg.includes('agendamento ainda não foi confirmado') ||
+                        (msg.includes('Basta responder') && msg.includes('para confirmar')) ||
+                        (msg.includes('responder') && msg.includes('SIM') && msg.includes('confirmar') && !msg.includes('cancelar'));
+                      if (!isReminderMsg && (msg.includes('mudar seu agendamento') || msg.includes('mudar o agendamento') ||
                           msg.includes('reagendar') || msg.includes('remarcar') ||
                           msg.includes('trocar o dia') || msg.includes('trocar a data') ||
                           msg.includes('trocar o horário') || msg.includes('trocar o horario') ||
@@ -8148,7 +8152,7 @@ if (ignoredNumbers !== undefined) {
                           msg.includes('adiar') || msg.includes('mudar para') ||
                           msg.includes('Para reagendar') || msg.includes('necessário cancelar o agendamento atual') ||
                           (msg.includes('mudar') && msg.includes('agendamento')) ||
-                          (msg.includes('alterar') && msg.includes('agendamento'))) {
+                          (msg.includes('alterar') && msg.includes('agendamento')))) {
                         isInRescheduleContext = true;
                         console.log('🔄 Confirmação detectada em contexto de reagendamento - ignorando busca de agendamento');
                         break;
@@ -9019,6 +9023,19 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               // como confirmação de agendamento (que causa conflito de horário)
               // ========================================
               const lastAssistantMsgPreCheck = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
+
+              // ========================================
+              // VERIFICAR CONTEXTO DE LEMBRETE DE CONFIRMAÇÃO
+              // Se a última mensagem do assistente é um lembrete pedindo confirmação do agendamento,
+              // "Sim" deve ser tratado como CONFIRMAÇÃO, NÃO como reagendamento/cancelamento.
+              // A mensagem de lembrete contém "alterar" e "agendamento" juntos, o que pode
+              // ativar falsamente o contexto de reagendamento.
+              // ========================================
+              const isConfirmationReminderContext =
+                  lastAssistantMsgPreCheck.includes('agendamento ainda não foi confirmado') ||
+                  (lastAssistantMsgPreCheck.includes('Basta responder') && lastAssistantMsgPreCheck.includes('para confirmar')) ||
+                  (lastAssistantMsgPreCheck.includes('responder') && lastAssistantMsgPreCheck.includes('SIM') && lastAssistantMsgPreCheck.includes('confirmar') && !lastAssistantMsgPreCheck.includes('cancelar'));
+
               const isCancelContext = lastAssistantMsgPreCheck.includes('Confirma o cancelamento?') ||
                                      lastAssistantMsgPreCheck.includes('CANCELAR* para confirmar') ||
                                      lastAssistantMsgPreCheck.includes('CANCELAR para confirmar') ||
@@ -9087,7 +9104,13 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 console.log('🤖 Última msg IA:', lastAssistantMsgPreCheck.substring(0, 150));
               }
 
-              if (isRescheduleContext && isUserConfirming) {
+              if (isConfirmationReminderContext && isUserConfirming) {
+                console.log('⏰ PRÉ-PROCESSAMENTO: "Sim" detectado após LEMBRETE de confirmação - tratando como confirmação de agendamento');
+                console.log('📩 Mensagem do usuário:', messageText);
+                console.log('🤖 Última msg IA (lembrete):', lastAssistantMsgPreCheck.substring(0, 150));
+              }
+
+              if (isRescheduleContext && isUserConfirming && !isConfirmationReminderContext) {
                 console.log('🔄 PRÉ-PROCESSAMENTO: "Sim" detectado em contexto de reagendamento - interceptando para listar agendamentos');
 
                 // Interceptar e listar agendamentos para cancelar (ao invés de deixar a IA processar)
@@ -9161,7 +9184,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 );
               }
 
-              if ((isUserConfirming || isUserConfirmingCancelWord) && !isConfirmingCancel && !isRescheduleContext && !isPostConfirmationContext) {
+              if ((isUserConfirming || isUserConfirmingCancelWord) && !isConfirmingCancel && (!isRescheduleContext || isConfirmationReminderContext) && !isPostConfirmationContext) {
                 console.log('==================================================');
                 console.log('🔍 PRÉ-VALIDAÇÃO: Cliente confirmou com SIM/OK');
                 console.log('==================================================');
@@ -10537,7 +10560,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                       // Sempre limpar o timer do mapa
                       pendingConfirmationTimers.delete(confirmTimerKeySched);
                     }
-                  }, 10 * 60 * 1000); // 10 minutos
+                  }, 29 * 60 * 1000); // 29 minutos
 
                   pendingConfirmationTimers.set(confirmTimerKeySched, {
                     timer: reminderTimer,
