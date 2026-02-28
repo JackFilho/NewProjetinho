@@ -6620,10 +6620,11 @@ if (ignoredNumbers !== undefined) {
         }
 
         if (hasHumanLabel) {
-          // Label "humano" is present → block AI permanently (far future date = never expires)
+          // Label "humano" is present → block AI permanently
+          // MySQL TIMESTAMP max is 2038-01-19, so use 2037-12-31 as "forever" sentinel
           await storage.updateConversation(conv.id, {
             takeoverMode: 'human',
-            lastMessageAt: new Date('2099-01-01T00:00:00Z'),
+            lastMessageAt: new Date('2037-12-31T23:59:59Z'),
           });
           console.log('🏷️ [CHATWOOT WEBHOOK] Label "humano" DETECTED → AI BLOCKED permanently for conversation', conv.id);
           console.log('🚫 [CHATWOOT WEBHOOK] AI will NOT respond until label is removed');
