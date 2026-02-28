@@ -64,6 +64,11 @@ async function getInstanceToken(companyId: number): Promise<{ token: string; ins
 // Helpers de compatibilidade para envio via UAZAPI (substituem fetch direto + ensureUAZAPIApiEndpoint)
 // Estes helpers buscam o token da instância pelo nome e usam o serviço UAZAPI
 
+// Remove sufixos de JID do WhatsApp para obter apenas o número puro
+function cleanWhatsAppNumber(phone: string): string {
+  return phone.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').replace(/@g\.us$/, '').replace(/@lid$/, '');
+}
+
 async function uazapiSendText(instanceName: string, phoneNumber: string, text: string): Promise<{ ok: boolean; status: number }> {
   try {
     const uazapi = await getUazapiService();
@@ -72,7 +77,8 @@ async function uazapiSendText(instanceName: string, phoneNumber: string, text: s
       console.error('❌ Token UAZAPI não encontrado para instância:', instanceName);
       return { ok: false, status: 404 };
     }
-    await uazapi.sendText(instance.instanceToken, { number: phoneNumber, text });
+    const cleanNumber = cleanWhatsAppNumber(phoneNumber);
+    await uazapi.sendText(instance.instanceToken, { number: cleanNumber, text });
     return { ok: true, status: 200 };
   } catch (error) {
     console.error('❌ Erro ao enviar mensagem UAZAPI:', error);
@@ -88,7 +94,8 @@ async function uazapiSendMedia(instanceName: string, phoneNumber: string, mediaT
       console.error('❌ Token UAZAPI não encontrado para instância:', instanceName);
       return { ok: false, status: 404 };
     }
-    await uazapi.sendMedia(instance.instanceToken, { number: phoneNumber, type: mediaType as any, file: fileData, text: caption });
+    const cleanNumber = cleanWhatsAppNumber(phoneNumber);
+    await uazapi.sendMedia(instance.instanceToken, { number: cleanNumber, type: mediaType as any, file: fileData, text: caption });
     return { ok: true, status: 200 };
   } catch (error) {
     console.error('❌ Erro ao enviar mídia UAZAPI:', error);
@@ -101,7 +108,8 @@ async function uazapiSendTyping(instanceName: string, phoneNumber: string, durat
     const uazapi = await getUazapiService();
     const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
     if (!instance?.instanceToken) return;
-    await uazapi.sendPresence(instance.instanceToken, { number: phoneNumber, presence: 'composing', delay: durationMs });
+    const cleanNumber = cleanWhatsAppNumber(phoneNumber);
+    await uazapi.sendPresence(instance.instanceToken, { number: cleanNumber, presence: 'composing', delay: durationMs });
   } catch (error) {
     console.warn('⚠️ Erro ao enviar presença UAZAPI:', error);
   }

@@ -57,6 +57,12 @@ export class UazapiService {
     this.adminToken = adminToken;
   }
 
+  // Remove WhatsApp JID suffixes to get plain phone number
+  // UAZAPI expects just the number (e.g. "5511999999999"), not JID format
+  private cleanNumber(phone: string): string {
+    return phone.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').replace(/@g\.us$/, '').replace(/@lid$/, '');
+  }
+
   private async request(
     endpoint: string,
     method: string,
@@ -154,7 +160,7 @@ export class UazapiService {
 
   async sendText(instanceToken: string, options: SendTextOptions): Promise<any> {
     const payload: any = {
-      number: options.number,
+      number: this.cleanNumber(options.number),
       text: options.text,
     };
     if (options.delay) payload.delay = options.delay;
@@ -169,7 +175,7 @@ export class UazapiService {
   async sendMedia(instanceToken: string, options: SendMediaOptions): Promise<any> {
     console.log('🔄 Enviando mídia UAZAPI:', options.type);
     const payload: any = {
-      number: options.number,
+      number: this.cleanNumber(options.number),
       type: options.type,
       file: options.file,
     };
@@ -186,7 +192,7 @@ export class UazapiService {
 
   async sendPresence(instanceToken: string, options: SendPresenceOptions): Promise<any> {
     const payload: any = {
-      number: options.number,
+      number: this.cleanNumber(options.number),
       presence: options.presence,
     };
     if (options.delay) payload.delay = options.delay;
