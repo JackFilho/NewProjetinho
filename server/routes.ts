@@ -6679,17 +6679,28 @@ if (ignoredNumbers !== undefined) {
       // ────────────────────────────────────────────────
       const messageType = payload.message_type;
 
-      // message_type: "outgoing" = agent sent, "incoming" = customer sent
-      // Also check sender type: "user" = agent in Chatwoot
+      // message_type: "outgoing" = agent/bot sent, "incoming" = customer sent
+      // sender.type: "user" = human agent in Chatwoot, "agent_bot" = bot, null/undefined = API/synced message
+      // IMPORTANT: Only activate human takeover for REAL human agents (sender.type === 'user')
+      // Messages sent by our AI via UAZAPI sync back to Chatwoot as "outgoing" but without a proper sender,
+      // so we must NOT trigger takeover for those.
       const senderType = payload.sender?.type;
-      const isAgentMessage = messageType === 'outgoing' || messageType === 1 || senderType === 'user';
+      const senderId = payload.sender?.id;
+      const senderName = payload.sender?.name;
+      const isHumanAgentMessage = senderType === 'user' && !!senderId;
 
-      if (!isAgentMessage) {
-        return res.status(200).json({ received: true, ignored: true, reason: 'Not an agent message' });
+      if (!isHumanAgentMessage) {
+        // Log why we're skipping - helps debug if a real agent message is being missed
+        if (messageType === 'outgoing' || messageType === 1) {
+          console.log('🔍 [CHATWOOT WEBHOOK] Outgoing message ignored (not from human agent)');
+          console.log('🔍 [CHATWOOT WEBHOOK] sender.type:', senderType || 'none', '| sender.id:', senderId || 'none', '| sender.name:', senderName || 'none');
+        }
+        return res.status(200).json({ received: true, ignored: true, reason: 'Not a human agent message' });
       }
 
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      console.log('🔗 [CHATWOOT WEBHOOK] Agent message detected');
+      console.log('🔗 [CHATWOOT WEBHOOK] Human agent message detected');
+      console.log('👤 [CHATWOOT WEBHOOK] Agent ID:', senderId, '| Name:', senderName, '| Type:', senderType);
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
       // Extract phone number from Chatwoot payload
@@ -6732,6 +6743,23 @@ if (ignoredNumbers !== undefined) {
         takeoverMode: 'human',
         lastMessageAt: new Date(),
       });
+
+      // Cancel any pending follow-up and confirmation timers for this conversation
+      // Search by conversationId since phone format may differ between Chatwoot and UAZAPI
+      for (const [key, entry] of conversationFollowUpTimers) {
+        if (entry.conversationId === matchingConversation.id) {
+          clearTimeout(entry.timer);
+          conversationFollowUpTimers.delete(key);
+          console.log(`💬 [CHATWOOT TAKEOVER] Follow-up timer CANCELLED for ${key}`);
+        }
+      }
+      for (const [key, entry] of pendingConfirmationTimers) {
+        if (entry.conversationId === matchingConversation.id) {
+          clearTimeout(entry.timer);
+          pendingConfirmationTimers.delete(key);
+          console.log(`⏰ [CHATWOOT TAKEOVER] Confirmation timer CANCELLED for ${key}`);
+        }
+      }
 
       // Save agent message to conversation history
       const agentContent = payload.content || '';
@@ -6984,9 +7012,13 @@ if (ignoredNumbers !== undefined) {
         };
 
         // Detect audio messages from UAZAPI
-        if (msgType === 'audio' || msgType === 'ptt' || msgType === 'audioMessage') {
+        // UAZAPI messageType values: 'audio', 'ptt', 'myaudio', 'ptv' (voice video note)
+        // Also handle legacy/raw WhatsApp types: 'audioMessage', 'pttMessage'
+        const isAudioType = ['audio', 'ptt', 'myaudio', 'ptv', 'audioMessage', 'pttMessage'].includes(msgType.toLowerCase());
+        if (isAudioType) {
           message.message.audioMessage = uazMsg;
           message.messageType = 'audioMessage';
+          console.log('🎵 [UAZAPI] Audio message detected, type:', msgType);
         }
 
         console.log('📦 [UAZAPI] Normalized message');
@@ -7027,7 +7059,8 @@ if (ignoredNumbers !== undefined) {
 
       // Handle both text and audio messages
       const hasTextContent = message?.message?.conversation || message?.message?.extendedTextMessage?.text;
-      const hasAudioContent = message?.message?.audioMessage || message?.messageType === 'audioMessage';
+      const hasAudioContent = message?.message?.audioMessage || message?.messageType === 'audioMessage'
+        || (message?._uazapiRaw?.fileURL && ['audio', 'ptt', 'myaudio', 'ptv', 'audioMessage', 'pttMessage'].includes((message?._uazapiRaw?.messageType || '').toLowerCase()));
       // Accept both client messages (fromMe=false) and human messages (fromMe=true)
       const isTextMessage = hasTextContent;
       const isAudioMessage = hasAudioContent;
@@ -7276,6 +7309,22 @@ if (ignoredNumbers !== undefined) {
               takeoverMode: 'human',
               lastMessageAt: new Date(),
             });
+
+            // Cancel any pending follow-up and confirmation timers for this conversation
+            // These should NOT fire while a human is handling the conversation
+            const takeoverTimerKey = `${whatsappInstance.companyId}:${phoneNumber}`;
+            if (conversationFollowUpTimers.has(takeoverTimerKey)) {
+              const pendingFollowUp = conversationFollowUpTimers.get(takeoverTimerKey)!;
+              clearTimeout(pendingFollowUp.timer);
+              conversationFollowUpTimers.delete(takeoverTimerKey);
+              console.log(`💬 [HUMAN TAKEOVER] Follow-up timer CANCELLED for ${takeoverTimerKey}`);
+            }
+            if (pendingConfirmationTimers.has(takeoverTimerKey)) {
+              const pendingConfirm = pendingConfirmationTimers.get(takeoverTimerKey)!;
+              clearTimeout(pendingConfirm.timer);
+              pendingConfirmationTimers.delete(takeoverTimerKey);
+              console.log(`⏰ [HUMAN TAKEOVER] Confirmation timer CANCELLED for ${takeoverTimerKey}`);
+            }
 
             console.log('✅ HUMAN TAKEOVER: Conversation updated to human mode');
             console.log(`⏰ Timer started: AI will resume in ${timeoutMinutes} minutes if no human messages`);
@@ -7817,140 +7866,158 @@ if (ignoredNumbers !== undefined) {
           if (isAudioMessage) {
             console.log('🎵 Processing audio message...');
             console.log('📊 Message structure keys:', Object.keys(message || {}).join(', '));
+            const uazRaw = message._uazapiRaw || message.message?.audioMessage || {};
+            console.log('📊 UAZAPI raw message keys:', Object.keys(uazRaw).join(', '));
+            console.log('📊 UAZAPI raw messageType:', uazRaw.messageType, '| fileURL:', uazRaw.fileURL?.substring(0, 80) || 'none');
             try {
-              // Get audio data from webhook structure
-              let audioBase64 = message.base64;
+              let transcriptionText: string | null = null;
+              let audioBase64: string | null = null;
 
-              // Try alternative structures if base64 is not found
-              if (!audioBase64) {
-                audioBase64 = message.message?.base64;
-              }
+              const globalSettings = await storage.getGlobalSettings();
+              const instanceData = await getInstanceToken(companyId);
+              const msgId = message.key?.id || uazRaw.messageid || uazRaw.id || '';
 
-              if (!audioBase64) {
-                audioBase64 = message.message?.audioMessage?.base64;
-              }
+              // ============================================
+              // Method 1: UAZAPI /message/download with built-in transcription
+              // This is the most reliable method - UAZAPI downloads and transcribes in one call
+              // ============================================
+              if (!transcriptionText && globalSettings?.uazapiUrl && instanceData?.token && msgId) {
+                try {
+                  console.log('🔄 Method 1: UAZAPI /message/download with transcription...');
+                  const baseUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+                  const downloadResponse = await fetch(`${baseUrl}/message/download`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'token': instanceData.token
+                    },
+                    body: JSON.stringify({
+                      id: msgId,
+                      transcribe: true,
+                      return_base64: true,
+                      return_link: false,
+                      generate_mp3: true,
+                      ...(company.openaiApiKey ? { openai_apikey: company.openaiApiKey } : {})
+                    })
+                  });
 
-              console.log('🔍 Audio base64 found:', !!audioBase64);
-              console.log('🔍 Audio length:', audioBase64?.length || 0);
+                  if (downloadResponse.ok) {
+                    const downloadData = await downloadResponse.json();
+                    console.log('📥 UAZAPI download response keys:', Object.keys(downloadData).join(', '));
 
-              // If no base64 but we have audio message, try UAZAPI /message/download endpoint
-              if (!audioBase64 && message.message?.audioMessage) {
-                console.log('📥 No base64 found, attempting to download audio via UAZAPI...');
-                const globalSettings = await storage.getGlobalSettings();
-
-                if (globalSettings?.uazapiUrl) {
-                  const instanceData = await getInstanceToken(companyId);
-
-                  // Method 1: UAZAPI /message/download with message ID
-                  if (instanceData?.token && message.key?.id) {
-                    try {
-                      console.log('🔄 Method 1: Trying UAZAPI /message/download...');
-                      const baseUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
-                      const downloadResponse = await fetch(`${baseUrl}/message/download`, {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          'token': instanceData.token
-                        },
-                        body: JSON.stringify({
-                          id: message.key.id,
-                          return_base64: true,
-                          return_link: false,
-                          generate_mp3: true
-                        })
-                      });
-
-                      if (downloadResponse.ok) {
-                        const downloadData = await downloadResponse.json();
-                        audioBase64 = downloadData.base64 || downloadData.file?.base64;
-                        console.log('✅ Method 1 succeeded - Audio downloaded via UAZAPI');
-                        console.log('🔍 Downloaded audio length:', audioBase64?.length || 0);
-                      } else {
-                        console.log('⚠️ Method 1 failed:', downloadResponse.status);
-                      }
-                    } catch (error) {
-                      console.log('⚠️ Method 1 error:', error);
+                    // UAZAPI returns transcription in 'transcription' field
+                    if (downloadData.transcription) {
+                      transcriptionText = downloadData.transcription;
+                      console.log('✅ Method 1 succeeded - UAZAPI transcribed audio directly');
+                      console.log('📝 Transcription:', transcriptionText);
                     }
-                  }
 
-                  // Method 3: Try downloading from WhatsApp URL directly
-                  if (!audioBase64 && message.message?.audioMessage?.url) {
-                    try {
-                      console.log('🔄 Method 3: Trying direct URL download from WhatsApp...');
-                      const audioUrl = message.message.audioMessage.url;
-
-                      const urlDownloadResponse = await fetch(audioUrl);
-                      if (urlDownloadResponse.ok) {
-                        const audioBuffer = await urlDownloadResponse.arrayBuffer();
-                        audioBase64 = Buffer.from(audioBuffer).toString('base64');
-                        console.log('✅ Method 3 succeeded - Audio downloaded from URL');
-                        console.log('🔍 Downloaded audio length:', audioBase64?.length || 0);
-                      } else {
-                        console.log('⚠️ Method 3 failed:', urlDownloadResponse.status);
+                    // Also grab base64Data (field name per UAZAPI OpenAPI spec) as fallback
+                    if (!transcriptionText) {
+                      audioBase64 = downloadData.base64Data || downloadData.base64 || downloadData.file?.base64 || null;
+                      if (audioBase64) {
+                        console.log('✅ Method 1 - Got base64 audio data, length:', audioBase64.length);
                       }
-                    } catch (error) {
-                      console.log('⚠️ Method 3 error:', error);
                     }
+                  } else {
+                    const errText = await downloadResponse.text().catch(() => '');
+                    console.log('⚠️ Method 1 failed:', downloadResponse.status, errText.substring(0, 200));
                   }
-
-                  if (!audioBase64) {
-                    console.log('❌ All download methods failed');
-                  }
-                } else {
-                  console.log('❌ UAZAPI not configured');
+                } catch (error) {
+                  console.log('⚠️ Method 1 error:', error);
                 }
               }
 
-              if (audioBase64) {
-                console.log('🔊 Audio base64 received, transcribing with OpenAI Whisper...');
+              // ============================================
+              // Method 2: Try base64 from webhook payload (some UAZAPI configs send it)
+              // ============================================
+              if (!transcriptionText && !audioBase64) {
+                audioBase64 = message.base64
+                  || message.message?.base64
+                  || uazRaw.base64
+                  || uazRaw.audio
+                  || null;
+                if (audioBase64) {
+                  console.log('✅ Method 2 - Found base64 in webhook payload, length:', audioBase64.length);
+                }
+              }
 
-                // Use company's OpenAI settings
+              // ============================================
+              // Method 3: Download from fileURL (UAZAPI includes this in webhook message)
+              // ============================================
+              if (!transcriptionText && !audioBase64) {
+                const audioFileUrl = uazRaw.fileURL || uazRaw.url || uazRaw.mediaUrl || message.message?.audioMessage?.url;
+                if (audioFileUrl) {
+                  try {
+                    console.log('🔄 Method 3: Downloading from fileURL:', audioFileUrl.substring(0, 80));
+                    const urlDownloadResponse = await fetch(audioFileUrl);
+                    if (urlDownloadResponse.ok) {
+                      const audioBuffer = await urlDownloadResponse.arrayBuffer();
+                      audioBase64 = Buffer.from(audioBuffer).toString('base64');
+                      console.log('✅ Method 3 succeeded - Audio downloaded from fileURL, length:', audioBase64.length);
+                    } else {
+                      console.log('⚠️ Method 3 failed:', urlDownloadResponse.status);
+                    }
+                  } catch (error) {
+                    console.log('⚠️ Method 3 error:', error);
+                  }
+                }
+              }
+
+              // ============================================
+              // Transcribe with OpenAI Whisper if we have base64 but no transcription yet
+              // ============================================
+              if (!transcriptionText && audioBase64) {
+                console.log('🔊 Audio base64 available, transcribing with OpenAI Whisper...');
+
                 if (!company.openaiApiKey) {
                   console.log('❌ Company does not have OpenAI API key configured for audio transcription');
                   return res.status(400).json({ error: 'OpenAI not configured for this company' });
                 }
 
-                // Transcribe audio using OpenAI Whisper
-                const transcription = await transcribeAudio(audioBase64, company.openaiApiKey);
-                if (transcription) {
-                  messageText = transcription;
-                  console.log('✅ Audio transcribed:', messageText);
+                transcriptionText = await transcribeAudio(audioBase64, company.openaiApiKey);
+                if (transcriptionText) {
+                  console.log('✅ Whisper transcription succeeded:', transcriptionText);
                 } else {
-                  console.log('❌ Failed to transcribe audio, sending fallback response');
-                  // Send a helpful fallback response for failed audio transcription
-                  const fallbackResponse = "Desculpe, não consegui entender o áudio que você enviou. Pode escrever sua mensagem por texto, por favor? 📝";
-                  
-                  try {
-                    // Format phone number for UAZAPI - needs country code 55
-                    let formattedPhoneForFallback = phoneNumber.replace(/\D/g, '');
-                    if (!formattedPhoneForFallback.startsWith('55') && formattedPhoneForFallback.length >= 10) {
-                      formattedPhoneForFallback = '55' + formattedPhoneForFallback;
-                    }
+                  console.log('❌ Whisper transcription failed');
+                }
+              }
 
-                    // Send "typing" presence and wait 2 seconds
-                    await uazapiSendTyping(instanceName, formattedPhoneForFallback, 2000);
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    const fallbackUAZAPIResponse = await uazapiSendText(instanceName, formattedPhoneForFallback, fallbackResponse);
-                    
-                    if (fallbackUAZAPIResponse.ok) {
-                      console.log('✅ Fallback response sent for failed audio transcription');
-                      return res.status(200).json({ 
-                        received: true, 
-                        processed: true, 
-                        reason: 'Audio transcription failed, fallback response sent' 
-                      });
-                    } else {
-                      console.error('❌ Failed to send fallback response via UAZAPI');
-                      return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
-                    }
-                  } catch (sendError) {
-                    console.error('❌ Failed to send fallback response:', sendError);
+              // ============================================
+              // Use transcription or send fallback
+              // ============================================
+              if (transcriptionText) {
+                messageText = transcriptionText;
+                console.log('✅ Audio transcribed successfully:', messageText);
+              } else {
+                console.log('❌ Failed to transcribe audio, sending fallback response');
+                const fallbackResponse = "Desculpe, não consegui entender o áudio que você enviou. Pode escrever sua mensagem por texto, por favor? 📝";
+
+                try {
+                  let formattedPhoneForFallback = phoneNumber.replace(/\D/g, '');
+                  if (!formattedPhoneForFallback.startsWith('55') && formattedPhoneForFallback.length >= 10) {
+                    formattedPhoneForFallback = '55' + formattedPhoneForFallback;
+                  }
+
+                  await uazapiSendTyping(instanceName, formattedPhoneForFallback, 2000);
+                  await new Promise(resolve => setTimeout(resolve, 2000));
+                  const fallbackUAZAPIResponse = await uazapiSendText(instanceName, formattedPhoneForFallback, fallbackResponse);
+
+                  if (fallbackUAZAPIResponse.ok) {
+                    console.log('✅ Fallback response sent for failed audio transcription');
+                    return res.status(200).json({
+                      received: true,
+                      processed: true,
+                      reason: 'Audio transcription failed, fallback response sent'
+                    });
+                  } else {
+                    console.error('❌ Failed to send fallback response via UAZAPI');
                     return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
                   }
+                } catch (sendError) {
+                  console.error('❌ Failed to send fallback response:', sendError);
+                  return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
                 }
-              } else {
-                console.log('❌ No audio base64 data found');
-                return res.status(200).json({ received: true, processed: false, reason: 'No audio data' });
               }
             } catch (error) {
               console.error('❌ Error processing audio:', error);
