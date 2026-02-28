@@ -194,8 +194,8 @@ export const globalSettings = mysqlTable("global_settings", {
   backgroundColor: varchar("background_color", { length: 7 }).notNull().default("#f8fafc"),
   textColor: varchar("text_color", { length: 7 }).notNull().default("#1e293b"),
   // tourColor: varchar("tour_color", { length: 7 }).notNull().default("#b845dc"), // Temporarily disabled for schema sync
-  evolutionApiUrl: varchar("evolution_api_url", { length: 500 }),
-  evolutionApiGlobalKey: varchar("evolution_api_global_key", { length: 500 }),
+  uazapiUrl: varchar("uazapi_url", { length: 500 }),
+  uazapiAdminToken: varchar("uazapi_admin_token", { length: 500 }),
   defaultBirthdayMessage: text("default_birthday_message"),
   defaultAiPrompt: text("default_ai_prompt"), // Default AI prompt for new companies
   // SMTP Configuration
@@ -230,6 +230,7 @@ export const whatsappInstances = mysqlTable("whatsapp_instances", {
   id: serial("id").primaryKey(),
   companyId: int("company_id").notNull(),
   instanceName: varchar("instance_name", { length: 255 }).notNull(),
+  instanceToken: varchar("instance_token", { length: 500 }),
   status: varchar("status", { length: 50 }),
   qrCode: text("qr_code"),
   webhook: varchar("webhook", { length: 500 }),

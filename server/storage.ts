@@ -2581,38 +2581,32 @@ export class DatabaseStorage implements IStorage {
 
       // Send WhatsApp message
       try {
-        // Get global Evolution API settings
+        // Get global UAZAPI settings
         const globalSettings = await this.getGlobalSettings();
-        const evolutionApiUrl = globalSettings?.evolutionApiUrl || whatsappInstance.apiUrl || process.env.EVOLUTION_API_URL;
-        const apiKey = globalSettings?.evolutionApiGlobalKey || whatsappInstance.apiKey || process.env.EVOLUTION_API_KEY;
+        const baseUrl = globalSettings?.uazapiUrl || process.env.UAZAPI_URL;
+        const adminToken = globalSettings?.uazapiAdminToken || process.env.UAZAPI_ADMIN_TOKEN;
+        const instanceToken = whatsappInstance.instanceToken;
 
-        if (!evolutionApiUrl || !apiKey) {
-          console.error("Missing Evolution API configuration");
-          console.log('Available settings:', { 
-            globalUrl: globalSettings?.evolutionApiUrl, 
-            globalKey: globalSettings?.evolutionApiGlobalKey ? '[CONFIGURED]' : '[NOT SET]',
-            instanceUrl: whatsappInstance.apiUrl,
-            instanceKey: whatsappInstance.apiKey ? '[CONFIGURED]' : '[NOT SET]'
+        if (!baseUrl || !adminToken || !instanceToken) {
+          console.error("Missing UAZAPI configuration");
+          console.log('Available settings:', {
+            baseUrl: baseUrl ? '[CONFIGURED]' : '[NOT SET]',
+            adminToken: adminToken ? '[CONFIGURED]' : '[NOT SET]',
+            instanceToken: instanceToken ? '[CONFIGURED]' : '[NOT SET]'
           });
           return;
         }
 
-        // Evolution API URL should NOT include /api/ prefix for message endpoints
-        const correctedApiUrl = evolutionApiUrl?.replace(/\/api\/?$/, '').replace(/\/$/, '');
-        const response = await fetch(`${correctedApiUrl}/message/sendText/${whatsappInstance.instanceName}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': apiKey
-          },
-          body: JSON.stringify({
-            number: formattedPhone,
-            text: message
-          })
-        });
+        const { createUazapiService } = await import('./services/uazapi');
+        const uazapi = createUazapiService(baseUrl, adminToken);
 
-        const result = await response.json();
-        
+        let responseOk = true;
+        try {
+          await uazapi.sendText(instanceToken, { number: formattedPhone, text: message });
+        } catch (error) {
+          responseOk = false;
+          console.error('❌ Falha ao enviar mensagem UAZAPI:', error);
+        }
         // Save reminder to history
         await db.insert(reminderHistory).values({
           companyId: appointment.companyId,
@@ -2620,14 +2614,14 @@ export class DatabaseStorage implements IStorage {
           reminderType: reminderType,
           clientPhone: appointment.clientPhone,
           message: message,
-          status: response.ok ? 'sent' : 'failed',
+          status: responseOk ? 'sent' : 'failed',
           whatsappInstanceId: whatsappInstance.id
         });
 
-        if (response.ok) {
+        if (responseOk) {
           console.log(`✅ Reminder sent successfully for appointment ${appointmentId} (${reminderType})`);
         } else {
-          console.error(`❌ Failed to send reminder:`, result);
+          console.error(`❌ Failed to send reminder`);
         }
 
       } catch (error) {
@@ -3291,86 +3285,32 @@ Obrigado pela preferência! 🙏`;
         return { success: false, message: "Número de telefone inválido ou não informado" };
       }
 
-      // Get Evolution API settings from existing global settings
-      const evolutionApiUrl = settings?.evolutionApiUrl || whatsappInstance.apiUrl;
-      const apiKey = settings?.evolutionApiGlobalKey || whatsappInstance.apiKey;
+      // Get UAZAPI settings
+      const uazapiUrl = settings?.uazapiUrl || process.env.UAZAPI_URL;
+      const adminToken = settings?.uazapiAdminToken || process.env.UAZAPI_ADMIN_TOKEN;
+      const instanceToken = whatsappInstance.instanceToken;
 
-      if (!evolutionApiUrl || !apiKey) {
-        return { success: false, message: "Configuração da API do WhatsApp não encontrada nas configurações globais" };
+      if (!uazapiUrl || !adminToken || !instanceToken) {
+        return { success: false, message: "Configuração do UAZAPI não encontrada nas configurações globais" };
       }
 
       console.log('=== SENDING REVIEW INVITATION DEBUG ===');
-      console.log('Evolution API URL:', evolutionApiUrl ? '[CONFIGURED]' : 'not configured');
+      console.log('UAZAPI URL:', uazapiUrl ? '[CONFIGURED]' : 'not configured');
       console.log('Instance Name:', whatsappInstance.instanceName);
       console.log('Formatted Phone:', formattedPhone);
-      console.log('API Key configured:', !!apiKey);
-      console.log('Global settings evolutionApiUrl:', settings?.evolutionApiUrl ? '[CONFIGURED]' : 'not configured');
-      console.log('Global settings apiKey:', !!settings?.evolutionApiGlobalKey);
-      console.log('WhatsApp instance apiUrl:', whatsappInstance.apiUrl ? '[CONFIGURED]' : 'not configured');
-      console.log('WhatsApp instance apiKey:', !!whatsappInstance.apiKey);
+      console.log('Instance Token configured:', !!instanceToken);
 
-      // Evolution API URL should NOT include /api/ prefix for message endpoints
-      const baseUrl = evolutionApiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
-      const whatsappApiUrl = `${baseUrl}/message/sendText/${whatsappInstance.instanceName}`;
-      
-      console.log('=== EVOLUTION API URL DETAILS ===');
-      console.log('Original URL:', evolutionApiUrl ? '[HIDDEN]' : 'not configured');
-      console.log('Base URL:', '[HIDDEN]');
-      console.log('Full WhatsApp URL:', '[HIDDEN]');
+      console.log('📡 Sending WhatsApp message via UAZAPI...');
 
-      console.log('📡 Sending WhatsApp message...');
-      console.log('URL:', '[HIDDEN]');
-      console.log('Headers:', {
-        'Content-Type': 'application/json',
-        'apikey': apiKey ? 'configured' : 'missing'
-      });
-      console.log('Payload:', {
-        number: formattedPhone,
-        text: message.substring(0, 100) + '...'
-      });
-
-      const response = await fetch(whatsappApiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': apiKey || ''
-        },
-        body: JSON.stringify({
-          number: formattedPhone,
-          text: message
-        })
-      });
-
-      console.log('Response status:', response.status);
-      
-      let responseData;
-      const responseText = await response.text();
-      
       try {
-        responseData = JSON.parse(responseText);
-        console.log('Response data:', responseData);
-      } catch (parseError) {
-        console.error('❌ Failed to parse response as JSON. Response text:', responseText.substring(0, 500));
-        console.error('Parse error:', parseError);
-        
-        // More specific error messages based on response
-        if (responseText.includes('<!DOCTYPE') || responseText.includes('<html>')) {
-          return { success: false, message: "Evolution API retornou página HTML - verifique URL da API nas configurações globais" };
-        } else if (response.status === 401) {
-          return { success: false, message: "Chave da API inválida - verifique a chave global da Evolution API" };
-        } else if (response.status === 404) {
-          return { success: false, message: "Instância do WhatsApp não encontrada - verifique o nome da instância" };
-        } else {
-          return { success: false, message: `Erro de comunicação com Evolution API (Status: ${response.status})` };
-        }
-      }
-
-      if (response.ok && responseData.key) {
+        const { createUazapiService } = await import('./services/uazapi');
+        const uazapi = createUazapiService(uazapiUrl, adminToken);
+        await uazapi.sendText(instanceToken, { number: formattedPhone, text: message });
         console.log('✅ Review invitation sent successfully!');
         return { success: true, message: "Convite de avaliação enviado com sucesso!" };
-      } else {
-        console.error('❌ Error sending review invitation:', responseData);
-        return { success: false, message: `Erro ao enviar mensagem: ${responseData.message || 'Erro desconhecido'}` };
+      } catch (sendError: any) {
+        console.error('❌ Error sending review invitation:', sendError);
+        return { success: false, message: `Erro ao enviar mensagem: ${sendError.message || 'Erro desconhecido'}` };
       }
 
     } catch (error: any) {
@@ -4973,26 +4913,34 @@ Object.assign(storage, {
         };
       }
 
-      // Get global settings for Evolution API
-      console.log(`🌐 Fetching global settings for Evolution API`);
+      // Get global settings for UAZAPI
+      console.log(`🌐 Fetching global settings for UAZAPI`);
       const [settings] = await db.select().from(globalSettings).limit(1);
-      
+
       console.log(`⚙️ Global settings found:`, {
-        hasUrl: !!settings?.evolutionApiUrl,
-        hasKey: !!settings?.evolutionApiGlobalKey
+        hasUrl: !!settings?.uazapiUrl,
+        hasKey: !!settings?.uazapiAdminToken
       });
-      
-      if (!settings?.evolutionApiUrl || !settings?.evolutionApiGlobalKey) {
+
+      if (!settings?.uazapiUrl || !settings?.uazapiAdminToken) {
         return {
           success: false,
-          message: "Configurações globais da Evolution API não encontradas"
+          message: "Configurações globais do UAZAPI não encontradas"
+        };
+      }
+
+      const instanceToken = whatsappInstance.instanceToken;
+      if (!instanceToken) {
+        return {
+          success: false,
+          message: "Token da instância WhatsApp não encontrado"
         };
       }
 
       // Use custom test phone if provided, otherwise default test number
       const defaultTestPhone = "5511999999999";
       let testPhone = customTestPhone || defaultTestPhone;
-      
+
       // Clean and format the phone number if custom phone provided
       if (customTestPhone) {
         testPhone = customTestPhone.replace(/\D/g, '');
@@ -5000,56 +4948,21 @@ Object.assign(storage, {
           testPhone = '55' + testPhone;
         }
       }
-      
-      const testMessage = customTestPhone ? 
+
+      const testMessage = customTestPhone ?
         `🧪 Teste de lembrete para ${customTestPhone} - sistema funcionando corretamente!` :
         "🧪 Teste de lembrete - sistema funcionando corretamente!";
 
-      // Evolution API URL should NOT include /api/ prefix for message endpoints
-      const correctedApiUrl = settings.evolutionApiUrl?.replace(/\/api\/?$/, '').replace(/\/$/, '');
-
-      console.log(`🌐 Making API call to Evolution API`);
-      console.log(`📡 URL: [HIDDEN]/message/sendText/${whatsappInstance.instanceName}`);
+      console.log(`🌐 Making API call to UAZAPI`);
       console.log(`📱 Instance: ${whatsappInstance.instanceName}`);
       console.log(`📞 Test phone: ${testPhone}`);
 
-      const requestPayload = {
-        number: testPhone,
-        text: testMessage
-      };
-
-      console.log(`📦 Request payload:`, JSON.stringify(requestPayload, null, 2));
-
-      const response = await fetch(`${correctedApiUrl}/message/sendText/${whatsappInstance.instanceName}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': settings.evolutionApiGlobalKey!
-        },
-        body: JSON.stringify(requestPayload)
-      });
-
-      console.log(`📊 Response status: ${response.status}`);
-      console.log(`📊 Response ok: ${response.ok}`);
-
-      const responseText = await response.text();
-      console.log(`📄 Raw response text: ${responseText.substring(0, 500)}`);
-
-      let result;
       try {
-        result = JSON.parse(responseText);
-        console.log(`📋 Parsed result:`, result);
-      } catch (parseError) {
-        console.error(`❌ Failed to parse response as JSON:`, parseError);
-        return {
-          success: false,
-          message: `Erro ao processar resposta da Evolution API: ${responseText.substring(0, 200)}`,
-          details: { responseText, status: response.status }
-        };
-      }
+        const { createUazapiService } = await import('./services/uazapi');
+        const uazapi = createUazapiService(settings.uazapiUrl!, settings.uazapiAdminToken!);
+        await uazapi.sendText(instanceToken, { number: testPhone, text: testMessage });
 
-      if (response.ok) {
-        console.log(`✅ Test successful! Status: ${response.status}`);
+        console.log(`✅ Test successful!`);
         return {
           success: true,
           message: "Teste de lembrete realizado com sucesso! Sistema funcionando corretamente.",
@@ -5057,38 +4970,16 @@ Object.assign(storage, {
             instanceName: whatsappInstance.instanceName,
             activeReminders: activeReminders.length,
             testMessage: testMessage,
-            apiResponse: result
           }
         };
-      } else {
-        console.error(`❌ API Error - Status: ${response.status}`);
-        console.error(`❌ Error details:`, result);
-        
-        // Check if the error is due to test number not existing in WhatsApp
-        if (result?.response?.message && Array.isArray(result.response.message)) {
-          const errorMessage = result.response.message[0];
-          if (errorMessage && errorMessage.exists === false && errorMessage.number === testPhone) {
-            return {
-              success: true,
-              message: "✅ Integração Evolution API funcionando! O número de teste não existe no WhatsApp, mas a conexão está correta.",
-              details: { 
-                status: response.status, 
-                testPhone: testPhone,
-                instanceName: whatsappInstance.instanceName,
-                note: "A API está respondendo corretamente. Use um número real para testes completos."
-              }
-            };
-          }
-        }
-        
+      } catch (sendError: any) {
+        console.error(`❌ UAZAPI Error:`, sendError);
         return {
           success: false,
-          message: `Erro Evolution API (${response.status}): ${result?.message || result?.error || 'Resposta inválida da API'}`,
-          details: { 
-            status: response.status, 
-            response: result,
-            url: `${correctedApiUrl}/message/sendText/${whatsappInstance.instanceName}`,
-            instanceName: whatsappInstance.instanceName
+          message: `Erro UAZAPI: ${sendError.message || 'Resposta inválida da API'}`,
+          details: {
+            instanceName: whatsappInstance.instanceName,
+            error: sendError.message
           }
         };
       }

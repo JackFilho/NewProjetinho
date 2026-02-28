@@ -28,7 +28,7 @@ import stripeService from './services/stripe.js';
 
 // Import utilities
 import { normalizePhone, formatBrazilianPhone } from './utils/phone.js';
-import { ensureEvolutionApiEndpoint } from './utils/evolution.js';
+// UAZAPI - using inline .replace(/\/+$/, '') for URL cleanup
 
 // Import bcrypt for password hashing
 import bcrypt from 'bcrypt';
@@ -391,7 +391,7 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
       const connectionData = webhookData.data;
       let newStatus = 'disconnected'; // default status
       
-      // Map Evolution API connection states to our status
+      // Map UAZAPI connection states to our status
       if (connectionData?.state === 'open') {
         newStatus = 'connected';
       } else if (connectionData?.state === 'connecting') {
@@ -432,7 +432,7 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
     if (isQrCodeEvent) {
       console.log('📱 QR code updated for instance:', instanceName);
       
-      // Extract QR code from Evolution API
+      // Extract QR code from UAZAPI
       let qrCodeData = null;
       
       // Check all possible locations for QR code
@@ -459,7 +459,7 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
           
           let qrCodeString = '';
           
-          // Handle different data formats from Evolution API
+          // Handle different data formats from UAZAPI
           if (typeof qrCodeData === 'string') {
             qrCodeString = qrCodeData;
           } else if (typeof qrCodeData === 'object' && qrCodeData !== null) {
@@ -682,13 +682,13 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
               const fallbackResponse = "Desculpe, não consegui entender o áudio que você enviou. Pode escrever sua mensagem por texto, por favor? 📝";
               
               try {
-                // Send fallback response using Evolution API with corrected URL
-                const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-                const fallbackEvolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
+                // Send fallback response using UAZAPI with corrected URL
+                const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+                const fallbackSendResponse = await fetch(`${correctedApiUrl}/send/text`, {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
-                    'apikey': globalSettings.evolutionApiGlobalKey!
+                    'token': globalSettings.uazapiAdminToken!
                   },
                   body: JSON.stringify({
                     number: phoneNumber,
@@ -698,7 +698,7 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
                   })
                 });
                 
-                if (fallbackEvolutionResponse.ok) {
+                if (fallbackSendResponse.ok) {
                   console.log('✅ Fallback response sent for failed audio transcription');
                   return res.status(200).json({ 
                     received: true, 
@@ -706,7 +706,7 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
                     reason: 'Audio transcription failed, fallback response sent' 
                   });
                 } else {
-                  console.error('❌ Failed to send fallback response via Evolution API');
+                  console.error('❌ Failed to send fallback response via UAZAPI');
                   return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
                 }
               } catch (sendError) {
@@ -761,9 +761,9 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
           return res.status(400).json({ error: 'OpenAI not configured' });
         }
 
-        if (!globalSettings.evolutionApiUrl || !globalSettings.evolutionApiGlobalKey) {
-          console.log('❌ Evolution API not configured');
-          return res.status(400).json({ error: 'Evolution API not configured' });
+        if (!globalSettings.uazapiUrl || !globalSettings.uazapiAdminToken) {
+          console.log('❌ UAZAPI not configured');
+          return res.status(400).json({ error: 'UAZAPI not configured' });
         }
 
         try {
@@ -1083,16 +1083,16 @@ INSTRUÇÕES OBRIGATÓRIAS:
             console.log('🧹 Cleaned AI response for appointment confirmation');
           }
 
-          // Send response back via Evolution API using global settings
-          console.log('🚀 Sending AI response via Evolution API...');
+          // Send response back via UAZAPI using global settings
+          console.log('🚀 Sending AI response via UAZAPI...');
           console.log('🤖 AI Generated Response:', aiResponse);
           
-          const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-          const evolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
+          const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+          const sendResponse = await fetch(`${correctedApiUrl}/send/text`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'apikey': globalSettings.evolutionApiGlobalKey!
+              'token': globalSettings.uazapiAdminToken!
             },
             body: JSON.stringify({
               number: phoneNumber,
@@ -1100,7 +1100,7 @@ INSTRUÇÕES OBRIGATÓRIAS:
             })
           });
 
-          if (evolutionResponse.ok) {
+          if (sendResponse.ok) {
             console.log(`✅ AI response sent to ${phoneNumber}: ${aiResponse}`);
             
             // Save AI response to database
@@ -1250,10 +1250,10 @@ INSTRUÇÕES OBRIGATÓRIAS:
             // Só deve criar agendamento quando o usuário explicitamente confirmar com SIM/OK
             
           } else {
-            const errorText = await evolutionResponse.text();
-            console.error('❌ Failed to send message via Evolution API:', {
-              status: evolutionResponse.status,
-              error: evolutionResponse.statusText,
+            const errorText = await sendResponse.text();
+            console.error('❌ Failed to send message via UAZAPI:', {
+              status: sendResponse.status,
+              error: sendResponse.statusText,
               response: JSON.parse(errorText)
             });
             console.log('ℹ️  Note: This is normal for test numbers. Real WhatsApp numbers will work.');
@@ -1291,12 +1291,12 @@ Obrigado pela preferência! 🙏`;
           
           // Send fallback response
           try {
-            const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-            const evolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
+            const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+            const sendResponse = await fetch(`${correctedApiUrl}/send/text`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'apikey': globalSettings.evolutionApiGlobalKey
+                'token': globalSettings.uazapiAdminToken
               },
               body: JSON.stringify({
                 number: phoneNumber,
@@ -1304,7 +1304,7 @@ Obrigado pela preferência! 🙏`;
               })
             });
 
-            if (evolutionResponse.ok) {
+            if (sendResponse.ok) {
               console.log('✅ Fallback message sent successfully');
               
               // Save the fallback message to conversation
@@ -3197,10 +3197,10 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       }
     }
 
-    // Fallback final: usar contactName (pushName) da Evolution API
+    // Fallback final: usar contactName (pushName) da UAZAPI
     if (!extractedName && contactName) {
       extractedName = contactName;
-      console.log(`📝 Usando contactName (pushName) da Evolution: "${extractedName}"`);
+      console.log(`📝 Usando contactName (pushName) da UAZAPI: "${extractedName}"`);
     }
 
     // Check for appointment conflicts before creating
@@ -4032,7 +4032,7 @@ const broadcastEvent = (eventData: any) => {
         const connectionData = webhookData.data;
         let newStatus = 'disconnected'; // default status
       
-        // Map Evolution API connection states to our status
+        // Map UAZAPI connection states to our status
         if (connectionData?.state === 'open') {
           newStatus = 'connected';
         } else if (connectionData?.state === 'connecting') {
@@ -4073,7 +4073,7 @@ const broadcastEvent = (eventData: any) => {
       if (isQrCodeEvent) {
         console.log('📱 QR code updated for instance:', instanceName);
       
-        // Extract QR code from Evolution API
+        // Extract QR code from UAZAPI
         let qrCodeData = null;
       
         // Check all possible locations for QR code
@@ -4100,7 +4100,7 @@ const broadcastEvent = (eventData: any) => {
           
             let qrCodeString = '';
           
-            // Handle different data formats from Evolution API
+            // Handle different data formats from UAZAPI
             if (typeof qrCodeData === 'string') {
               qrCodeString = qrCodeData;
             } else if (typeof qrCodeData === 'object' && qrCodeData !== null) {
@@ -4247,13 +4247,13 @@ const broadcastEvent = (eventData: any) => {
                 const fallbackResponse = "Desculpe, não consegui entender o áudio que você enviou. Pode escrever sua mensagem por texto, por favor? 📝";
               
                 try {
-                  // Send fallback response using Evolution API with corrected URL
-                  const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-                  const fallbackEvolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
+                  // Send fallback response using UAZAPI with corrected URL
+                  const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+                  const fallbackSendResponse = await fetch(`${correctedApiUrl}/send/text`, {
                     method: 'POST',
                     headers: {
                       'Content-Type': 'application/json',
-                      'apikey': globalSettings.evolutionApiGlobalKey!
+                      'token': globalSettings.uazapiAdminToken!
                     },
                     body: JSON.stringify({
                       number: phoneNumber,
@@ -4263,7 +4263,7 @@ const broadcastEvent = (eventData: any) => {
                     })
                   });
               
-                  if (fallbackEvolutionResponse.ok) {
+                  if (fallbackSendResponse.ok) {
                     console.log('✅ Fallback response sent for failed audio transcription');
                     return res.status(200).json({ 
                       received: true, 
@@ -4271,7 +4271,7 @@ const broadcastEvent = (eventData: any) => {
                       reason: 'Audio transcription failed, fallback response sent' 
                     });
                   } else {
-                    console.error('❌ Failed to send fallback response via Evolution API');
+                    console.error('❌ Failed to send fallback response via UAZAPI');
                     return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
                   }
                 } catch (sendError) {
@@ -4326,9 +4326,9 @@ const broadcastEvent = (eventData: any) => {
             return res.status(400).json({ error: 'OpenAI not configured' });
           }
 
-          if (!globalSettings.evolutionApiUrl || !globalSettings.evolutionApiGlobalKey) {
-            console.log('❌ Evolution API not configured');
-            return res.status(400).json({ error: 'Evolution API not configured' });
+          if (!globalSettings.uazapiUrl || !globalSettings.uazapiAdminToken) {
+            console.log('❌ UAZAPI not configured');
+            return res.status(400).json({ error: 'UAZAPI not configured' });
           }
 
           try {
@@ -4639,16 +4639,16 @@ INSTRUÇÕES OBRIGATÓRIAS:
               console.log('🧹 Cleaned AI response for appointment confirmation');
             }
 
-            // Send response back via Evolution API using global settings
-            console.log('🚀 Sending AI response via Evolution API...');
+            // Send response back via UAZAPI using global settings
+            console.log('🚀 Sending AI response via UAZAPI...');
             console.log('🤖 AI Generated Response:', aiResponse);
           
-            const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-            const evolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
+            const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+            const sendResponse = await fetch(`${correctedApiUrl}/send/text`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'apikey': globalSettings.evolutionApiGlobalKey!
+                'token': globalSettings.uazapiAdminToken!
               },
               body: JSON.stringify({
                 number: phoneNumber,
@@ -4656,7 +4656,7 @@ INSTRUÇÕES OBRIGATÓRIAS:
               })
             });
 
-            if (evolutionResponse.ok) {
+            if (sendResponse.ok) {
               console.log(`✅ AI response sent to ${phoneNumber}: ${aiResponse}`);
             
               // Save AI response to database
@@ -4787,10 +4787,10 @@ INSTRUÇÕES OBRIGATÓRIAS:
               }
             
             } else {
-              const errorText = await evolutionResponse.text();
-              console.error('❌ Failed to send message via Evolution API:', {
-                status: evolutionResponse.status,
-                error: evolutionResponse.statusText,
+              const errorText = await sendResponse.text();
+              console.error('❌ Failed to send message via UAZAPI:', {
+                status: sendResponse.status,
+                error: sendResponse.statusText,
                 response: JSON.parse(errorText)
               });
               console.log('ℹ️  Note: This is normal for test numbers. Real WhatsApp numbers will work.');
@@ -4828,12 +4828,12 @@ Obrigado pela preferência! 🙏`;
           
             // Send fallback response
             try {
-              const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-              const evolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
+              const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+              const sendResponse = await fetch(`${correctedApiUrl}/send/text`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'apikey': globalSettings.evolutionApiGlobalKey
+                  'token': globalSettings.uazapiAdminToken
                 },
                 body: JSON.stringify({
                   number: phoneNumber,
@@ -4841,7 +4841,7 @@ Obrigado pela preferência! 🙏`;
                 })
               });
 
-              if (evolutionResponse.ok) {
+              if (sendResponse.ok) {
                 console.log('✅ Fallback message sent successfully');
               
                 // Save the fallback message to conversation
@@ -6596,10 +6596,10 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       }
     }
 
-    // Fallback final: usar contactName (pushName) da Evolution API
+    // Fallback final: usar contactName (pushName) da UAZAPI
     if (!extractedName && contactName) {
       extractedName = contactName;
-      console.log(`📝 Usando contactName (pushName) da Evolution: "${extractedName}"`);
+      console.log(`📝 Usando contactName (pushName) da UAZAPI: "${extractedName}"`);
     }
 
     // Check for appointment conflicts before creating
@@ -7431,7 +7431,7 @@ const broadcastEvent = (eventData: any) => {
         const connectionData = webhookData.data;
         let newStatus = 'disconnected'; // default status
       
-        // Map Evolution API connection states to our status
+        // Map UAZAPI connection states to our status
         if (connectionData?.state === 'open') {
           newStatus = 'connected';
         } else if (connectionData?.state === 'connecting') {
@@ -7472,7 +7472,7 @@ const broadcastEvent = (eventData: any) => {
       if (isQrCodeEvent) {
         console.log('📱 QR code updated for instance:', instanceName);
       
-        // Extract QR code from Evolution API
+        // Extract QR code from UAZAPI
         let qrCodeData = null;
       
         // Check all possible locations for QR code
@@ -7499,7 +7499,7 @@ const broadcastEvent = (eventData: any) => {
           
             let qrCodeString = '';
           
-            // Handle different data formats from Evolution API
+            // Handle different data formats from UAZAPI
             if (typeof qrCodeData === 'string') {
               qrCodeString = qrCodeData;
             } else if (typeof qrCodeData === 'object' && qrCodeData !== null) {
@@ -7646,13 +7646,13 @@ const broadcastEvent = (eventData: any) => {
                 const fallbackResponse = "Desculpe, não consegui entender o áudio que você enviou. Pode escrever sua mensagem por texto, por favor? 📝";
               
                 try {
-                  // Send fallback response using Evolution API with corrected URL
-                  const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-                  const fallbackEvolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
+                  // Send fallback response using UAZAPI with corrected URL
+                  const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+                  const fallbackSendResponse = await fetch(`${correctedApiUrl}/send/text`, {
                     method: 'POST',
                     headers: {
                       'Content-Type': 'application/json',
-                      'apikey': globalSettings.evolutionApiGlobalKey!
+                      'token': globalSettings.uazapiAdminToken!
                     },
                     body: JSON.stringify({
                       number: phoneNumber,
@@ -7662,7 +7662,7 @@ const broadcastEvent = (eventData: any) => {
                     })
                   });
               
-                  if (fallbackEvolutionResponse.ok) {
+                  if (fallbackSendResponse.ok) {
                     console.log('✅ Fallback response sent for failed audio transcription');
                     return res.status(200).json({ 
                       received: true, 
@@ -7670,7 +7670,7 @@ const broadcastEvent = (eventData: any) => {
                       reason: 'Audio transcription failed, fallback response sent' 
                     });
                   } else {
-                    console.error('❌ Failed to send fallback response via Evolution API');
+                    console.error('❌ Failed to send fallback response via UAZAPI');
                     return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
                   }
                 } catch (sendError) {
@@ -7725,9 +7725,9 @@ const broadcastEvent = (eventData: any) => {
             return res.status(400).json({ error: 'OpenAI not configured' });
           }
 
-          if (!globalSettings.evolutionApiUrl || !globalSettings.evolutionApiGlobalKey) {
-            console.log('❌ Evolution API not configured');
-            return res.status(400).json({ error: 'Evolution API not configured' });
+          if (!globalSettings.uazapiUrl || !globalSettings.uazapiAdminToken) {
+            console.log('❌ UAZAPI not configured');
+            return res.status(400).json({ error: 'UAZAPI not configured' });
           }
 
           try {
@@ -8038,16 +8038,16 @@ INSTRUÇÕES OBRIGATÓRIAS:
               console.log('🧹 Cleaned AI response for appointment confirmation');
             }
 
-            // Send response back via Evolution API using global settings
-            console.log('🚀 Sending AI response via Evolution API...');
+            // Send response back via UAZAPI using global settings
+            console.log('🚀 Sending AI response via UAZAPI...');
             console.log('🤖 AI Generated Response:', aiResponse);
           
-            const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-            const evolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
+            const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+            const sendResponse = await fetch(`${correctedApiUrl}/send/text`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'apikey': globalSettings.evolutionApiGlobalKey!
+                'token': globalSettings.uazapiAdminToken!
               },
               body: JSON.stringify({
                 number: phoneNumber,
@@ -8055,7 +8055,7 @@ INSTRUÇÕES OBRIGATÓRIAS:
               })
             });
 
-            if (evolutionResponse.ok) {
+            if (sendResponse.ok) {
               console.log(`✅ AI response sent to ${phoneNumber}: ${aiResponse}`);
             
               // Save AI response to database
@@ -8186,10 +8186,10 @@ INSTRUÇÕES OBRIGATÓRIAS:
             }
             
           } else {
-            const errorText = await evolutionResponse.text();
-            console.error('❌ Failed to send message via Evolution API:', {
-              status: evolutionResponse.status,
-              error: evolutionResponse.statusText,
+            const errorText = await sendResponse.text();
+            console.error('❌ Failed to send message via UAZAPI:', {
+              status: sendResponse.status,
+              error: sendResponse.statusText,
               response: JSON.parse(errorText)
             });
             console.log('ℹ️  Note: This is normal for test numbers. Real WhatsApp numbers will work.');
@@ -8227,12 +8227,12 @@ Obrigado pela preferência! 🙏`;
           
             // Send fallback response
             try {
-              const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-              const evolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
+              const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+              const sendResponse = await fetch(`${correctedApiUrl}/send/text`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'apikey': globalSettings.evolutionApiGlobalKey
+                  'token': globalSettings.uazapiAdminToken
                 },
                 body: JSON.stringify({
                   number: phoneNumber,
@@ -8240,7 +8240,7 @@ Obrigado pela preferência! 🙏`;
                 })
               });
 
-              if (evolutionResponse.ok) {
+              if (sendResponse.ok) {
                 console.log('✅ Fallback message sent successfully');
               
                 // Save the fallback message to conversation

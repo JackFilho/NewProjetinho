@@ -207,16 +207,29 @@ async function processCampaign(campaign: any) {
       return;
     }
 
-    // Get global Evolution API settings
+    // Get global UAZAPI settings
     const settings = await storage.getGlobalSettings();
-    if (!settings?.evolutionApiUrl || !settings?.evolutionApiGlobalKey) {
-      console.error("❌ Evolution API not configured");
+    if (!settings?.uazapiUrl || !settings?.uazapiAdminToken) {
+      console.error("❌ UAZAPI not configured");
       await pool.execute(
         'UPDATE message_campaigns SET status = ? WHERE id = ?',
         ['failed', campaign.id]
       );
       return;
     }
+
+    const instanceToken = whatsappInstance.instance_token;
+    if (!instanceToken) {
+      console.error("❌ Instance token not found for instance:", whatsappInstance.instance_name);
+      await pool.execute(
+        'UPDATE message_campaigns SET status = ? WHERE id = ?',
+        ['failed', campaign.id]
+      );
+      return;
+    }
+
+    const { createUazapiService } = await import('./services/uazapi');
+    const uazapi = createUazapiService(settings.uazapiUrl!, settings.uazapiAdminToken!);
 
     // Send messages to each client
     for (const client of clients) {
@@ -227,26 +240,12 @@ async function processCampaign(campaign: any) {
           formattedPhone = '55' + formattedPhone;
         }
 
-        // Evolution API URL should NOT include /api/ prefix for message endpoints
-        const correctedApiUrl = settings.evolutionApiUrl?.replace(/\/api\/?$/, '').replace(/\/$/, '');
-        const response = await fetch(`${correctedApiUrl}/message/sendText/${whatsappInstance.instance_name}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': settings.evolutionApiGlobalKey
-          },
-          body: JSON.stringify({
-            number: formattedPhone,
-            text: campaign.message
-          })
-        });
-
-        if (response.ok) {
+        try {
+          await uazapi.sendText(instanceToken, { number: formattedPhone, text: campaign.message });
           sentCount++;
           console.log(`✅ Message sent to ${client.name} (${formattedPhone})`);
-        } else {
-          const errorText = await response.text();
-          console.error(`❌ Failed to send message to ${client.name}: ${errorText}`);
+        } catch (sendError: any) {
+          console.error(`❌ Failed to send message to ${client.name}: ${sendError.message}`);
         }
 
         // Add small delay between messages to avoid rate limiting
