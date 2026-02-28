@@ -6767,8 +6767,18 @@ if (ignoredNumbers !== undefined) {
         console.log('💬 [UAZAPI] Text:', msgText.substring(0, 100));
         console.log('👤 [UAZAPI] fromMe:', fromMe, '| pushName:', pushName);
         console.log('📝 [UAZAPI] Type:', msgType, '| ID:', msgId);
-        console.log('🔑 [UAZAPI] message keys:', Object.keys(uazMsg).join(', '));
-        console.log('🔑 [UAZAPI] chat keys:', Object.keys(uazChat).join(', '));
+        // Log FULL objects to find where the real phone number is
+        console.log('🔑 [UAZAPI] FULL message obj:', JSON.stringify(uazMsg).substring(0, 2000));
+        console.log('🔑 [UAZAPI] FULL chat obj:', JSON.stringify(uazChat));
+        console.log('🔑 [UAZAPI] chatSource:', webhookData.chatSource);
+        console.log('🔑 [UAZAPI] owner:', webhookData.owner);
+        console.log('🔑 [UAZAPI] Root keys & values:');
+        for (const key of Object.keys(webhookData)) {
+          if (key !== 'message' && key !== 'chat') {
+            const val = typeof webhookData[key] === 'object' ? JSON.stringify(webhookData[key]) : webhookData[key];
+            console.log(`   ${key}:`, typeof val === 'string' ? val.substring(0, 200) : val);
+          }
+        }
       } else if (isMessageEventArray) {
         message = webhookData.data.messages[0];
       } else if (isDirectMessage || isAudioMessageDirect) {
