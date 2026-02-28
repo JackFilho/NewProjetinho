@@ -59,27 +59,17 @@ export function schedulePixExpirationCheck(
       const instances = await storage.getWhatsappInstancesByCompany(companyId);
       const activeInstance = instances[0];
 
-      if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey && activeInstance) {
+      if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken && activeInstance?.instanceToken) {
         let formattedPhone = clientPhone.replace(/\D/g, '');
         if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
           formattedPhone = '55' + formattedPhone;
         }
 
-        let apiUrl = globalSettings.evolutionApiUrl.replace(/\/+$/, '');
-
         const expirationMsg = `⏰ *Tempo de pagamento expirado*\n\nO prazo de 10 minutos para o pagamento via PIX se encerrou e o agendamento não foi realizado.\n\nCaso ainda deseje agendar, é só enviar uma nova mensagem que estaremos prontos para atendê-lo! 😊`;
 
-        await fetch(`${apiUrl}/message/sendText/${activeInstance.instanceName}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': globalSettings.evolutionApiGlobalKey
-          },
-          body: JSON.stringify({
-            number: formattedPhone,
-            text: expirationMsg
-          })
-        });
+        const { createUazapiService } = await import('./services/uazapi');
+        const uazapi = createUazapiService(globalSettings.uazapiUrl!, globalSettings.uazapiAdminToken!);
+        await uazapi.sendText(activeInstance.instanceToken, { number: formattedPhone, text: expirationMsg });
 
         console.log(`[PIX Expiration] Mensagem de expiração enviada para ${formattedPhone}`);
 
@@ -612,7 +602,7 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
             const instances = await storage.getWhatsappInstancesByCompany(pendingData.companyId);
             const activeInstance = instances[0];
 
-            if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey && activeInstance) {
+            if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken && activeInstance?.instanceToken) {
               let formattedPhone = pendingData.clientPhone.replace(/\D/g, '');
               if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
                 formattedPhone = '55' + formattedPhone;
@@ -644,20 +634,9 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
 
               const confirmationMessage = `*Pagamento Confirmado!* ✅\n\nAgendamento realizado com sucesso! Nos vemos no dia ${formattedDateDisplay} às ${timeForDisplay}${profPart}.`;
 
-              let apiUrl = globalSettings.evolutionApiUrl;
-              apiUrl = apiUrl.replace(/\/+$/, '');
-
-              await fetch(`${apiUrl}/message/sendText/${activeInstance.instanceName}`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'apikey': globalSettings.evolutionApiGlobalKey
-                },
-                body: JSON.stringify({
-                  number: formattedPhone,
-                  text: confirmationMessage
-                })
-              });
+              const { createUazapiService } = await import('./services/uazapi');
+              const uazapi = createUazapiService(globalSettings.uazapiUrl!, globalSettings.uazapiAdminToken!);
+              await uazapi.sendText(activeInstance.instanceToken, { number: formattedPhone, text: confirmationMessage });
 
               console.log(`[MP Webhook] Mensagem de confirmação enviada para ${formattedPhone}`);
 

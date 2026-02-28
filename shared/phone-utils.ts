@@ -39,7 +39,7 @@ export function normalizePhone(phone: string | null | undefined): string {
 
 /**
  * Normaliza um número de telefone do WhatsApp (formato internacional)
- * Lida com números que vêm da Evolution API com ou sem o 9º dígito
+ * Lida com números que vêm da API do WhatsApp (UAZAPI) com ou sem o 9º dígito
  * @param whatsappNumber - Número no formato WhatsApp (ex: 5581989193549@s.whatsapp.net ou 558189193549)
  * @returns Número normalizado com 11 dígitos (DDD + 9 + 8 dígitos)
  */

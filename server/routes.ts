@@ -5,7 +5,7 @@ import { setupAuth, isAuthenticated, isCompanyAuthenticated } from "./auth";
 import { db, pool } from "./db";
 import { loadCompanyPlan, requirePermission, checkProfessionalsLimit, RequestWithPlan } from "./plan-middleware";
 import { checkSubscriptionStatus, getCompanyPaymentAlerts, markAlertAsShown } from "./subscription-middleware";
-import { insertCompanySchema, insertPlanSchema, insertGlobalSettingsSchema, insertAdminSchema, financialCategories, paymentMethods, financialTransactions, companies, appointments, adminAlerts, companyAlertViews, insertCouponSchema, supportTickets, supportTicketTypes, supportTicketStatuses, tasks, insertTaskSchema, trainingVideos } from "@shared/schema";
+import { insertCompanySchema, insertPlanSchema, insertGlobalSettingsSchema, insertAdminSchema, financialCategories, paymentMethods, financialTransactions, companies, appointments, adminAlerts, companyAlertViews, insertCouponSchema, supportTickets, supportTicketTypes, supportTicketStatuses, tasks, insertTaskSchema, trainingVideos, whatsappInstances } from "@shared/schema";
 import bcrypt from "bcrypt";
 import { z } from "zod";
 import QRCode from "qrcode";
@@ -43,6 +43,75 @@ import fs from "fs";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import rateLimit from "express-rate-limit";
+import { UazapiService, createUazapiService } from "./services/uazapi";
+
+// Helper para obter serviço UAZAPI configurado
+async function getUazapiService(): Promise<UazapiService> {
+  const settings = await storage.getGlobalSettings();
+  const baseUrl = settings?.uazapiUrl || process.env.UAZAPI_URL || '';
+  const adminToken = settings?.uazapiAdminToken || process.env.UAZAPI_ADMIN_TOKEN || '';
+  return createUazapiService(baseUrl, adminToken);
+}
+
+// Helper para obter o token da instância ativa de uma empresa
+async function getInstanceToken(companyId: number): Promise<{ token: string; instanceName: string } | null> {
+  const instances = await storage.getWhatsAppInstances(companyId);
+  const activeInstance = instances.find((i: any) => i.status === 'connected') || instances[0];
+  if (!activeInstance?.instanceToken) return null;
+  return { token: activeInstance.instanceToken, instanceName: activeInstance.instanceName };
+}
+
+// Helpers de compatibilidade para envio via UAZAPI (substituem fetch direto + ensureUAZAPIApiEndpoint)
+// Estes helpers buscam o token da instância pelo nome e usam o serviço UAZAPI
+
+async function uazapiSendText(instanceName: string, phoneNumber: string, text: string): Promise<{ ok: boolean; status: number }> {
+  try {
+    const uazapi = await getUazapiService();
+    const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
+    if (!instance?.instanceToken) {
+      console.error('❌ Token UAZAPI não encontrado para instância:', instanceName);
+      return { ok: false, status: 404 };
+    }
+    await uazapi.sendText(instance.instanceToken, { number: phoneNumber, text });
+    return { ok: true, status: 200 };
+  } catch (error) {
+    console.error('❌ Erro ao enviar mensagem UAZAPI:', error);
+    return { ok: false, status: 500 };
+  }
+}
+
+async function uazapiSendMedia(instanceName: string, phoneNumber: string, mediaType: string, fileData: string, caption?: string): Promise<{ ok: boolean; status: number }> {
+  try {
+    const uazapi = await getUazapiService();
+    const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
+    if (!instance?.instanceToken) {
+      console.error('❌ Token UAZAPI não encontrado para instância:', instanceName);
+      return { ok: false, status: 404 };
+    }
+    await uazapi.sendMedia(instance.instanceToken, { number: phoneNumber, type: mediaType as any, file: fileData, text: caption });
+    return { ok: true, status: 200 };
+  } catch (error) {
+    console.error('❌ Erro ao enviar mídia UAZAPI:', error);
+    return { ok: false, status: 500 };
+  }
+}
+
+async function uazapiSendTyping(instanceName: string, phoneNumber: string, durationMs: number = 2000): Promise<void> {
+  try {
+    const uazapi = await getUazapiService();
+    const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
+    if (!instance?.instanceToken) return;
+    await uazapi.sendPresence(instance.instanceToken, { number: phoneNumber, presence: 'composing', delay: durationMs });
+  } catch (error) {
+    console.warn('⚠️ Erro ao enviar presença UAZAPI:', error);
+  }
+}
+
+// Função de compatibilidade para normalização de URL (no-op para UAZAPI)
+function ensureUAZAPIApiEndpoint(baseUrl: string): string {
+  if (!baseUrl) return baseUrl;
+  return baseUrl.replace(/\/+$/, '');
+}
 
 // Rate limiters para proteção contra brute force
 const loginLimiter = rateLimit({
@@ -239,15 +308,7 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000); // 5 minutos
 
-// Utility function to ensure Evolution API URLs have proper /api/ endpoint
-function ensureEvolutionApiEndpoint(baseUrl: string): string {
-  if (!baseUrl) return baseUrl;
-
-  // Remove trailing slash and /api/ prefix for v2.3.0 compatibility
-  const cleanUrl = baseUrl.replace(/\/$/, '').replace(/\/api\/?$/, '');
-
-  return cleanUrl;
-}
+// ensureUAZAPIApiEndpoint removido - UAZAPI não precisa de normalização de URL
 
 /**
  * Formata uma data para o formato YYYY-MM-DD sem conversão para UTC
@@ -434,47 +495,28 @@ const courseFilesUpload = multer({
 });
 
 // Helper function to generate public webhook URLs
-function generateWebhookUrl(req: any, instanceName: string): string {
+// Prioriza system_url das configurações globais para garantir URL pública acessível
+async function generateWebhookUrl(req: any, instanceName: string): Promise<string> {
+  // Tentar usar system_url das configurações globais (URL pública)
+  try {
+    const settings = await storage.getGlobalSettings();
+    if (settings?.systemUrl) {
+      const baseUrl = settings.systemUrl.replace(/\/+$/, '');
+      return `${baseUrl}/api/webhook/whatsapp/${encodeURIComponent(instanceName)}`;
+    }
+  } catch (e) {
+    console.warn('⚠️ Could not get system_url from global settings');
+  }
+
+  // Fallback: usar host do request
   const host = req.get('host');
   if (host?.includes('replit.dev') || host?.includes('replit.app')) {
-    return `https://${host}/api/webhook/whatsapp/${instanceName}`;
+    return `https://${host}/api/webhook/whatsapp/${encodeURIComponent(instanceName)}`;
   }
-  return `${req.protocol}://${host}/api/webhook/whatsapp/${instanceName}`;
+  return `${req.protocol}://${host}/api/webhook/whatsapp/${encodeURIComponent(instanceName)}`;
 }
 
-// Helper function to send "typing" presence status
-async function sendTypingPresence(
-  apiUrl: string,
-  apiKey: string,
-  instanceName: string,
-  phoneNumber: string,
-  durationMs: number = 2000
-): Promise<void> {
-  try {
-    console.log('💬 Enviando status "digitando..."');
-    const response = await fetch(`${apiUrl}/chat/sendPresence/${instanceName}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': apiKey
-      },
-      body: JSON.stringify({
-        number: phoneNumber,
-        presence: 'composing', // 'composing' = digitando
-        delay: durationMs
-      })
-    });
-
-    if (response.ok) {
-      console.log('✅ Status "digitando..." enviado');
-    } else {
-      const errorText = await response.text();
-      console.log('⚠️ Erro ao enviar presença:', response.status, errorText);
-    }
-  } catch (error) {
-    console.log('⚠️ Erro ao enviar presença (não crítico):', error);
-  }
-}
+// sendTypingPresence removido - agora usa uazapiService.sendPresence()
 
 /**
  * Envia webhook para N8N quando ocorre um erro no agendamento
@@ -3142,39 +3184,22 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
         const activeInstance = instances.find(i => i.status === 'connected');
 
         if (activeInstance) {
-          // Get global settings for Evolution API
+          // Get global settings for UAZAPI
           const globalSettings = await storage.getGlobalSettings();
 
-          if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
-            // Format phone number for Evolution API
+          if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
             let formattedPhone = phoneNumber.replace(/\D/g, '');
             if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
               formattedPhone = '55' + formattedPhone;
             }
 
-            // Send message via Evolution API
-            const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
-            // Send "typing" presence and wait 2 seconds
-            await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, activeInstance.instanceName, formattedPhone, 2000);
+            await uazapiSendTyping(activeInstance.instanceName, formattedPhone, 2000);
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            const response = await fetch(`${correctedApiUrl}/message/sendText/${activeInstance.instanceName}`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'apikey': globalSettings.evolutionApiGlobalKey
-              },
-              body: JSON.stringify({
-                number: formattedPhone,
-                text: errorMessage
-              })
-            });
+            const response = await uazapiSendText(activeInstance.instanceName, formattedPhone, errorMessage);
 
             if (response.ok) {
               console.log('✅ Mensagem de erro enviada com sucesso');
-
-              // Save error message to conversation
               await storage.createMessage({
                 conversationId: conversationId,
                 content: errorMessage,
@@ -3184,10 +3209,10 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                 timestamp: new Date(),
               });
             } else {
-              console.error('❌ Falha ao enviar mensagem de erro:', await response.text());
+              console.error('❌ Falha ao enviar mensagem de erro');
             }
           } else {
-            console.error('❌ Configurações globais da Evolution API não encontradas');
+            console.error('❌ Configurações globais da UAZAPI não encontradas');
           }
         } else {
           console.error('❌ Nenhuma instância do WhatsApp conectada encontrada para esta empresa');
@@ -3300,10 +3325,10 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
       }
     }
 
-    // Fallback final: usar contactName (pushName) da Evolution API
+    // Fallback final: usar contactName (pushName) da UAZAPI
     if (!extractedName && contactName) {
       extractedName = contactName;
-      console.log(`📝 Usando contactName (pushName) da Evolution: "${extractedName}"`);
+      console.log(`📝 Usando contactName (pushName) da UAZAPI: "${extractedName}"`);
     }
 
     // Format date for conflict check without timezone conversion
@@ -4728,10 +4753,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const settings = await storage.getGlobalSettings();
       if (settings) {
         // Remove sensitive keys from response - return only boolean flags
-        const { evolutionApiGlobalKey, openaiApiKey, ...safeSettings } = settings as any;
+        const { uazapiAdminToken, openaiApiKey, ...safeSettings } = settings as any;
         res.json({
           ...safeSettings,
-          hasEvolutionApiGlobalKey: !!evolutionApiGlobalKey,
+          hasUazapiAdminToken: !!uazapiAdminToken,
           hasOpenaiApiKey: !!openaiApiKey,
         });
       } else {
@@ -4752,10 +4777,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       clearMetaTagsCache();
 
       // Remove sensitive keys from response
-      const { evolutionApiGlobalKey, openaiApiKey, ...safeSettings } = settings as any;
+      const { uazapiAdminToken, openaiApiKey, ...safeSettings } = settings as any;
       res.json({
         ...safeSettings,
-        hasEvolutionApiGlobalKey: !!evolutionApiGlobalKey,
+        hasUazapiAdminToken: !!uazapiAdminToken,
         hasOpenaiApiKey: !!openaiApiKey,
       });
     } catch (error) {
@@ -6517,20 +6542,23 @@ if (ignoredNumbers !== undefined) {
       const webhookData = req.body;
 
       // Handle CONNECTION_UPDATE events to update instance status
-      const isConnectionEvent = webhookData.event === 'connection.update' || webhookData.event === 'CONNECTION_UPDATE';
+      const isConnectionEvent = webhookData.event === 'connection.update' || webhookData.event === 'CONNECTION_UPDATE' || webhookData.event === 'connection';
       
       if (isConnectionEvent) {
         console.log('🔄 Processing connection update event');
         
-        const connectionData = webhookData.data;
+        // UAZAPI may send state in root or in data property
+        const connectionData = webhookData.data || webhookData;
         let newStatus = 'disconnected'; // default status
-        
-        // Map Evolution API connection states to our status
-        if (connectionData?.state === 'open') {
+
+        // Map UAZAPI connection states to our status
+        // Evolution (legacy) used: 'open', 'connecting', 'close'
+        // UAZAPI uses: 'connected', 'connecting', 'disconnected'
+        if (connectionData?.state === 'open' || connectionData?.state === 'connected') {
           newStatus = 'connected';
         } else if (connectionData?.state === 'connecting') {
           newStatus = 'connecting';
-        } else if (connectionData?.state === 'close') {
+        } else if (connectionData?.state === 'close' || connectionData?.state === 'disconnected') {
           newStatus = 'disconnected';
         }
         
@@ -6566,7 +6594,7 @@ if (ignoredNumbers !== undefined) {
       if (isQrCodeEvent) {
         console.log('📱 QR code updated for instance:', instanceName);
         
-        // Extract QR code from Evolution API
+        // Extract QR code from UAZAPI
         let qrCodeData = null;
         
         // Check all possible locations for QR code
@@ -6593,7 +6621,7 @@ if (ignoredNumbers !== undefined) {
             
             let qrCodeString = '';
             
-            // Handle different data formats from Evolution API
+            // Handle different data formats from UAZAPI
             if (typeof qrCodeData === 'string') {
               qrCodeString = qrCodeData;
             } else if (typeof qrCodeData === 'object' && qrCodeData !== null) {
@@ -6642,21 +6670,25 @@ if (ignoredNumbers !== undefined) {
       }
 
       // Check if it's a message event (handle multiple formats)
-      const isMessageEventArray = (webhookData.event === 'messages.upsert' || webhookData.event === 'MESSAGES_UPSERT') && webhookData.data?.messages?.length > 0;
-      const isMessageEventDirect = (webhookData.event === 'messages.upsert' || webhookData.event === 'MESSAGES_UPSERT') && webhookData.data?.key && webhookData.data?.message;
+      const isLegacyMessageEvent = webhookData.event === 'messages.upsert' || webhookData.event === 'MESSAGES_UPSERT';
+      const isMessageEventArray = isLegacyMessageEvent && webhookData.data?.messages?.length > 0;
+      const isMessageEventDirect = isLegacyMessageEvent && webhookData.data?.key && webhookData.data?.message;
       // Check for direct message structure without specific event (like from our test)
       const isDirectMessage = !!webhookData.key && !!webhookData.message && !webhookData.event;
       // Check for message data wrapped in data property
       const isWrappedMessage = webhookData.data?.key && webhookData.data?.message;
       // Check for audio message without message wrapper
       const isAudioMessageDirect = !!webhookData.key && webhookData.messageType === 'audioMessage' && !!webhookData.audio;
-      const isMessageEvent = isMessageEventArray || isMessageEventDirect || isDirectMessage || isWrappedMessage || isAudioMessageDirect;
+      // UAZAPI format: event === 'messages' with sender, text, chatid fields
+      const isUazapiMessage = webhookData.event === 'messages' && (webhookData.sender || webhookData.chatid || (webhookData.data?.sender || webhookData.data?.chatid));
+      const isMessageEvent = isMessageEventArray || isMessageEventDirect || isDirectMessage || isWrappedMessage || isAudioMessageDirect || isUazapiMessage;
 
       if (process.env.DEBUG_WHATSAPP_WEBHOOK === 'true') {
         console.log('🔍 Debug - isMessageEventArray:', isMessageEventArray);
         console.log('🔍 Debug - isMessageEventDirect:', isMessageEventDirect);
         console.log('🔍 Debug - isDirectMessage:', isDirectMessage);
         console.log('🔍 Debug - isWrappedMessage:', isWrappedMessage);
+        console.log('🔍 Debug - isUazapiMessage:', isUazapiMessage);
       }
 
       if (!isMessageEvent) {
@@ -6665,9 +6697,36 @@ if (ignoredNumbers !== undefined) {
         }
         return res.status(200).json({ received: true, processed: false, reason: `Event: ${webhookData.event}` });
       }
-      // Handle multiple formats: array format, direct format, and wrapped format
+
+      // Skip messages sent by API (UAZAPI wasSentByApi flag) to avoid processing our own outbound messages
+      if (webhookData.wasSentByApi === true || webhookData.data?.wasSentByApi === true) {
+        console.log('🚫 [SKIP] Message was sent by API (wasSentByApi=true), skipping processing');
+        return res.status(200).json({ received: true, processed: false, reason: 'Message sent by API (wasSentByApi)' });
+      }
+
+      // Handle multiple formats: array format, direct format, wrapped format, and UAZAPI format
       let message;
-      if (isMessageEventArray) {
+      if (isUazapiMessage) {
+        // UAZAPI format: normalize to standard message structure for downstream compatibility
+        const uazapiData = webhookData.data || webhookData;
+        const senderField = uazapiData.sender || uazapiData.chatid || '';
+        message = {
+          key: {
+            remoteJid: senderField,
+            fromMe: uazapiData.fromMe === true,
+            id: uazapiData.id || uazapiData.messageId || '',
+          },
+          message: {
+            conversation: uazapiData.text || uazapiData.body || '',
+          },
+          messageType: uazapiData.messageType || 'conversation',
+          pushName: uazapiData.senderName || uazapiData.pushName || '',
+        };
+        console.log('📦 [UAZAPI] Normalized UAZAPI message format');
+        console.log('📞 [UAZAPI] Sender:', uazapiData.sender, '| ChatID:', uazapiData.chatid);
+        console.log('💬 [UAZAPI] Text:', (uazapiData.text || uazapiData.body || '').substring(0, 100));
+        console.log('👤 [UAZAPI] fromMe:', uazapiData.fromMe, '| senderName:', uazapiData.senderName);
+      } else if (isMessageEventArray) {
         message = webhookData.data.messages[0];
       } else if (isDirectMessage || isAudioMessageDirect) {
         message = webhookData;
@@ -6740,19 +6799,34 @@ if (ignoredNumbers !== undefined) {
             rawPhoneNumber = remoteJidAlt.replace('@s.whatsapp.net', '').replace('@c.us', '');
             console.log('✅ Using real number from remoteJidAlt:', remoteJidAlt);
           }
-          // Fallback: search in participant fields
+          // Fallback: search in participant fields and UAZAPI sender/chatid
           else {
-            console.log('⚠️ Real number not found in remoteJid/remoteJidAlt, searching in participant fields...');
-            const possibleSources = [
-              message?.key?.participant,
-              message?.participant,
-            ];
+            console.log('⚠️ Real number not found in remoteJid/remoteJidAlt, searching in participant fields and UAZAPI fields...');
 
-            for (const source of possibleSources) {
-              if (source && !source.includes('@lid') && (source.includes('@s.whatsapp.net') || source.includes('@c.us'))) {
-                rawPhoneNumber = source.replace('@s.whatsapp.net', '').replace('@c.us', '');
-                console.log('✅ Found real number from participant:', source);
-                break;
+            // UAZAPI fallback: try sender and chatid fields from raw webhook data
+            const uazapiSender = webhookData?.sender || webhookData?.data?.sender || '';
+            const uazapiChatId = webhookData?.chatid || webhookData?.data?.chatid || '';
+            if (uazapiSender || uazapiChatId) {
+              const uazapiPhone = (uazapiSender || uazapiChatId).replace('@c.us', '').replace('@s.whatsapp.net', '');
+              if (uazapiPhone && /^\d{10,}$/.test(uazapiPhone)) {
+                rawPhoneNumber = uazapiPhone;
+                console.log('✅ Using phone number from UAZAPI sender/chatid:', uazapiPhone);
+              }
+            }
+
+            // If UAZAPI didn't provide a number, try legacy participant fields
+            if (!rawPhoneNumber) {
+              const possibleSources = [
+                message?.key?.participant,
+                message?.participant,
+              ];
+
+              for (const source of possibleSources) {
+                if (source && !source.includes('@lid') && (source.includes('@s.whatsapp.net') || source.includes('@c.us'))) {
+                  rawPhoneNumber = source.replace('@s.whatsapp.net', '').replace('@c.us', '');
+                  console.log('✅ Found real number from participant:', source);
+                  break;
+                }
               }
             }
 
@@ -7162,10 +7236,8 @@ if (ignoredNumbers !== undefined) {
                 // Send confirmation message to client IMMEDIATELY
                 try {
                   const globalSettings = await storage.getGlobalSettings();
-                  if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
-                    const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
-                    // Format phone number for Evolution API - needs country code 55
+                  if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
+                    // Format phone number for UAZAPI - needs country code 55
                     let formattedClientPhone = phoneNumber.replace(/\D/g, '');
                     if (!formattedClientPhone.startsWith('55') && formattedClientPhone.length >= 10) {
                       formattedClientPhone = '55' + formattedClientPhone;
@@ -7176,22 +7248,12 @@ if (ignoredNumbers !== undefined) {
                     console.log('📤 [HUMAN-REQUEST] Sending confirmation to client:', formattedClientPhone);
 
                     // Send "typing" presence and wait 2 seconds
-                    await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey, instanceName, formattedClientPhone, 2000);
+                    await uazapiSendTyping(instanceName, formattedClientPhone, 2000);
                     console.log('⏳ [HUMAN-REQUEST] Aguardando 2 segundos (mostrando digitando...)');
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     console.log('✅ [HUMAN-REQUEST] Delay concluído, enviando confirmação agora');
 
-                    const clientResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': globalSettings.evolutionApiGlobalKey
-                      },
-                      body: JSON.stringify({
-                        number: formattedClientPhone,
-                        text: clientConfirmationMessage
-                      })
-                    });
+                    const clientResponse = await uazapiSendText(instanceName, formattedClientPhone, clientConfirmationMessage);
 
                     if (clientResponse.ok) {
                       console.log('✅ [HUMAN-REQUEST] Immediate confirmation sent to client');
@@ -7208,8 +7270,7 @@ if (ignoredNumbers !== undefined) {
                         });
                       }
                     } else {
-                      const errorText = await clientResponse.text();
-                      console.log('❌ [HUMAN-REQUEST] Failed to send immediate confirmation:', clientResponse.status, errorText);
+                      console.log('❌ [HUMAN-REQUEST] Failed to send immediate confirmation:', clientResponse.status);
                     }
 
                     // Send notification to configured contact
@@ -7226,17 +7287,7 @@ if (ignoredNumbers !== undefined) {
                         .replace('{clientPhone}', phoneNumber)
                         .replace('{time}', now.toLocaleString('pt-BR'));
 
-                      const notificationResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          'apikey': globalSettings.evolutionApiGlobalKey
-                        },
-                        body: JSON.stringify({
-                          number: company.humanRequestContact,
-                          text: notificationMessage
-                        })
-                      });
+                      const notificationResponse = await uazapiSendText(instanceName, company.humanRequestContact, notificationMessage);
 
                       if (notificationResponse.ok) {
                         console.log('✅ [HUMAN-REQUEST] Notification sent successfully');
@@ -7329,7 +7380,7 @@ if (ignoredNumbers !== undefined) {
                 timestamp: new Date(),
               });
 
-              // Format phone number for Evolution API
+              // Format phone number for UAZAPI
               let pdfPhoneForApi = phoneNumber.replace(/\D/g, '');
               if (!pdfPhoneForApi.startsWith('55') && pdfPhoneForApi.length >= 10) {
                 pdfPhoneForApi = '55' + pdfPhoneForApi;
@@ -7338,9 +7389,7 @@ if (ignoredNumbers !== undefined) {
               // Send PDFs directly
               try {
                 const globalSettings = await storage.getGlobalSettings();
-                if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
-                  const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
+                if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
                   for (const pdfUrl of coursePdfsToSend) {
                     try {
                       // Extract file path from URL
@@ -7384,24 +7433,8 @@ if (ignoredNumbers !== undefined) {
                         ? `📄 *Informações do Curso*\n\n${company.coursesDescription}`
                         : '📄 Informações do Curso';
 
-                      // Send document via Evolution API
-                      const mediaPayload = {
-                        number: pdfPhoneForApi,
-                        mediatype: 'document',
-                        mimetype: 'application/pdf',
-                        caption: caption,
-                        media: base64Data,
-                        fileName: customFileName
-                      };
-
-                      const mediaResponse = await fetch(`${correctedApiUrl}/message/sendMedia/${instanceName}`, {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          'apikey': globalSettings.evolutionApiGlobalKey
-                        },
-                        body: JSON.stringify(mediaPayload)
-                      });
+                      // Send document via UAZAPI
+                      const mediaResponse = await uazapiSendMedia(instanceName, pdfPhoneForApi, 'document', base64Data, caption);
 
                       if (mediaResponse.ok) {
                         console.log('✅ [COURSE-PDF] PDF sent successfully:', customFileName);
@@ -7416,8 +7449,7 @@ if (ignoredNumbers !== undefined) {
                           timestamp: new Date(),
                         });
                       } else {
-                        const errorText = await mediaResponse.text();
-                        console.error('❌ [COURSE-PDF] Failed to send PDF:', mediaResponse.status, errorText);
+                        console.error('❌ [COURSE-PDF] Failed to send PDF:', mediaResponse.status);
                       }
                     } catch (pdfError) {
                       console.error('❌ [COURSE-PDF] Error sending PDF:', pdfError);
@@ -7438,17 +7470,7 @@ if (ignoredNumbers !== undefined) {
                       .replace('{message}', messageText?.substring(0, 200) || '')
                       .replace('{time}', now.toLocaleString('pt-BR'));
 
-                    await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': globalSettings.evolutionApiGlobalKey
-                      },
-                      body: JSON.stringify({
-                        number: company.courseNotificationContact,
-                        text: notificationMessage
-                      })
-                    });
+                    await uazapiSendText(instanceName, company.courseNotificationContact, notificationMessage);
                     console.log('✅ [COURSE-NOTIFICATION] Notification sent');
                   }
 
@@ -7536,8 +7558,8 @@ if (ignoredNumbers !== undefined) {
                 console.log('📥 No base64 found, attempting to download audio...');
                 const globalSettings = await storage.getGlobalSettings();
 
-                if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
-                  const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+                if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
+                  const correctedApiUrl = ensureUAZAPIApiEndpoint(globalSettings.uazapiUrl);
 
                   // Method 1: Try getBase64FromMediaMessage endpoint
                   try {
@@ -7546,7 +7568,7 @@ if (ignoredNumbers !== undefined) {
                       method: 'POST',
                       headers: {
                         'Content-Type': 'application/json',
-                        'apikey': globalSettings.evolutionApiGlobalKey
+                        'apikey': globalSettings.uazapiAdminToken
                       },
                       body: JSON.stringify({
                         message: message
@@ -7573,7 +7595,7 @@ if (ignoredNumbers !== undefined) {
                         method: 'POST',
                         headers: {
                           'Content-Type': 'application/json',
-                          'apikey': globalSettings.evolutionApiGlobalKey
+                          'apikey': globalSettings.uazapiAdminToken
                         },
                         body: JSON.stringify({
                           key: message.key
@@ -7617,7 +7639,7 @@ if (ignoredNumbers !== undefined) {
                     console.log('❌ All download methods failed');
                   }
                 } else {
-                  console.log('❌ Evolution API not configured');
+                  console.log('❌ UAZAPI not configured');
                 }
               }
 
@@ -7641,33 +7663,18 @@ if (ignoredNumbers !== undefined) {
                   const fallbackResponse = "Desculpe, não consegui entender o áudio que você enviou. Pode escrever sua mensagem por texto, por favor? 📝";
                   
                   try {
-                    // Format phone number for Evolution API - needs country code 55
+                    // Format phone number for UAZAPI - needs country code 55
                     let formattedPhoneForFallback = phoneNumber.replace(/\D/g, '');
                     if (!formattedPhoneForFallback.startsWith('55') && formattedPhoneForFallback.length >= 10) {
                       formattedPhoneForFallback = '55' + formattedPhoneForFallback;
                     }
 
-                    // Send fallback response using Evolution API with corrected URL
-                    const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
                     // Send "typing" presence and wait 2 seconds
-                    await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForFallback, 2000);
+                    await uazapiSendTyping(instanceName, formattedPhoneForFallback, 2000);
                     await new Promise(resolve => setTimeout(resolve, 2000));
-                    const fallbackEvolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'apikey': globalSettings.evolutionApiGlobalKey!
-                      },
-                      body: JSON.stringify({
-                        number: formattedPhoneForFallback,
-                        textMessage: {
-                          text: fallbackResponse
-                        }
-                      })
-                    });
+                    const fallbackUAZAPIResponse = await uazapiSendText(instanceName, formattedPhoneForFallback, fallbackResponse);
                     
-                    if (fallbackEvolutionResponse.ok) {
+                    if (fallbackUAZAPIResponse.ok) {
                       console.log('✅ Fallback response sent for failed audio transcription');
                       return res.status(200).json({ 
                         received: true, 
@@ -7675,7 +7682,7 @@ if (ignoredNumbers !== undefined) {
                         reason: 'Audio transcription failed, fallback response sent' 
                       });
                     } else {
-                      console.error('❌ Failed to send fallback response via Evolution API');
+                      console.error('❌ Failed to send fallback response via UAZAPI');
                       return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
                     }
                   } catch (sendError) {
@@ -7784,11 +7791,11 @@ if (ignoredNumbers !== undefined) {
               return res.status(400).json({ error: 'OpenAI not configured for this company' });
             }
 
-            // Get global settings for Evolution API
+            // Get global settings for UAZAPI
             const globalSettings = await storage.getGlobalSettings();
-            if (!globalSettings.evolutionApiUrl || !globalSettings.evolutionApiGlobalKey) {
-              console.log('❌ Evolution API not configured');
-              return res.status(400).json({ error: 'Evolution API not configured' });
+            if (!globalSettings.uazapiUrl || !globalSettings.uazapiAdminToken) {
+              console.log('❌ UAZAPI not configured');
+              return res.status(400).json({ error: 'UAZAPI not configured' });
             }
 
             try {
@@ -8709,31 +8716,18 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                   timestamp: new Date(),
                 });
 
-                // Formatar telefone para Evolution API
+                // Formatar telefone para UAZAPI
                 let formattedPhoneIntercept = phoneNumber.replace(/\D/g, '');
                 if (!formattedPhoneIntercept.startsWith('55') && formattedPhoneIntercept.length >= 10) {
                   formattedPhoneIntercept = '55' + formattedPhoneIntercept;
                 }
 
-                // Enviar via Evolution API (usando mesmas variáveis do fluxo normal)
-                const correctedApiUrlIntercept = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
                 // Enviar presença "digitando" e aguardar
-                await sendTypingPresence(correctedApiUrlIntercept, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneIntercept, 2000);
+                await uazapiSendTyping(instanceName, formattedPhoneIntercept, 2000);
                 await new Promise(resolve => setTimeout(resolve, 2000));
 
                 try {
-                  const sendResponse = await fetch(`${correctedApiUrlIntercept}/message/sendText/${instanceName}`, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'apikey': globalSettings.evolutionApiGlobalKey!,
-                    },
-                    body: JSON.stringify({
-                      number: formattedPhoneIntercept,
-                      text: interceptedResponse,
-                    }),
-                  });
+                  const sendResponse = await uazapiSendText(instanceName, formattedPhoneIntercept, interceptedResponse);
 
                   if (sendResponse.ok) {
                     console.log(`✅ [INTERCEPTAÇÃO] Resposta enviada para ${phoneNumber}`);
@@ -8880,29 +8874,18 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                   timestamp: new Date(),
                 });
 
-                // Formatar telefone para Evolution API
+                // Formatar telefone para UAZAPI
                 let formattedPhoneReschedule = phoneNumber.replace(/\D/g, '');
                 if (!formattedPhoneReschedule.startsWith('55') && formattedPhoneReschedule.length >= 10) {
                   formattedPhoneReschedule = '55' + formattedPhoneReschedule;
                 }
 
-                // Enviar via Evolution API
-                const correctedApiUrlReschedule = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-                await sendTypingPresence(correctedApiUrlReschedule, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneReschedule, 2000);
+                // Enviar via UAZAPI
+                await uazapiSendTyping(instanceName, formattedPhoneReschedule, 2000);
                 await new Promise(resolve => setTimeout(resolve, 2000));
 
                 try {
-                  const sendResponseReschedule = await fetch(`${correctedApiUrlReschedule}/message/sendText/${instanceName}`, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'apikey': globalSettings.evolutionApiGlobalKey!,
-                    },
-                    body: JSON.stringify({
-                      number: formattedPhoneReschedule,
-                      text: rescheduleInterceptResponse,
-                    }),
-                  });
+                  const sendResponseReschedule = await uazapiSendText(instanceName, formattedPhoneReschedule, rescheduleInterceptResponse);
 
                   if (sendResponseReschedule.ok) {
                     console.log(`✅ [REAGENDAMENTO INTERCEPTADO] Resposta enviada para ${phoneNumber}`);
@@ -9078,28 +9061,16 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                       if (activeInstance) {
                         const globalSettings = await storage.getGlobalSettings();
 
-                        if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
+                        if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
                           let formattedPhone = phoneNumber.replace(/\D/g, '');
                           if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
                             formattedPhone = '55' + formattedPhone;
                           }
 
-                          const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
-                          await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, activeInstance.instanceName, formattedPhone, 2000);
+                          await uazapiSendTyping(activeInstance.instanceName, formattedPhone, 2000);
                           await new Promise(resolve => setTimeout(resolve, 2000));
 
-                          const response = await fetch(`${correctedApiUrl}/message/sendText/${activeInstance.instanceName}`, {
-                            method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
-                              'apikey': globalSettings.evolutionApiGlobalKey
-                            },
-                            body: JSON.stringify({
-                              number: formattedPhone,
-                              text: errorMessage
-                            })
-                          });
+                          const response = await uazapiSendText(activeInstance.instanceName, formattedPhone, errorMessage);
 
                           if (response.ok) {
                             console.log('✅ Mensagem de erro enviada com sucesso (PRÉ-VALIDAÇÃO)');
@@ -9113,7 +9084,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                               timestamp: new Date(),
                             });
                           } else {
-                            console.error('❌ Falha ao enviar mensagem de erro:', await response.text());
+                            console.error('❌ Falha ao enviar mensagem de erro:', response.status);
                           }
                         }
                       }
@@ -9242,40 +9213,23 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                         console.log(`📤 [CONFLITO] Usando instância já obtida: ${whatsappInstance.instanceName}`);
 
                         const globalSettings = await storage.getGlobalSettings();
-                        console.log(`📤 [CONFLITO] Evolution API URL: ${globalSettings?.evolutionApiUrl || 'NÃO CONFIGURADA'}`);
+                        console.log(`📤 [CONFLITO] UAZAPI URL: ${globalSettings?.uazapiUrl || 'NÃO CONFIGURADA'}`);
 
-                        if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
+                        if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
                           let formattedPhone = phoneNumber.replace(/\D/g, '');
                           if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
                             formattedPhone = '55' + formattedPhone;
                           }
                           console.log(`📤 [CONFLITO] Telefone formatado: ${formattedPhone}`);
 
-                          const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-                          console.log(`📤 [CONFLITO] URL corrigida: ${correctedApiUrl}`);
-
                           console.log('📤 [CONFLITO] Enviando typing presence...');
-                          await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, whatsappInstance.instanceName, formattedPhone, 2000);
+                          await uazapiSendTyping(whatsappInstance.instanceName, formattedPhone, 2000);
                           await new Promise(resolve => setTimeout(resolve, 2000));
 
-                          console.log('📤 [CONFLITO] Enviando mensagem via Evolution API...');
-                          const sendUrl = `${correctedApiUrl}/message/sendText/${whatsappInstance.instanceName}`;
-                          console.log(`📤 [CONFLITO] URL de envio: ${sendUrl}`);
+                          console.log('📤 [CONFLITO] Enviando mensagem via UAZAPI...');
+                          const conflictResponse = await uazapiSendText(whatsappInstance.instanceName, formattedPhone, conflictMessage);
 
-                          const conflictResponse = await fetch(sendUrl, {
-                            method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
-                              'apikey': globalSettings.evolutionApiGlobalKey
-                            },
-                            body: JSON.stringify({
-                              number: formattedPhone,
-                              text: conflictMessage
-                            })
-                          });
-
-                          const responseText = await conflictResponse.text();
-                          console.log(`📤 [CONFLITO] Resposta da API (${conflictResponse.status}): ${responseText.substring(0, 200)}`);
+                          console.log(`📤 [CONFLITO] Resposta da API (${conflictResponse.status})`);
 
                           if (conflictResponse.ok) {
                             console.log('✅ Mensagem de conflito enviada com sucesso (PRÉ-VALIDAÇÃO)');
@@ -9290,10 +9244,9 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                             });
                           } else {
                             console.error(`❌ [CONFLITO] Falha ao enviar mensagem: Status ${conflictResponse.status}`);
-                            console.error(`❌ [CONFLITO] Resposta: ${responseText}`);
                           }
                         } else {
-                          console.error('❌ [CONFLITO] Evolution API não configurada');
+                          console.error('❌ [CONFLITO] UAZAPI não configurada');
                         }
                       } catch (error) {
                         console.error('❌ Erro ao enviar mensagem de conflito:', error);
@@ -10106,9 +10059,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
               // FIM DA VALIDAÇÃO DE CONFLITO
               // ========================================
 
-              // Send response back via Evolution API using global settings
+              // Send response back via UAZAPI using global settings
               console.log('==================================================');
-              console.log('🚀 ENVIANDO RESPOSTA VIA EVOLUTION API');
+              console.log('🚀 ENVIANDO RESPOSTA VIA UAZAPI');
               console.log('==================================================');
               console.log('📝 Resposta Final (primeiros 500 caracteres):', aiResponse.substring(0, 500));
               console.log('🔍 Tipo de resposta:');
@@ -10205,22 +10158,11 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           phoneForPayment = '55' + phoneForPayment;
                         }
 
-                        const apiUrlForPayment = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
                         const paymentQuestionMsg = `💳 *Forma de Pagamento*\n\nPara confirmar seu agendamento, como você prefere pagar?\n\n1️⃣ *PIX* - Pagamento instantâneo\n2️⃣ *Cartão de Crédito* - Parcele em até 12x\n\n💰 Valor: R$ ${Number(serviceAsaas.price).toFixed(2)}\n\n_Digite 1 para PIX ou 2 para Cartão_`;
 
-                        await sendTypingPresence(apiUrlForPayment, globalSettings.evolutionApiGlobalKey!, instanceName, phoneForPayment, 1500);
+                        await uazapiSendTyping(instanceName, phoneForPayment, 1500);
 
-                        await fetch(`${apiUrlForPayment}/message/sendText/${instanceName}`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': globalSettings.evolutionApiGlobalKey!
-                          },
-                          body: JSON.stringify({
-                            number: phoneForPayment,
-                            text: paymentQuestionMsg
-                          })
-                        });
+                        await uazapiSendText(instanceName, phoneForPayment, paymentQuestionMsg);
 
                         await storage.createMessage({
                           conversationId: conversation.id,
@@ -10263,34 +10205,22 @@ Por favor, escolha um dos horários disponíveis acima.`;
               }
 
               if (!shouldSkipAIResponse) {
-                // Format phone number for Evolution API - needs country code 55
+                // Format phone number for UAZAPI - needs country code 55
                 let formattedPhoneForApi = phoneNumber.replace(/\D/g, '');
                 if (!formattedPhoneForApi.startsWith('55') && formattedPhoneForApi.length >= 10) {
                   formattedPhoneForApi = '55' + formattedPhoneForApi;
                 }
-                console.log('📞 Formatted phone for Evolution API:', formattedPhoneForApi);
-
-                const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+                console.log('📞 Formatted phone for UAZAPI:', formattedPhoneForApi);
 
                 // Send "typing" presence and wait 2 seconds
-                await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForApi, 2000);
+                await uazapiSendTyping(instanceName, formattedPhoneForApi, 2000);
                 console.log('⏳ Aguardando 2 segundos (mostrando digitando...)');
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 console.log('✅ Delay concluído, enviando mensagem agora');
 
-                const evolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'apikey': globalSettings.evolutionApiGlobalKey!
-                  },
-                  body: JSON.stringify({
-                    number: formattedPhoneForApi,
-                    text: aiResponse
-                  })
-                });
+                const uazapiResponse = await uazapiSendText(instanceName, formattedPhoneForApi, aiResponse);
 
-              if (evolutionResponse.ok) {
+              if (uazapiResponse.ok) {
                 console.log(`✅ AI response sent to ${phoneNumber}: ${aiResponse}`);
                 
                 // Save AI response to database
@@ -10334,13 +10264,11 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                       // Buscar configurações atualizadas (podem ter mudado em 10 minutos)
                       const currentGlobalSettings = await storage.getGlobalSettings();
-                      if (!currentGlobalSettings?.evolutionApiUrl || !currentGlobalSettings?.evolutionApiGlobalKey) {
-                        console.error('❌ Evolution API não configurada para lembrete');
+                      if (!currentGlobalSettings?.uazapiUrl || !currentGlobalSettings?.uazapiAdminToken) {
+                        console.error('❌ UAZAPI não configurada para lembrete');
                         pendingConfirmationTimers.delete(confirmTimerKeySched);
                         return;
                       }
-
-                      const reminderApiUrl = ensureEvolutionApiEndpoint(currentGlobalSettings.evolutionApiUrl);
 
                       const reminderMessage = 'Oi! 😊 Notei que seu agendamento ainda não foi confirmado. Basta responder *SIM* para confirmar! Se precisar alterar algo, é só me dizer.';
 
@@ -10351,30 +10279,11 @@ Por favor, escolha um dos horários disponíveis acima.`;
                       }
 
                       // Enviar presença "digitando"
-                      await sendTypingPresence(
-                        reminderApiUrl,
-                        currentGlobalSettings.evolutionApiGlobalKey!,
-                        reminderInstanceName,
-                        reminderPhone,
-                        2000
-                      );
+                      await uazapiSendTyping(reminderInstanceName, reminderPhone, 2000);
                       await new Promise(resolve => setTimeout(resolve, 2000));
 
                       // Enviar lembrete via WhatsApp
-                      const reminderResponse = await fetch(
-                        `${reminderApiUrl}/message/sendText/${reminderInstanceName}`,
-                        {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': currentGlobalSettings.evolutionApiGlobalKey!
-                          },
-                          body: JSON.stringify({
-                            number: reminderPhone,
-                            text: reminderMessage
-                          })
-                        }
-                      );
+                      const reminderResponse = await uazapiSendText(reminderInstanceName, reminderPhone, reminderMessage);
 
                       if (reminderResponse.ok) {
                         console.log(`✅ Lembrete de confirmação enviado para ${reminderPhoneNumber}`);
@@ -10446,8 +10355,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                         // Buscar configurações atualizadas
                         const currentGlobalSettings = await storage.getGlobalSettings();
-                        if (!currentGlobalSettings?.evolutionApiUrl || !currentGlobalSettings?.evolutionApiGlobalKey) {
-                          console.error('❌ Evolution API não configurada para follow-up');
+                        if (!currentGlobalSettings?.uazapiUrl || !currentGlobalSettings?.uazapiAdminToken) {
+                          console.error('❌ UAZAPI não configurada para follow-up');
                           conversationFollowUpTimers.delete(followUpKeySched);
                           return;
                         }
@@ -10497,8 +10406,6 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                         const followUpMessage = followUpCompletion.choices[0]?.message?.content || 'Oi! 😊 Estou por aqui caso precise de algo. Posso te ajudar em alguma coisa?';
 
-                        const followUpApiUrl = ensureEvolutionApiEndpoint(currentGlobalSettings.evolutionApiUrl);
-
                         // Formatar número para API
                         let followUpPhone = followUpPhoneNumber.replace(/\D/g, '');
                         if (!followUpPhone.startsWith('55') && followUpPhone.length >= 10) {
@@ -10506,30 +10413,11 @@ Por favor, escolha um dos horários disponíveis acima.`;
                         }
 
                         // Enviar presença "digitando"
-                        await sendTypingPresence(
-                          followUpApiUrl,
-                          currentGlobalSettings.evolutionApiGlobalKey!,
-                          followUpInstanceName,
-                          followUpPhone,
-                          2000
-                        );
+                        await uazapiSendTyping(followUpInstanceName, followUpPhone, 2000);
                         await new Promise(resolve => setTimeout(resolve, 2000));
 
                         // Enviar follow-up via WhatsApp
-                        const followUpResponse = await fetch(
-                          `${followUpApiUrl}/message/sendText/${followUpInstanceName}`,
-                          {
-                            method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
-                              'apikey': currentGlobalSettings.evolutionApiGlobalKey!
-                            },
-                            body: JSON.stringify({
-                              number: followUpPhone,
-                              text: followUpMessage
-                            })
-                          }
-                        );
+                        const followUpResponse = await uazapiSendText(followUpInstanceName, followUpPhone, followUpMessage);
 
                         if (followUpResponse.ok) {
                           console.log(`✅ Follow-up de conversa enviado para ${followUpPhoneNumber}: ${followUpMessage}`);
@@ -10637,83 +10525,27 @@ Por favor, escolha um dos horários disponíveis acima.`;
                       // Extrair nome do arquivo
                       const fileName = path.basename(filePath);
 
-                      // Preparar payload para Evolution API (formato direto com base64 PURO)
-                      const mediaPayload: any = {
-                        number: formattedPhoneForApi,
-                        mediatype: mediaType,
-                        media: base64Data,  // Base64 PURO sem data: prefix
-                        caption: mediaType === 'image' ? '' : 'Informações do curso'
-                      };
+                      const mediaCaption = mediaType === 'image' ? '' : 'Informações do curso';
 
-                      // Para documentos (PDFs), adicionar fileName
+                      // Para documentos (PDFs), log do fileName
                       if (mediaType === 'document') {
-                        mediaPayload.fileName = fileName;
                         console.log('📄 Nome do arquivo PDF:', fileName);
                       }
 
                       // Log do payload (sem mostrar base64 completo)
-                      console.log('📤 Payload para Evolution API:', {
-                        ...mediaPayload,
+                      console.log('📤 Payload para UAZAPI:', {
+                        number: formattedPhoneForApi,
+                        mediatype: mediaType,
+                        caption: mediaCaption,
                         media: `${base64Data.substring(0, 50)}... (${base64Data.length} chars total)`
                       });
 
-                      // Enviar arquivo usando Evolution API v2 (formato direto sem wrappers)
-                      // Base64 PURO (sem data: prefix) no campo media
-                      // Formato descoberto após vários testes com a API
-                      const mediaResponse = await fetch(`${correctedApiUrl}/message/sendMedia/${instanceName}`, {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          'apikey': globalSettings.evolutionApiGlobalKey!
-                        },
-                        body: JSON.stringify(mediaPayload)
-                      });
+                      // Enviar arquivo usando UAZAPI helper
+                      const mediaResponse = await uazapiSendMedia(instanceName, formattedPhoneForApi, mediaType, base64Data, mediaCaption);
 
-                      // Log detalhado da resposta (otimizado para não mostrar base64 completo)
-                      const responseText = await mediaResponse.text();
-
-                      // Truncar body se for muito grande (evitar poluir logs com base64)
-                      let bodyLog = responseText;
-                      if (responseText.length > 1000) {
-                        try {
-                          const parsed = JSON.parse(responseText);
-
-                          // Truncar base64 no nível raiz (formato mais comum)
-                          if (parsed.base64) {
-                            const base64Length = parsed.base64.length;
-                            parsed.base64 = `[BASE64 TRUNCADO - ${base64Length} caracteres]`;
-                          }
-
-                          // Truncar base64 dentro de documentMessage
-                          if (parsed.message && parsed.message.documentMessage && parsed.message.documentMessage.base64) {
-                            const base64Length = parsed.message.documentMessage.base64.length;
-                            parsed.message.documentMessage.base64 = `[BASE64 TRUNCADO - ${base64Length} caracteres]`;
-                          }
-
-                          // Truncar base64 dentro de imageMessage
-                          if (parsed.message && parsed.message.imageMessage && parsed.message.imageMessage.base64) {
-                            const base64Length = parsed.message.imageMessage.base64.length;
-                            parsed.message.imageMessage.base64 = `[BASE64 TRUNCADO - ${base64Length} caracteres]`;
-                          }
-
-                          bodyLog = JSON.stringify(parsed);
-
-                          // Verificação final: se ainda estiver muito grande, truncar
-                          if (bodyLog.length > 2000) {
-                            bodyLog = bodyLog.substring(0, 2000) + `... [TRUNCADO - total: ${bodyLog.length} chars]`;
-                          }
-                        } catch {
-                          // Se não for JSON, truncar diretamente
-                          bodyLog = responseText.substring(0, 500) + `... [TRUNCADO - total: ${responseText.length} chars]`;
-                        }
-                      }
-
-                      console.log('📥 Resposta da Evolution API:', {
+                      console.log('📥 Resposta da UAZAPI:', {
                         status: mediaResponse.status,
-                        statusText: mediaResponse.statusText,
                         ok: mediaResponse.ok,
-                        headers: Object.fromEntries(mediaResponse.headers.entries()),
-                        body: bodyLog
                       });
 
                       if (mediaResponse.ok) {
@@ -10775,9 +10607,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                     try {
                       const globalSettings = await storage.getGlobalSettings();
-                      if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
-                        const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
+                      if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
                         // Prepare notification message
                         let notificationMessage = humanData.humanRequestMessage ||
                           'Olá! Um cliente está solicitando atendimento humano.\n\n👤 Cliente: {clientName}\n📞 Telefone: {clientPhone}\n⏰ Horário: {time}\n\nPor favor, entre em contato o mais rápido possível.';
@@ -10790,17 +10620,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           .replace('{time}', now.toLocaleString('pt-BR'));
 
                         // Send message to configured contact
-                        const notificationResponse = await fetch(`${correctedApiUrl}/message/sendText/${humanData.instanceName}`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': globalSettings.evolutionApiGlobalKey
-                          },
-                          body: JSON.stringify({
-                            number: humanData.humanRequestContact,
-                            text: notificationMessage
-                          })
-                        });
+                        const notificationResponse = await uazapiSendText(humanData.instanceName, humanData.humanRequestContact, notificationMessage);
 
                         if (notificationResponse.ok) {
                           console.log('✅ [HUMAN-REQUEST] Notification sent successfully');
@@ -10829,9 +10649,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                     try {
                       const globalSettings = await storage.getGlobalSettings();
-                      if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
-                        const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
+                      if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
                         // Adjust default message based on whether AI will pause
                         const defaultMessage = courseData.shouldPauseAI
                           ? '🎓 *Interesse em Curso Detectado!*\n\n👤 Cliente: {clientName}\n📞 Telefone: {clientPhone}\n💬 Mensagem: {message}\n⏰ Horário: {time}\n\n⏸️ O agente IA foi pausado por ' + courseData.timeoutMinutes + ' minutos.'
@@ -10846,17 +10664,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           .replace('{message}', courseData.messageText?.substring(0, 200) || '')
                           .replace('{time}', now.toLocaleString('pt-BR'));
 
-                        await fetch(`${correctedApiUrl}/message/sendText/${courseData.instanceName}`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': globalSettings.evolutionApiGlobalKey
-                          },
-                          body: JSON.stringify({
-                            number: courseData.courseNotificationContact,
-                            text: notificationMessage
-                          })
-                        });
+                        await uazapiSendText(courseData.instanceName, courseData.courseNotificationContact, notificationMessage);
                         console.log('✅ [COURSE-NOTIFICATION] Notification sent');
                       }
                     } catch (error) {
@@ -11316,61 +11124,26 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             if (!formattedPhoneForCpf.startsWith('55') && formattedPhoneForCpf.length >= 10) {
                               formattedPhoneForCpf = '55' + formattedPhoneForCpf;
                             }
-                            const correctedApiUrlForCpf = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
                             if (pixPaymentWithCpf && pixPaymentWithCpf.pixQrCode) {
                               console.log('✅ PIX com CPF criado com sucesso!');
 
-                              await sendTypingPresence(correctedApiUrlForCpf, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForCpf, 2000);
+                              await uazapiSendTyping(instanceName, formattedPhoneForCpf, 2000);
 
                               // Enviar QR Code
-                              const pixMediaPayloadCpf = {
-                                number: formattedPhoneForCpf,
-                                mediatype: 'image',
-                                media: pixPaymentWithCpf.pixQrCode.encodedImage,
-                                caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${pendingPixData.servicePrice.toFixed(2)}\n⏰ Válido por 10 minutos`
-                              };
-
-                              await fetch(`${correctedApiUrlForCpf}/message/sendMedia/${instanceName}`, {
-                                method: 'POST',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                  'apikey': globalSettings.evolutionApiGlobalKey!
-                                },
-                                body: JSON.stringify(pixMediaPayloadCpf)
-                              });
+                              const pixCaptionCpf = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${pendingPixData.servicePrice.toFixed(2)}\n⏰ Válido por 10 minutos`;
+                              await uazapiSendMedia(instanceName, formattedPhoneForCpf, 'image', pixPaymentWithCpf.pixQrCode.encodedImage, pixCaptionCpf);
 
                               // Enviar código PIX sozinho para facilitar cópia
                               await new Promise(resolve => setTimeout(resolve, 1000));
                               const pixCodeOnlyCpf = pixPaymentWithCpf.pixQrCode.payload;
 
-                              await fetch(`${correctedApiUrlForCpf}/message/sendText/${instanceName}`, {
-                                method: 'POST',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                  'apikey': globalSettings.evolutionApiGlobalKey!
-                                },
-                                body: JSON.stringify({
-                                  number: formattedPhoneForCpf,
-                                  text: pixCodeOnlyCpf
-                                })
-                              });
+                              await uazapiSendText(instanceName, formattedPhoneForCpf, pixCodeOnlyCpf);
 
                               // Enviar orientações em mensagem separada
                               await new Promise(resolve => setTimeout(resolve, 500));
                               const pixInstructionsCpf = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
-                              await fetch(`${correctedApiUrlForCpf}/message/sendText/${instanceName}`, {
-                                method: 'POST',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                  'apikey': globalSettings.evolutionApiGlobalKey!
-                                },
-                                body: JSON.stringify({
-                                  number: formattedPhoneForCpf,
-                                  text: pixInstructionsCpf
-                                })
-                              });
+                              await uazapiSendText(instanceName, formattedPhoneForCpf, pixInstructionsCpf);
 
                               // Salvar mensagens no banco
                               await storage.createMessage({
@@ -11412,17 +11185,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             } else {
                               console.log('❌ Falha ao criar cobrança PIX com CPF');
                               const errorMsg = '❌ Não foi possível gerar o QR Code PIX. Por favor, tente novamente ou escolha outra forma de pagamento.';
-                              await fetch(`${correctedApiUrlForCpf}/message/sendText/${instanceName}`, {
-                                method: 'POST',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                  'apikey': globalSettings.evolutionApiGlobalKey!
-                                },
-                                body: JSON.stringify({
-                                  number: formattedPhoneForCpf,
-                                  text: errorMsg
-                                })
-                              });
+                              await uazapiSendText(instanceName, formattedPhoneForCpf, errorMsg);
                             }
 
                             return res.status(200).json({ received: true, processed: true, cpfProcessed: true });
@@ -11534,8 +11297,6 @@ Por favor, escolha um dos horários disponíveis acima.`;
                               formattedPhoneForPaymentMsg = '55' + formattedPhoneForPaymentMsg;
                             }
 
-                            const correctedApiUrlForPayment = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
                             if (paymentMethod === 'PIX') {
                               // Criar cobrança PIX via Mercado Pago (sem CPF!)
                               console.log('💳 Gerando cobrança PIX via Mercado Pago...');
@@ -11552,54 +11313,23 @@ Por favor, escolha um dos horários disponíveis acima.`;
                               if (pixPayment && pixPayment.pixQrCode) {
                                 console.log('✅ PIX criado com sucesso!');
 
-                                await sendTypingPresence(correctedApiUrlForPayment, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentMsg, 2000);
+                                await uazapiSendTyping(instanceName, formattedPhoneForPaymentMsg, 2000);
 
                                 // Enviar QR Code como imagem
-                                await fetch(`${correctedApiUrlForPayment}/message/sendMedia/${instanceName}`, {
-                                  method: 'POST',
-                                  headers: {
-                                    'Content-Type': 'application/json',
-                                    'apikey': globalSettings.evolutionApiGlobalKey!
-                                  },
-                                  body: JSON.stringify({
-                                    number: formattedPhoneForPaymentMsg,
-                                    mediatype: 'image',
-                                    media: pixPayment.pixQrCode.encodedImage,
-                                    caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n⏰ Válido por 10 minutos`
-                                  })
-                                });
+                                const pixCaption = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n⏰ Válido por 10 minutos`;
+                                await uazapiSendMedia(instanceName, formattedPhoneForPaymentMsg, 'image', pixPayment.pixQrCode.encodedImage, pixCaption);
 
                                 // Enviar código PIX sozinho para facilitar cópia
                                 await new Promise(resolve => setTimeout(resolve, 1000));
                                 const pixCodeOnly = pixPayment.pixQrCode.payload;
 
-                                await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
-                                  method: 'POST',
-                                  headers: {
-                                    'Content-Type': 'application/json',
-                                    'apikey': globalSettings.evolutionApiGlobalKey!
-                                  },
-                                  body: JSON.stringify({
-                                    number: formattedPhoneForPaymentMsg,
-                                    text: pixCodeOnly
-                                  })
-                                });
+                                await uazapiSendText(instanceName, formattedPhoneForPaymentMsg, pixCodeOnly);
 
                                 // Enviar orientações em mensagem separada
                                 await new Promise(resolve => setTimeout(resolve, 500));
                                 const pixInstructions = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
-                                await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
-                                  method: 'POST',
-                                  headers: {
-                                    'Content-Type': 'application/json',
-                                    'apikey': globalSettings.evolutionApiGlobalKey!
-                                  },
-                                  body: JSON.stringify({
-                                    number: formattedPhoneForPaymentMsg,
-                                    text: pixInstructions
-                                  })
-                                });
+                                await uazapiSendText(instanceName, formattedPhoneForPaymentMsg, pixInstructions);
 
                                 await storage.createMessage({
                                   conversationId: conversation.id,
@@ -11654,21 +11384,11 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 // Agendamento será criado pelo webhook após confirmação do pagamento
 
                                 // Enviar link de pagamento
-                                await sendTypingPresence(correctedApiUrlForPayment, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentMsg, 2000);
+                                await uazapiSendTyping(instanceName, formattedPhoneForPaymentMsg, 2000);
 
                                 const cardMessage = `💳 *Pagamento com Cartão de Crédito*\n\nClique no link abaixo para pagar de forma segura:\n\n🔗 ${cardPayment.invoiceUrl}\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n✅ Parcele em até 12x\n🔒 Ambiente 100% seguro\n\n_Após o pagamento, seu agendamento será confirmado automaticamente!_`;
 
-                                await fetch(`${correctedApiUrlForPayment}/message/sendText/${instanceName}`, {
-                                  method: 'POST',
-                                  headers: {
-                                    'Content-Type': 'application/json',
-                                    'apikey': globalSettings.evolutionApiGlobalKey!
-                                  },
-                                  body: JSON.stringify({
-                                    number: formattedPhoneForPaymentMsg,
-                                    text: cardMessage
-                                  })
-                                });
+                                await uazapiSendText(instanceName, formattedPhoneForPaymentMsg, cardMessage);
 
                                 // Salvar mensagem no banco
                                 await storage.createMessage({
@@ -11795,7 +11515,6 @@ Por favor, escolha um dos horários disponíveis acima.`;
                         console.log('✅ NÃO criando agendamento - será criado após pagamento');
 
                         // Enviar mensagem perguntando forma de pagamento
-                        const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
                         let formattedPhone = phoneNumber.replace(/\D/g, '');
                         if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
                           formattedPhone = '55' + formattedPhone;
@@ -11803,19 +11522,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                         const paymentQuestion = `💳 *Forma de Pagamento*\n\nPara confirmar seu agendamento, como você prefere pagar?\n\n1️⃣ *PIX* - Pagamento instantâneo\n2️⃣ *Cartão de Crédito* - Parcele em até 12x\n\n💰 Valor: R$ ${Number(serviceWithPrice.price).toFixed(2)}\n\n_Digite 1 para PIX ou 2 para Cartão_`;
 
-                        await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, whatsappInstance.instanceName, formattedPhone, 1500);
+                        await uazapiSendTyping(whatsappInstance.instanceName, formattedPhone, 1500);
 
-                        await fetch(`${correctedApiUrl}/message/sendText/${whatsappInstance.instanceName}`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': globalSettings.evolutionApiGlobalKey!
-                          },
-                          body: JSON.stringify({
-                            number: formattedPhone,
-                            text: paymentQuestion
-                          })
-                        });
+                        await uazapiSendText(whatsappInstance.instanceName, formattedPhone, paymentQuestion);
 
                         await storage.createMessage({
                           conversationId: conversation.id,
@@ -11866,23 +11575,12 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           additionalInfo: 'Conflito detectado'
                         });
 
-                        const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
                         let formattedPhoneForError = phoneNumber.replace(/\D/g, '');
                         if (!formattedPhoneForError.startsWith('55') && formattedPhoneForError.length >= 10) {
                           formattedPhoneForError = '55' + formattedPhoneForError;
                         }
 
-                        await fetch(`${correctedApiUrl}/message/sendText/${activeInstance.instanceName}`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'apikey': globalSettings.evolutionApiGlobalKey!
-                          },
-                          body: JSON.stringify({
-                            number: formattedPhoneForError,
-                            text: errorMessage
-                          })
-                        });
+                        await uazapiSendText(activeInstance.instanceName, formattedPhoneForError, errorMessage);
 
                         await storage.createMessage({
                           conversationId: conversation.id,
@@ -11906,11 +11604,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 // Só deve criar agendamento quando o usuário explicitamente confirmar com SIM/OK
                 
               } else {
-                const errorText = await evolutionResponse.text();
-                console.error('❌ Failed to send message via Evolution API:', {
-                  status: evolutionResponse.status,
-                  error: evolutionResponse.statusText,
-                  response: JSON.parse(errorText)
+                console.error('❌ Failed to send message via UAZAPI:', {
+                  status: uazapiResponse.status,
+                  ok: uazapiResponse.ok,
                 });
                 console.log('ℹ️  Note: This is normal for test numbers. Real WhatsApp numbers will work.');
                 
@@ -12078,8 +11774,6 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           formattedPhoneForPaymentProcess = '55' + formattedPhoneForPaymentProcess;
                         }
 
-                        const correctedApiUrlForPaymentProcess = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
                         if (paymentMethod === 'PIX') {
                           // Criar cobrança PIX via Mercado Pago (sem CPF!)
                           console.log('💳 Gerando cobrança PIX via Mercado Pago...');
@@ -12096,53 +11790,22 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           if (pixPaymentResult && pixPaymentResult.pixQrCode) {
                             console.log('✅ PIX criado com sucesso!');
 
-                            await sendTypingPresence(correctedApiUrlForPaymentProcess, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentProcess, 2000);
+                            await uazapiSendTyping(instanceName, formattedPhoneForPaymentProcess, 2000);
 
-                            await fetch(`${correctedApiUrlForPaymentProcess}/message/sendMedia/${instanceName}`, {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': globalSettings.evolutionApiGlobalKey!
-                              },
-                              body: JSON.stringify({
-                                number: formattedPhoneForPaymentProcess,
-                                mediatype: 'image',
-                                media: pixPaymentResult.pixQrCode.encodedImage,
-                                caption: `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n⏰ Válido por 10 minutos`
-                              })
-                            });
+                            const pixCaptionProcess = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n⏰ Válido por 10 minutos`;
+                            await uazapiSendMedia(instanceName, formattedPhoneForPaymentProcess, 'image', pixPaymentResult.pixQrCode.encodedImage, pixCaptionProcess);
 
                             // Enviar código PIX sozinho para facilitar cópia
                             await new Promise(resolve => setTimeout(resolve, 1000));
                             const pixCodeOnly2 = pixPaymentResult.pixQrCode.payload;
 
-                            await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': globalSettings.evolutionApiGlobalKey!
-                              },
-                              body: JSON.stringify({
-                                number: formattedPhoneForPaymentProcess,
-                                text: pixCodeOnly2
-                              })
-                            });
+                            await uazapiSendText(instanceName, formattedPhoneForPaymentProcess, pixCodeOnly2);
 
                             // Enviar orientações em mensagem separada
                             await new Promise(resolve => setTimeout(resolve, 500));
                             const pixInstructions2 = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
-                            await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': globalSettings.evolutionApiGlobalKey!
-                              },
-                              body: JSON.stringify({
-                                number: formattedPhoneForPaymentProcess,
-                                text: pixInstructions2
-                              })
-                            });
+                            await uazapiSendText(instanceName, formattedPhoneForPaymentProcess, pixInstructions2);
 
                             await storage.createMessage({
                               conversationId: conversation.id,
@@ -12196,21 +11859,11 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             console.log('📋 Payment ID:', cardPaymentResult.id);
 
                             // Send payment link
-                            await sendTypingPresence(correctedApiUrlForPaymentProcess, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForPaymentProcess, 2000);
+                            await uazapiSendTyping(instanceName, formattedPhoneForPaymentProcess, 2000);
 
                             const cardMessageResult = `💳 *Pagamento com Cartão de Crédito*\n\nClique no link abaixo para pagar de forma segura:\n\n🔗 ${cardPaymentResult.invoiceUrl}\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n✅ Parcele em até 12x\n🔒 Ambiente 100% seguro\n\n_Após o pagamento, seu agendamento será confirmado automaticamente!_`;
 
-                            await fetch(`${correctedApiUrlForPaymentProcess}/message/sendText/${instanceName}`, {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                                'apikey': globalSettings.evolutionApiGlobalKey!
-                              },
-                              body: JSON.stringify({
-                                number: formattedPhoneForPaymentProcess,
-                                text: cardMessageResult
-                              })
-                            });
+                            await uazapiSendText(instanceName, formattedPhoneForPaymentProcess, cardMessageResult);
 
                             // Save message to database
                             await storage.createMessage({
@@ -12285,30 +11938,18 @@ Obrigado pela preferência! 🙏`;
               
               // Send fallback response
               try {
-                // Format phone number for Evolution API - needs country code 55
+                // Format phone number for UAZAPI - needs country code 55
                 let formattedPhoneForError = phoneNumber.replace(/\D/g, '');
                 if (!formattedPhoneForError.startsWith('55') && formattedPhoneForError.length >= 10) {
                   formattedPhoneForError = '55' + formattedPhoneForError;
                 }
 
-                const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
                 // Send "typing" presence and wait 2 seconds
-                await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, instanceName, formattedPhoneForError, 2000);
+                await uazapiSendTyping(instanceName, formattedPhoneForError, 2000);
                 await new Promise(resolve => setTimeout(resolve, 2000));
-                const evolutionResponse = await fetch(`${correctedApiUrl}/message/sendText/${instanceName}`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'apikey': globalSettings.evolutionApiGlobalKey
-                  },
-                  body: JSON.stringify({
-                    number: formattedPhoneForError,
-                    text: fallbackMessage
-                  })
-                });
+                const uazapiResponse = await uazapiSendText(instanceName, formattedPhoneForError, fallbackMessage);
 
-                if (evolutionResponse.ok) {
+                if (uazapiResponse.ok) {
                   console.log('✅ Fallback message sent successfully');
                   
                   // Save the fallback message to conversation
@@ -14537,12 +14178,25 @@ async function transcribeAudio(audioBase64: string, openaiApiKey: string): Promi
 
 
 // Helper function to generate public webhook URLs
-function generateWebhookUrl(req: any, instanceName: string): string {
+// Prioriza system_url das configurações globais para garantir URL pública acessível
+async function generateWebhookUrl(req: any, instanceName: string): Promise<string> {
+  // Tentar usar system_url das configurações globais (URL pública)
+  try {
+    const settings = await storage.getGlobalSettings();
+    if (settings?.systemUrl) {
+      const baseUrl = settings.systemUrl.replace(/\/+$/, '');
+      return `${baseUrl}/api/webhook/whatsapp/${encodeURIComponent(instanceName)}`;
+    }
+  } catch (e) {
+    console.warn('⚠️ Could not get system_url from global settings');
+  }
+
+  // Fallback: usar host do request
   const host = req.get('host');
   if (host?.includes('replit.dev') || host?.includes('replit.app')) {
-    return `https://${host}/api/webhook/whatsapp/${instanceName}`;
+    return `https://${host}/api/webhook/whatsapp/${encodeURIComponent(instanceName)}`;
   }
-  return `${req.protocol}://${host}/api/webhook/whatsapp/${instanceName}`;
+  return `${req.protocol}://${host}/api/webhook/whatsapp/${encodeURIComponent(instanceName)}`;
 }
 
 async function generateAvailabilityInfo(professionals: any[], existingAppointments: any[]): Promise<string> {
@@ -16060,39 +15714,22 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
         const activeInstance = instances.find(i => i.status === 'connected');
 
         if (activeInstance) {
-          // Get global settings for Evolution API
+          // Get global settings for UAZAPI
           const globalSettings = await storage.getGlobalSettings();
 
-          if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
-            // Format phone number for Evolution API
+          if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
             let formattedPhone = phoneNumber.replace(/\D/g, '');
             if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
               formattedPhone = '55' + formattedPhone;
             }
 
-            // Send message via Evolution API
-            const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-
-            // Send "typing" presence and wait 2 seconds
-            await sendTypingPresence(correctedApiUrl, globalSettings.evolutionApiGlobalKey!, activeInstance.instanceName, formattedPhone, 2000);
+            await uazapiSendTyping(activeInstance.instanceName, formattedPhone, 2000);
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            const response = await fetch(`${correctedApiUrl}/message/sendText/${activeInstance.instanceName}`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'apikey': globalSettings.evolutionApiGlobalKey
-              },
-              body: JSON.stringify({
-                number: formattedPhone,
-                text: errorMessage
-              })
-            });
+            const response = await uazapiSendText(activeInstance.instanceName, formattedPhone, errorMessage);
 
             if (response.ok) {
               console.log('✅ Mensagem de erro enviada com sucesso');
-
-              // Save error message to conversation
               await storage.createMessage({
                 conversationId: conversationId,
                 content: errorMessage,
@@ -16102,10 +15739,10 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                 timestamp: new Date(),
               });
             } else {
-              console.error('❌ Falha ao enviar mensagem de erro:', await response.text());
+              console.error('❌ Falha ao enviar mensagem de erro');
             }
           } else {
-            console.error('❌ Configurações globais da Evolution API não encontradas');
+            console.error('❌ Configurações globais da UAZAPI não encontradas');
           }
         } else {
           console.error('❌ Nenhuma instância do WhatsApp conectada encontrada para esta empresa');
@@ -16218,10 +15855,10 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
       }
     }
 
-    // Fallback final: usar contactName (pushName) da Evolution API
+    // Fallback final: usar contactName (pushName) da UAZAPI
     if (!extractedName && contactName) {
       extractedName = contactName;
-      console.log(`📝 Usando contactName (pushName) da Evolution: "${extractedName}"`);
+      console.log(`📝 Usando contactName (pushName) da UAZAPI: "${extractedName}"`);
     }
 
     // Format date for conflict check without timezone conversion
@@ -17252,71 +16889,41 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     }
   });
 
-  // Evolution API diagnostic endpoint
-  app.get('/api/admin/evolution-api/test', isAuthenticated, async (req, res) => {
+  // UAZAPI diagnostic endpoint
+  app.get('/api/admin/uazapi/test', isAuthenticated, async (req, res) => {
     try {
       const settings = await storage.getGlobalSettings();
-      
-      if (!settings?.evolutionApiUrl || !settings?.evolutionApiGlobalKey) {
+
+      if (!settings?.uazapiUrl || !settings?.uazapiAdminToken) {
         return res.json({
           success: false,
-          message: "Configurações da Evolution API não encontradas",
+          message: "UAZAPI não configurada",
           details: {
-            hasUrl: !!settings?.evolutionApiUrl,
-            hasKey: !!settings?.evolutionApiGlobalKey
+            hasUrl: !!settings?.uazapiUrl,
+            hasKey: !!settings?.uazapiAdminToken
           }
         });
       }
 
-      // Test API connection using the proper endpoint
-      const correctedApiUrl = ensureEvolutionApiEndpoint(settings.evolutionApiUrl);
-      const testUrl = `${correctedApiUrl}/manager/findInstances`;
-      
-      console.log('Original URL:', settings.evolutionApiUrl ? '[CONFIGURED]' : 'not configured');
-      console.log('Corrected URL:', '[CONFIGURED]');
-      console.log('Testing Evolution API:', '[CONFIGURED]');
-      
-      const response = await fetch(testUrl, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': settings.evolutionApiGlobalKey
-        }
-      });
+      console.log('Testing UAZAPI connection...');
 
-      console.log('Test response status:', response.status);
-      const responseText = await response.text();
-      console.log('Test response body:', responseText.substring(0, 200));
-
-      let responseData;
-      try {
-        responseData = JSON.parse(responseText);
-      } catch (parseError) {
-        return res.json({
-          success: false,
-          message: "Evolution API retornou resposta inválida",
-          details: {
-            status: response.status,
-            responseType: responseText.includes('<!DOCTYPE') ? 'HTML' : 'Text',
-            preview: responseText.substring(0, 200)
-          }
-        });
-      }
+      const uazapi = await getUazapiService();
+      const instances = await uazapi.listAllInstances();
 
       res.json({
         success: true,
-        message: "Conexão com Evolution API estabelecida",
+        message: "Conexão com UAZAPI estabelecida",
         details: {
-          status: response.status,
-          instances: Array.isArray(responseData) ? responseData.length : 'N/A'
+          status: 200,
+          instances: instances.length
         }
       });
 
     } catch (error: any) {
-      console.error("Error testing Evolution API:", error);
+      console.error("Error testing UAZAPI:", error);
       res.json({
         success: false,
-        message: "Erro ao testar Evolution API",
+        message: "Erro ao testar UAZAPI",
         details: {
           error: error.message
         }
@@ -17595,167 +17202,54 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
 
       const { instanceName, phoneNumber } = req.body;
 
-      // Get global Evolution API settings
-      const globalSettings = await storage.getGlobalSettings();
-      if (!globalSettings?.evolutionApiUrl || !globalSettings?.evolutionApiGlobalKey) {
-        console.error("❌ Evolution API not configured");
-        return res.status(400).json({ message: "Evolution API não configurada" });
-      }
+      // Create instance in UAZAPI via service
+      const uazapi = await getUazapiService();
+      console.log(`📤 Creating UAZAPI instance: ${instanceName}`);
 
-      // Create instance in Evolution API first
-      const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
-      
-      // First, let's try to discover available endpoints
-      console.log(`🔍 Discovering Evolution API endpoints...`);
-      
-      // Try to get API documentation or available routes
-      const discoveryEndpoints = [
-        `${correctedApiUrl}/`,
-        `${correctedApiUrl}/docs`,
-        `${correctedApiUrl}/swagger`,
-        `${correctedApiUrl}/instance`,
-        `${correctedApiUrl}/manager`,
-        `${correctedApiUrl}/manager/findInstances`
-      ];
+      const result = await uazapi.createInstance(instanceName);
+      console.log(`✅ UAZAPI instance created successfully:`, result);
 
-      // Check what endpoints are available
-      for (const discoveryUrl of discoveryEndpoints) {
-        try {
-          const discoveryResponse = await fetch(discoveryUrl, {
-            method: 'GET',
-            headers: {
-              'apikey': globalSettings.evolutionApiGlobalKey
-            }
-          });
-          
-          console.log(`🔍 Discovery ${discoveryUrl}: ${discoveryResponse.status}`);
-          if (discoveryResponse.ok) {
-            const discoveryText = await discoveryResponse.text();
-            console.log(`📋 Available endpoint found: ${discoveryUrl} - ${discoveryText.substring(0, 100)}`);
-          }
-        } catch (err) {
-          // Continue discovery
-        }
-      }
-
-      // Evolution API v2.3.0 uses direct endpoints without /api prefix
-      const baseUrl = globalSettings.evolutionApiUrl.replace(/\/+$/, ''); // Remove trailing slashes
-      const possibleEndpoints = [
-        { url: `${baseUrl}/instance/create`, method: 'POST' },
-        { url: `${baseUrl}/instance`, method: 'POST' }
-      ];
-
-      const webhookUrl = generateWebhookUrl(req, instanceName);
+      // Generate webhook URL (uses system_url for public accessibility)
+      const webhookUrl = await generateWebhookUrl(req, instanceName);
       console.log(`🔗 Generated webhook URL: ${webhookUrl}`);
-      
-      // Evolution API v2.3.0 minimal payload format
-      const evolutionPayload = {
-        instanceName: instanceName,
-        integration: "WHATSAPP-BAILEYS"
-      };
-      
-      console.log(`📤 Evolution API payload:`, JSON.stringify(evolutionPayload, null, 2));
 
-      console.log(`📤 Trying endpoints for Evolution API instance creation...`);
-
-      let evolutionResponse;
-      let responseText;
-      let createInstanceUrl = '';
-      let lastError = '';
-
-      // Try each endpoint until one works
-      for (const endpoint of possibleEndpoints) {
-        createInstanceUrl = endpoint.url;
-        console.log(`🔗 Trying: ${createInstanceUrl}`);
-
-        try {
-          evolutionResponse = await fetch(createInstanceUrl, {
-            method: endpoint.method,
-            headers: {
-              'Content-Type': 'application/json',
-              'apikey': globalSettings.evolutionApiGlobalKey
-            },
-            body: JSON.stringify(evolutionPayload)
-          });
-
-          responseText = await evolutionResponse.text();
-          console.log(`📡 Response status: ${evolutionResponse.status} for ${createInstanceUrl}`);
-
-          // If we get a successful response, break out of the loop
-          if (evolutionResponse.ok) {
-            console.log(`✅ Found working endpoint: ${createInstanceUrl}`);
-            break;
-          }
-
-          // If it's not a 404, this might be the right endpoint with a different issue
-          if (evolutionResponse.status !== 404) {
-            lastError = `${evolutionResponse.status}: ${responseText}`;
-            console.log(`⚠️ Non-404 error on ${createInstanceUrl}: ${lastError.substring(0, 200)}`);
-            break;
-          }
-
-          lastError = `${evolutionResponse.status}: ${responseText}`;
-        } catch (fetchError: any) {
-          console.error(`❌ Network error trying ${createInstanceUrl}:`, fetchError.message);
-          lastError = `Network error: ${fetchError.message}`;
-          continue;
-        }
-      }
-
-      // Check final response
-      if (!evolutionResponse || !evolutionResponse.ok) {
-        console.error(`❌ All Evolution API endpoints failed. Last error: ${lastError}`);
-        
-        // Check if response is HTML (indicates URL correction needed)
-        if (responseText && (responseText.includes('<!DOCTYPE') || responseText.includes('<html>'))) {
-          return res.status(500).json({ 
-            message: "Erro na configuração da Evolution API - URL incorreta",
-            details: "A URL da Evolution API parece estar apontando para interface web ao invés da API"
-          });
-        }
-        
-        return res.status(500).json({ 
-          message: "Erro ao criar instância na Evolution API",
-          details: `Tentativas falharam. Último erro: ${lastError.substring(0, 200)}`
-        });
-      }
-
-      let evolutionData;
-      try {
-        evolutionData = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error("❌ Failed to parse Evolution API response:", parseError);
-        return res.status(500).json({ 
-          message: "Resposta inválida da Evolution API",
-          details: responseText.substring(0, 200)
-        });
-      }
-
-      console.log(`✅ Evolution API instance created successfully:`, evolutionData);
-
-      // Create instance in database
+      // Create instance in database - store the returned instanceToken
       const instanceData = {
         companyId,
         instanceName,
         phoneNumber,
         status: 'connecting',
-        apiKey: globalSettings.evolutionApiGlobalKey,
-        webhookUrl: webhookUrl,
+        instanceToken: result.token || null,
+        webhook: webhookUrl,
         qrCode: null
       };
 
       const dbInstance = await storage.createWhatsappInstance(instanceData);
       console.log(`✅ Database instance created with ID: ${dbInstance.id}`);
 
+      // Configure webhook if we got a token
+      if (result.token) {
+        try {
+          await uazapi.configureWebhook(result.token, {
+            url: webhookUrl,
+            events: ['messages', 'connection'],
+            excludeMessages: ['wasSentByApi']
+          });
+          console.log(`✅ Webhook configured for instance: ${instanceName}`);
+        } catch (webhookError) {
+          console.warn(`⚠️ Failed to configure webhook (will retry later):`, webhookError);
+        }
+      }
+
       res.status(201).json({
         message: "Instância do WhatsApp criada com sucesso",
         instance: dbInstance,
-        evolutionResponse: evolutionData
+        uazapiResponse: result
       });
 
     } catch (error: any) {
       console.error("Error creating WhatsApp instance:", error);
-      res.status(500).json({ 
+      res.status(500).json({
         message: "Erro ao criar instância do WhatsApp",
         details: error.message
       });
@@ -17771,46 +17265,27 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       }
 
       const instanceName = req.params.instanceName;
-      
+
       // Verify instance belongs to company
       const instance = await storage.getWhatsappInstanceByName(instanceName, companyId);
       if (!instance) {
         return res.status(404).json({ message: "Instância não encontrada" });
       }
 
+      if (!instance.instanceToken) {
+        return res.status(400).json({ message: "Token da instância não encontrado. Recrie a instância." });
+      }
+
       console.log(`📱 Getting QR code for instance: ${instanceName}`);
 
-      const globalSettings = await storage.getGlobalSettings();
-      if (!globalSettings?.evolutionApiUrl || !globalSettings?.evolutionApiGlobalKey) {
-        return res.status(500).json({ message: "Configurações da Evolution API não encontradas" });
-      }
-
-      // For QR code endpoint, use base URL without /api/ prefix
-      const baseUrl = globalSettings.evolutionApiUrl.replace(/\/$/, '');
-      const qrcodeUrl = `${baseUrl}/instance/connect/${instanceName}`;
-      
-      const evolutionResponse = await fetch(qrcodeUrl, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': globalSettings.evolutionApiGlobalKey
-        }
-      });
-
-      if (!evolutionResponse.ok) {
-        console.error(`❌ Evolution API QR code error: ${evolutionResponse.status}`);
-        return res.status(evolutionResponse.status).json({ 
-          message: "Erro ao buscar QR code da Evolution API" 
-        });
-      }
-
-      const qrcodeData = await evolutionResponse.json();
+      const uazapi = await getUazapiService();
+      const result = await uazapi.connect(instance.instanceToken);
       console.log(`✅ QR code retrieved for instance: ${instanceName}`);
 
       res.json({
-        qrcode: qrcodeData.base64 || qrcodeData.qrcode,
-        pairingCode: qrcodeData.pairingCode,
-        status: qrcodeData.instance?.state || 'connecting'
+        qrcode: result.qrcode || result.instance?.qrcode,
+        pairingCode: result.paircode || result.instance?.paircode,
+        status: result.instance?.status || result.status || 'connecting'
       });
 
     } catch (error: any) {
@@ -17823,7 +17298,6 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
   });
 
   // Get Pairing Code for WhatsApp instance (alternativa ao QR Code)
-  // Evolution API 2.3.7: GET /instance/connect/{instanceName}?number={phoneNumber}
   app.post('/api/company/whatsapp/instances/:instanceName/pairingcode', async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
@@ -17851,88 +17325,46 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         return res.status(404).json({ message: "Instância não encontrada" });
       }
 
+      if (!instance.instanceToken) {
+        return res.status(400).json({ message: "Token da instância não encontrado. Recrie a instância." });
+      }
+
       console.log(`📱 Getting Pairing Code for instance: ${instanceName}, phone: ${cleanNumber}`);
 
-      const globalSettings = await storage.getGlobalSettings();
-      if (!globalSettings?.evolutionApiUrl || !globalSettings?.evolutionApiGlobalKey) {
-        return res.status(500).json({ message: "Configurações da Evolution API não encontradas" });
-      }
+      const uazapi = await getUazapiService();
 
-      const baseUrl = globalSettings.evolutionApiUrl.replace(/\/$/, '');
-
-      // Step 1: Fazer logout da instância para garantir que está desconectada
-      console.log(`📱 Step 1: Logging out instance ${instanceName} to prepare for pairing code`);
+      // Step 1: Desconectar a instância para garantir que está pronta para pairing
+      console.log(`📱 Step 1: Disconnecting instance ${instanceName} to prepare for pairing code`);
       try {
-        const logoutUrl = `${baseUrl}/instance/logout/${instanceName}`;
-        await fetch(logoutUrl, {
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': globalSettings.evolutionApiGlobalKey
-          }
-        });
-        console.log(`✅ Logout request sent`);
-        // Aguardar um pouco para a instância processar o logout
+        await uazapi.disconnect(instance.instanceToken);
+        console.log(`✅ Disconnect request sent`);
+        // Aguardar um pouco para a instância processar o disconnect
         await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (logoutError) {
-        console.log(`⚠️ Logout failed (may already be disconnected):`, logoutError);
+      } catch (disconnectError) {
+        console.log(`⚠️ Disconnect failed (may already be disconnected):`, disconnectError);
       }
 
-      // Step 2: Obter pairing code com o número
-      // Evolution API 2.3.7: passar o número como query param para obter pairing code
-      const pairingUrl = `${baseUrl}/instance/connect/${instanceName}?number=${cleanNumber}`;
-      console.log(`📱 Step 2: Calling Evolution API: GET ${pairingUrl}`);
-
-      const pairingResponse = await fetch(pairingUrl, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': globalSettings.evolutionApiGlobalKey
-        }
-      });
-
-      const responseText = await pairingResponse.text();
-      console.log(`📱 Evolution API response status: ${pairingResponse.status}`);
-      console.log(`📱 Evolution API response: ${responseText}`);
-
-      let responseData;
-      try {
-        responseData = JSON.parse(responseText);
-      } catch (e) {
-        console.error(`❌ Failed to parse response as JSON`);
-        return res.status(500).json({
-          message: "Resposta inválida da Evolution API",
-          details: responseText
-        });
-      }
-
-      if (!pairingResponse.ok) {
-        console.error(`❌ Evolution API error: ${pairingResponse.status}`);
-        return res.status(pairingResponse.status).json({
-          message: "Erro ao obter código de pareamento",
-          details: responseData
-        });
-      }
+      // Step 2: Obter pairing code com o número via service
+      console.log(`📱 Step 2: Connecting with phone number for pairing code`);
+      const responseData = await uazapi.connect(instance.instanceToken, cleanNumber);
+      console.log(`📱 UAZAPI pairing response:`, responseData);
 
       // Extrair o pairing code da resposta
-      // Na Evolution API 2.3.7, quando passamos o número, ele retorna pairingCode
-      const code = responseData.pairingCode ||
-                   responseData.code ||
-                   responseData.data?.pairingCode ||
-                   responseData.data?.code ||
-                   responseData.instance?.pairingCode;
+      const code = responseData.paircode ||
+                   responseData.instance?.paircode ||
+                   (responseData as any).pairingCode ||
+                   (responseData as any).code;
 
       if (code && typeof code === 'string' && code.length >= 6 && code.length <= 10) {
         console.log(`✅ Pairing code retrieved: ${code}`);
         return res.json({ code, status: 'pending' });
       }
 
-      // Se não encontrou pairing code, verificar se retornou base64 (QR code)
-      // Isso significa que a instância já está em modo de conexão mas não gerou pairing code
-      if (responseData.base64 || responseData.qrcode) {
-        console.log(`⚠️ Evolution API returned QR code instead of pairing code`);
+      // Se não encontrou pairing code, verificar se retornou qrcode
+      if (responseData.qrcode || responseData.instance?.qrcode) {
+        console.log(`⚠️ UAZAPI returned QR code instead of pairing code`);
         return res.status(400).json({
-          message: "A Evolution API retornou QR code em vez de código de pareamento. Verifique se o número está correto e se a instância está desconectada.",
+          message: "A UAZAPI retornou QR code em vez de código de pareamento. Verifique se o número está correto e se a instância está desconectada.",
           hint: "Tente desconectar a instância primeiro e depois gerar o código novamente."
         });
       }
@@ -17953,7 +17385,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     }
   });
 
-  // Refresh instance status from Evolution API
+  // Refresh instance status from UAZAPI
   app.get('/api/company/whatsapp/instances/:instanceName/refresh-status', async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
@@ -17962,53 +17394,37 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       }
 
       const instanceName = req.params.instanceName;
-      
+
       // Verify instance belongs to company
       const instance = await storage.getWhatsappInstanceByName(instanceName, companyId);
       if (!instance) {
         return res.status(404).json({ message: "Instância não encontrada" });
       }
 
+      if (!instance.instanceToken) {
+        return res.status(400).json({ message: "Token da instância não encontrado. Recrie a instância." });
+      }
+
       console.log(`🔄 Refreshing status for instance: ${instanceName}`);
 
-      const globalSettings = await storage.getGlobalSettings();
-      if (!globalSettings?.evolutionApiUrl || !globalSettings?.evolutionApiGlobalKey) {
-        return res.status(500).json({ message: "Configurações da Evolution API não encontradas" });
-      }
-
-      // For connection status endpoint, use base URL without /api/ prefix
-      const baseUrl = globalSettings.evolutionApiUrl.replace(/\/$/, '');
-      const statusUrl = `${baseUrl}/instance/connectionState/${instanceName}`;
-      
-      const evolutionResponse = await fetch(statusUrl, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': globalSettings.evolutionApiGlobalKey
-        }
-      });
-
-      if (!evolutionResponse.ok) {
-        console.error(`❌ Evolution API status error: ${evolutionResponse.status}`);
-        return res.status(evolutionResponse.status).json({ 
-          message: "Erro ao buscar status da Evolution API" 
-        });
-      }
-
-      const statusData = await evolutionResponse.json();
+      const uazapi = await getUazapiService();
+      const statusData = await uazapi.getStatus(instance.instanceToken);
       console.log(`✅ Status retrieved for instance: ${instanceName}`, statusData);
 
+      // Map status from UAZAPI response
+      const status = statusData.instance?.status || statusData.status || 'unknown';
+
       // Update status in database
-      await storage.updateWhatsappInstance(instance.id, { status: statusData.instance?.state || 'unknown' });
+      await storage.updateWhatsappInstance(instance.id, { status });
 
       res.json({
-        status: statusData.instance?.state || 'unknown',
+        status,
         connectionState: statusData
       });
 
     } catch (error: any) {
       console.error("Error refreshing instance status:", error);
-      res.status(500).json({ 
+      res.status(500).json({
         message: "Erro ao atualizar status",
         details: error.message
       });
@@ -18025,81 +17441,27 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
 
       const instanceId = parseInt(req.params.id);
       const instance = await storage.getWhatsappInstance(instanceId);
-      
+
       if (!instance || instance.companyId !== companyId) {
         return res.status(404).json({ message: "Instância não encontrada" });
       }
 
+      if (!instance.instanceToken) {
+        return res.status(400).json({ message: "Token da instância não encontrado. Recrie a instância." });
+      }
+
       console.log(`🔧 Configuring webhook for instance: ${instance.instanceName}`);
 
-      const globalSettings = await storage.getGlobalSettings();
-      if (!globalSettings?.evolutionApiUrl || !globalSettings?.evolutionApiGlobalKey) {
-        return res.status(500).json({ message: "Configurações da Evolution API não encontradas" });
-      }
-
-      // Generate webhook URL
-      const webhookUrl = generateWebhookUrl(req, instance.instanceName);
+      // Generate webhook URL (uses system_url for public accessibility)
+      const webhookUrl = await generateWebhookUrl(req, instance.instanceName);
       console.log(`📡 Webhook URL: ${webhookUrl}`);
 
-      // For webhook configuration, use correct Evolution API endpoint
-      const baseUrl = globalSettings.evolutionApiUrl.replace(/\/$/, '');
-      const webhookSetUrl = `${baseUrl}/webhook/set/${instance.instanceName}`;
-
-      const webhookPayload = {
-        webhook: {
-          enabled: true,
-          url: webhookUrl,
-          events: [
-            "QRCODE_UPDATED",
-            "MESSAGES_UPSERT"
-          ],
-          webhookByEvents: true,
-          base64: true
-        }
-      };
-
-      console.log(`🔗 Sending webhook configuration to: ${webhookSetUrl}`);
-      console.log(`📋 Webhook payload keys:`, Object.keys(webhookPayload).join(', '));
-      console.log(`🔑 API Key configured:`, !!globalSettings.evolutionApiGlobalKey);
-
-      const evolutionResponse = await fetch(webhookSetUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': globalSettings.evolutionApiGlobalKey
-        },
-        body: JSON.stringify(webhookPayload)
+      const uazapi = await getUazapiService();
+      const webhookData = await uazapi.configureWebhook(instance.instanceToken, {
+        url: webhookUrl,
+        events: ['messages', 'connection'],
+        excludeMessages: ['wasSentByApi']
       });
-
-      const responseText = await evolutionResponse.text();
-      console.log(`📡 Evolution API webhook response: ${evolutionResponse.status}`);
-      console.log(`📄 Response text:`, responseText);
-
-      if (!evolutionResponse.ok) {
-        // Check if response is HTML (indicates URL correction needed)
-        if (responseText && (responseText.includes('<!DOCTYPE') || responseText.includes('<html>'))) {
-          return res.status(500).json({ 
-            message: "Erro na configuração da Evolution API - URL incorreta",
-            details: "A URL da Evolution API parece estar apontando para interface web ao invés da API"
-          });
-        }
-        
-        return res.status(evolutionResponse.status).json({ 
-          message: "Erro ao configurar webhook na Evolution API",
-          details: responseText.substring(0, 200)
-        });
-      }
-
-      let webhookData;
-      try {
-        webhookData = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error("❌ Failed to parse Evolution API webhook response:", parseError);
-        return res.status(500).json({ 
-          message: "Resposta inválida da Evolution API",
-          details: responseText.substring(0, 200)
-        });
-      }
 
       console.log(`✅ Webhook configured successfully for instance: ${instance.instanceName}`);
 
@@ -18109,12 +17471,12 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       res.json({
         message: "Webhook configurado com sucesso",
         webhookUrl,
-        evolutionResponse: webhookData
+        uazapiResponse: webhookData
       });
 
     } catch (error: any) {
       console.error("Error configuring webhook:", error);
-      res.status(500).json({ 
+      res.status(500).json({
         message: "Erro ao configurar webhook",
         details: error.message
       });
@@ -18188,32 +17550,15 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
 
       console.log(`🗑️ Deleting WhatsApp instance: ${instance.instanceName}`);
 
-      // Delete from Evolution API first
-      const globalSettings = await storage.getGlobalSettings();
-      if (globalSettings?.evolutionApiUrl && globalSettings?.evolutionApiGlobalKey) {
+      // Delete from UAZAPI first (if we have a token)
+      if (instance.instanceToken) {
         try {
-          // For delete endpoint, use base URL without /api/ prefix
-          const baseUrl = globalSettings.evolutionApiUrl.replace(/\/$/, '');
-          const deleteUrl = `${baseUrl}/instance/delete/${instance.instanceName}`;
-          
-          const evolutionResponse = await fetch(deleteUrl, {
-            method: 'DELETE',
-            headers: {
-              'Content-Type': 'application/json',
-              'apikey': globalSettings.evolutionApiGlobalKey
-            }
-          });
-
-          console.log(`📡 Evolution API delete response: ${evolutionResponse.status}`);
-          
-          if (!evolutionResponse.ok) {
-            console.error(`⚠️ Failed to delete from Evolution API: ${evolutionResponse.status}`);
-          } else {
-            console.log(`✅ Instance deleted from Evolution API`);
-          }
-        } catch (evolutionError) {
-          console.error("⚠️ Error deleting from Evolution API:", evolutionError);
-          // Continue with database deletion even if Evolution API fails
+          const uazapi = await getUazapiService();
+          await uazapi.deleteInstance(instance.instanceToken);
+          console.log(`✅ Instance deleted from UAZAPI`);
+        } catch (uazapiError) {
+          console.error("⚠️ Error deleting from UAZAPI:", uazapiError);
+          // Continue with database deletion even if UAZAPI fails
         }
       }
 
@@ -18241,10 +17586,10 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       
       console.log(`⚙️ Configuring WhatsApp instance: ${instanceName} with settings:`, settings);
 
-      // Get global settings for Evolution API
+      // Get global settings for UAZAPI
       const globalSettings = await storage.getGlobalSettings();
-      if (!globalSettings?.evolutionApiUrl || !globalSettings?.evolutionApiGlobalKey) {
-        return res.status(400).json({ message: "Configurações da Evolution API não encontradas" });
+      if (!globalSettings?.uazapiUrl || !globalSettings?.uazapiAdminToken) {
+        return res.status(400).json({ message: "Configurações da UAZAPI não encontradas" });
       }
 
       // Verify instance belongs to company
@@ -18255,29 +17600,29 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         return res.status(404).json({ message: "Instância não encontrada" });
       }
 
-      // Configure settings via Evolution API
-      const correctedApiUrl = ensureEvolutionApiEndpoint(globalSettings.evolutionApiUrl);
+      // Configure settings via UAZAPI
+      const correctedApiUrl = ensureUAZAPIApiEndpoint(globalSettings.uazapiUrl);
       const configUrl = `${correctedApiUrl}/settings/set/${instanceName}`;
       
-      const evolutionResponse = await fetch(configUrl, {
+      const uazapiResponse = await fetch(configUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'apikey': globalSettings.evolutionApiGlobalKey
+          'apikey': globalSettings.uazapiAdminToken
         },
         body: JSON.stringify(settings)
       });
 
-      if (!evolutionResponse.ok) {
-        const errorData = await evolutionResponse.text();
-        console.error(`❌ Evolution API configure error:`, errorData);
+      if (!uazapiResponse.ok) {
+        const errorData = await uazapiResponse.text();
+        console.error(`❌ UAZAPI configure error:`, errorData);
         return res.status(400).json({ 
-          message: "Erro ao configurar instância no Evolution API",
+          message: "Erro ao configurar instância no UAZAPI",
           details: errorData
         });
       }
 
-      const result = await evolutionResponse.json();
+      const result = await uazapiResponse.json();
       console.log(`✅ WhatsApp instance configured successfully:`, result);
 
       res.json({ 
@@ -18832,12 +18177,12 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         });
       }
       
-      // Get global settings for Evolution API
+      // Get global settings for UAZAPI
       const settings = await storage.getGlobalSettings();
-      if (!settings?.evolutionApiUrl || !settings?.evolutionApiGlobalKey) {
+      if (!settings?.uazapiUrl || !settings?.uazapiAdminToken) {
         return res.status(400).json({
           success: false,
-          message: "Configurações da Evolution API não encontradas"
+          message: "Configurações da UAZAPI não encontradas"
         });
       }
       
@@ -18849,46 +18194,19 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
 
       const testMessage = `🎂 TESTE - ${activeMessage.messageTemplate.replace('{NOME}', 'Cliente Teste').replace('{EMPRESA}', 'Empresa Teste')}`;
 
-      // Send via Evolution API
-      const correctedApiUrl = settings.evolutionApiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
-
+      // Send via UAZAPI
       // Send "typing" presence and wait 2 seconds
-      await sendTypingPresence(correctedApiUrl, settings.evolutionApiGlobalKey!, whatsappInstance.instanceName, cleanPhone, 2000);
+      await uazapiSendTyping(whatsappInstance.instanceName, cleanPhone, 2000);
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      const response = await fetch(`${correctedApiUrl}/message/sendText/${whatsappInstance.instanceName}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': settings.evolutionApiGlobalKey
-        },
-        body: JSON.stringify({
-          number: cleanPhone,
-          text: testMessage
-        })
-      });
-      
-      const responseText = await response.text();
-      
+      const response = await uazapiSendText(whatsappInstance.instanceName, cleanPhone, testMessage);
+
       if (!response.ok) {
         console.log(`❌ API Error - Status: ${response.status}`);
-        console.log(`📄 Raw response: ${responseText}`);
-        
-        try {
-          const errorData = JSON.parse(responseText);
-          if (errorData.response?.message?.[0]?.exists === false) {
-            return res.json({
-              success: true,
-              message: `✅ Integração funcionando! O número ${testPhoneNumber} não existe no WhatsApp (comportamento esperado para teste).`
-            });
-          }
-        } catch (e) {
-          // Response is not JSON
-        }
-        
+
         return res.json({
           success: false,
-          message: `Erro da Evolution API: ${responseText}`
+          message: `Erro da UAZAPI: Status ${response.status}`
         });
       }
       
