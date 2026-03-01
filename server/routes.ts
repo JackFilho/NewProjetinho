@@ -7946,7 +7946,7 @@ if (ignoredNumbers !== undefined) {
               let audioBase64: string | null = null;
 
               const globalSettings = await storage.getGlobalSettings();
-              const instanceData = await getInstanceToken(companyId);
+              const instanceData = await getInstanceToken(company.id);
               const msgId = uazRaw.messageid || message.key?.id || uazRaw.id || '';
               console.log('🔑 [AUDIO] Using message ID for download:', msgId);
 
