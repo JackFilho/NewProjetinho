@@ -7343,13 +7343,25 @@ if (ignoredNumbers !== undefined) {
           let courseKeywordDetected = false;
           let shouldPauseCourseAI = false;
           let courseTimeoutValue = 0;
+          const courseNotificationEnabled = company.courseNotificationEnabled == 1;
 
-          if (company.courseNotificationEnabled === 1) {
-            console.log('🔍 [COURSE-NOTIFICATION] Pre-check: Feature enabled - checking for keywords...');
+          // ========================================
+          // 🎓 COURSE KEYWORD DETECTION
+          // Detecção de keyword funciona sempre que a empresa tem PDFs configurados
+          // A notificação ao admin é controlada separadamente por courseNotificationEnabled
+          // ========================================
+          const hasCoursesPdfs = !!(company.coursesPdfs && company.coursesPdfs.trim().length > 0);
+          console.log('🔍 [COURSE-DEBUG] courseNotificationEnabled:', courseNotificationEnabled);
+          console.log('🔍 [COURSE-DEBUG] hasCoursesPdfs:', hasCoursesPdfs);
+          console.log('🔍 [COURSE-DEBUG] messageText:', messageText?.substring(0, 100));
+
+          if (hasCoursesPdfs) {
+            console.log('🔍 [COURSE] Company has PDFs configured - checking for keywords...');
 
             let messageTextToCheckForCourse = messageText;
             let courseKeywords: string[] = [];
 
+            // Parse keywords from company settings
             try {
               if (company.courseNotificationKeywords) {
                 if (company.courseNotificationKeywords.startsWith('[')) {
@@ -7362,7 +7374,15 @@ if (ignoredNumbers !== undefined) {
                 }
               }
             } catch (error) {
-              console.log('⚠️ [COURSE-NOTIFICATION] Error parsing keywords:', error);
+              console.log('⚠️ [COURSE] Error parsing keywords:', error);
+            }
+
+            // Se não tem keywords configuradas, usar keywords padrão
+            if (courseKeywords.length === 0) {
+              courseKeywords = ['curso', 'cursos'];
+              console.log('🔍 [COURSE] No keywords configured, using defaults:', courseKeywords);
+            } else {
+              console.log('🔍 [COURSE] Keywords from config:', JSON.stringify(courseKeywords));
             }
 
             if (courseKeywords.length > 0 && messageTextToCheckForCourse) {
@@ -7372,13 +7392,15 @@ if (ignoredNumbers !== undefined) {
               );
 
               if (courseKeywordDetected) {
-                console.log('✅ [COURSE-NOTIFICATION] Course keyword detected in pre-check!');
-                console.log('🔍 [COURSE-NOTIFICATION] Raw timeout from DB:', company.courseNotificationTimeout, 'type:', typeof company.courseNotificationTimeout);
-                // Use ?? instead of || to handle 0 correctly (0 means "don't pause")
-                courseTimeoutValue = company.courseNotificationTimeout ?? 30;
-                shouldPauseCourseAI = courseTimeoutValue > 0;
-                console.log(`⚙️ [COURSE-NOTIFICATION] Timeout value: ${courseTimeoutValue} minutes`);
-                console.log(`⚙️ [COURSE-NOTIFICATION] Will pause AI: ${shouldPauseCourseAI}`);
+                console.log('✅ [COURSE] Course keyword detected!');
+                // Timeout/pausa só se notificação estiver habilitada
+                if (courseNotificationEnabled) {
+                  courseTimeoutValue = company.courseNotificationTimeout ?? 30;
+                  shouldPauseCourseAI = courseTimeoutValue > 0;
+                  console.log(`⚙️ [COURSE] Notification enabled - timeout: ${courseTimeoutValue}min, pause AI: ${shouldPauseCourseAI}`);
+                } else {
+                  console.log('ℹ️ [COURSE] Notification disabled - PDF will be sent but no admin notification');
+                }
               }
             }
           }
@@ -7757,8 +7779,8 @@ if (ignoredNumbers !== undefined) {
                     }
                   }
 
-                  // Send notification to configured contact
-                  if (company.courseNotificationContact) {
+                  // Send notification to configured contact (only if notification feature is enabled)
+                  if (courseNotificationEnabled && company.courseNotificationContact) {
                     const defaultMessage = shouldPauseCourseAI
                       ? '🎓 *Interesse em Curso Detectado!*\n\n👤 Cliente: {clientName}\n📞 Telefone: {clientPhone}\n💬 Mensagem: {message}\n⏰ Horário: {time}\n\n⏸️ O agente IA foi pausado por ' + courseTimeoutValue + ' minutos.'
                       : '🎓 *Interesse em Curso Detectado!*\n\n👤 Cliente: {clientName}\n📞 Telefone: {clientPhone}\n💬 Mensagem: {message}\n⏰ Horário: {time}\n\n✅ PDF do curso enviado automaticamente.';
@@ -10144,6 +10166,16 @@ Seu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é 
                 console.log('📝 Resposta após remoção dos comandos:', aiResponse.substring(0, 300));
               } else {
                 console.log('⚠️ NENHUM COMANDO [ENVIAR_ARQUIVO_CURSO:] ENCONTRADO NA RESPOSTA DA IA');
+                // Fallback: se keyword de curso foi detectada e empresa tem PDFs, enviar automaticamente
+                if (courseKeywordDetected && company.coursesPdfs) {
+                  courseFilesToSend = company.coursesPdfs
+                    .split(',')
+                    .map((url: string) => url.trim())
+                    .filter((url: string) => url.length > 0);
+                  if (courseFilesToSend.length > 0) {
+                    console.log('📄 [COURSE-PDF] Fallback: enviando PDFs automaticamente após resposta da IA:', courseFilesToSend);
+                  }
+                }
               }
               // ========================================
               // FIM DA DETECÇÃO DE COMANDOS
