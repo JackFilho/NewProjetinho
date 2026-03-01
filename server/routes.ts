@@ -6686,15 +6686,33 @@ if (ignoredNumbers !== undefined) {
       // HANDLER: Label-based AI control (conversation_updated)
       // ────────────────────────────────────────────────
       if (event === 'conversation_updated') {
+        // O Chatwoot dispara conversation_updated para QUALQUER mudança na conversa
+        // (status, atribuição, prioridade, etc.), não apenas para labels.
+        // Devemos processar lógica de labels APENAS quando labels realmente mudaram,
+        // caso contrário um conversation_updated de status/atribuição pode desativar
+        // o human takeover que foi ativado por mensagem de agente (sem label).
+        const changedAttributes = payload.changed_attributes || {};
+        const isLabelChange = changedAttributes.labels !== undefined;
+
+        if (!isLabelChange) {
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          console.log('🏷️ [CHATWOOT WEBHOOK] conversation_updated NÃO é sobre labels');
+          console.log('🏷️ [CHATWOOT WEBHOOK] Atributos alterados:', Object.keys(changedAttributes).join(', ') || 'nenhum');
+          console.log('🏷️ [CHATWOOT WEBHOOK] Ignorando - human takeover não será afetado');
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          return res.status(200).json({ received: true, ignored: true, reason: 'Not a label change event' });
+        }
+
         // Extract labels from payload - Chatwoot sends them in different locations
         const labels: string[] = payload.labels
           || payload.conversation?.labels
-          || payload.changed_attributes?.labels?.current_value
+          || changedAttributes.labels?.current_value
           || [];
 
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log('🏷️ [CHATWOOT WEBHOOK] Conversation updated');
-        console.log('🏷️ [CHATWOOT WEBHOOK] Labels:', JSON.stringify(labels));
+        console.log('🏷️ [CHATWOOT WEBHOOK] Conversation updated - LABEL CHANGE detected');
+        console.log('🏷️ [CHATWOOT WEBHOOK] Previous labels:', JSON.stringify(changedAttributes.labels?.previous_value || []));
+        console.log('🏷️ [CHATWOOT WEBHOOK] Current labels:', JSON.stringify(labels));
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
         // Check if "humano" label is present (case-insensitive)
