@@ -63,7 +63,7 @@ async function getUazapiService(): Promise<UazapiService> {
 
 // Helper para obter o token da instância ativa de uma empresa
 async function getInstanceToken(companyId: number): Promise<{ token: string; instanceName: string } | null> {
-  const instances = await storage.getWhatsAppInstances(companyId);
+  const instances = await storage.getWhatsappInstancesByCompany(companyId);
   const activeInstance = instances.find((i: any) => i.status === 'connected') || instances[0];
   if (!activeInstance?.instanceToken) return null;
   return { token: activeInstance.instanceToken, instanceName: activeInstance.instanceName };
@@ -94,7 +94,7 @@ async function uazapiSendText(instanceName: string, phoneNumber: string, text: s
   }
 }
 
-async function uazapiSendMedia(instanceName: string, phoneNumber: string, mediaType: string, fileData: string, caption?: string): Promise<{ ok: boolean; status: number }> {
+async function uazapiSendMedia(instanceName: string, phoneNumber: string, mediaType: string, fileData: string, caption?: string, docName?: string): Promise<{ ok: boolean; status: number }> {
   try {
     const uazapi = await getUazapiService();
     const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
@@ -103,7 +103,7 @@ async function uazapiSendMedia(instanceName: string, phoneNumber: string, mediaT
       return { ok: false, status: 404 };
     }
     const cleanNumber = cleanWhatsAppNumber(phoneNumber);
-    await uazapi.sendMedia(instance.instanceToken, { number: cleanNumber, type: mediaType as any, file: fileData, text: caption });
+    await uazapi.sendMedia(instance.instanceToken, { number: cleanNumber, type: mediaType as any, file: fileData, text: caption, docName: docName });
     return { ok: true, status: 200 };
   } catch (error) {
     console.error('❌ Erro ao enviar mídia UAZAPI:', error);
@@ -7712,7 +7712,7 @@ if (ignoredNumbers !== undefined) {
               // Send PDFs directly
               try {
                 const globalSettings = await storage.getGlobalSettings();
-                if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
+                if (globalSettings?.uazapiUrl) {
                   for (const pdfUrl of coursePdfsToSend) {
                     try {
                       // Extract file path from URL
@@ -7757,7 +7757,7 @@ if (ignoredNumbers !== undefined) {
                         : '📄 Informações do Curso';
 
                       // Send document via UAZAPI
-                      const mediaResponse = await uazapiSendMedia(instanceName, pdfPhoneForApi, 'document', base64Data, caption);
+                      const mediaResponse = await uazapiSendMedia(instanceName, pdfPhoneForApi, 'document', base64Data, caption, customFileName);
 
                       if (mediaResponse.ok) {
                         console.log('✅ [COURSE-PDF] PDF sent successfully:', customFileName);
@@ -7868,7 +7868,7 @@ if (ignoredNumbers !== undefined) {
               let audioBase64: string | null = null;
 
               const globalSettings = await storage.getGlobalSettings();
-              const instanceData = await getInstanceToken(companyId);
+              const instanceData = whatsappInstance?.instanceToken ? { token: whatsappInstance.instanceToken, instanceName } : null;
               const msgId = message.key?.id || uazRaw.messageid || uazRaw.id || '';
 
               // ============================================
@@ -8846,6 +8846,8 @@ INSTRUÇÕES ADICIONAIS:
 \${asaasPaymentInstructions}
 - NÃO invente serviços - use APENAS os serviços listados acima
 - NÃO confirme horários sem verificar disponibilidade real
+- 🚨 REGRA CRÍTICA - DISPONIBILIDADE POR DIA DA SEMANA: Antes de dizer que um profissional "trabalha" ou "tem atendimento" em determinado dia, SEMPRE consulte a seção "Dias de trabalho" e "NÃO trabalha" de cada profissional nas INFORMAÇÕES PARA AGENDAMENTO. Se o dia da semana mencionado pelo cliente (amanhã, domingo, segunda, etc.) estiver na lista "NÃO trabalha", NUNCA diga que tem atendimento. Diga diretamente que o profissional não trabalha naquele dia e sugira os dias disponíveis.
+- NUNCA responda "Sim, temos atendimento!" ou "Sim, trabalhamos!" sem antes verificar se o dia solicitado está nos dias de trabalho do profissional. Em caso de dúvida, use o comando [MOSTRAR_HORARIOS_LIVRES] para verificar
 - SEMPRE mostre todos os profissionais/serviços disponíveis antes de pedir para escolher
 - Mantenha respostas concisas e adequadas para mensagens de texto
 - Seja profissional mas amigável
