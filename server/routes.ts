@@ -186,8 +186,24 @@ const conversationFollowUpSent = new Set<string>();
 // 🤖 CACHE DE RESPOSTAS DA AI: Detecta quando o Chatwoot ecoa a resposta da AI como mensagem de "agente humano"
 // Quando a AI envia uma resposta via UAZAPI, ela é sincronizada ao Chatwoot e aparece como mensagem de um agente (tipo 'user').
 // Sem este cache, o webhook do Chatwoot ativaria o human takeover para cada resposta da AI.
-// Key: conversationId, Value: { content (primeiros 200 chars), timestamp }
-const recentAISentMessages = new Map<number, { content: string; timestamp: number }>();
+// Key: conversationId, Value: { contents (array de primeiros 200 chars de cada msg), timestamp }
+// Suporta múltiplas mensagens por conversa (ex: fluxo PIX envia QR + código + instruções)
+const recentAISentMessages = new Map<number, { contents: string[]; timestamp: number }>();
+
+// Helper para registrar resposta da AI no cache
+function cacheAIResponse(conversationId: number, content: string) {
+  const existing = recentAISentMessages.get(conversationId);
+  const trimmed = content.substring(0, 200);
+  if (existing && (Date.now() - existing.timestamp) < 60000) {
+    // Adicionar ao array existente (máximo 10 entradas)
+    if (existing.contents.length < 10) {
+      existing.contents.push(trimmed);
+    }
+    existing.timestamp = Date.now();
+  } else {
+    recentAISentMessages.set(conversationId, { contents: [trimmed], timestamp: Date.now() });
+  }
+}
 
 /**
  * Verifica se uma resposta da IA é um resumo de confirmação de agendamento.
@@ -6815,19 +6831,23 @@ if (ignoredNumbers !== undefined) {
       const recentAI = recentAISentMessages.get(matchingConversation.id);
 
       if (recentAI && (Date.now() - recentAI.timestamp) < 30000) {
-        // Verificar se o conteúdo é similar (comparação dos primeiros 200 caracteres)
-        if (incomingContent === recentAI.content) {
+        // Verificar se o conteúdo bate com QUALQUER resposta recente da AI
+        const matchIndex = recentAI.contents.findIndex(c => c === incomingContent);
+        if (matchIndex !== -1) {
           console.log('🤖 [CHATWOOT WEBHOOK] ⚠️ ECO DETECTADO: Esta mensagem é a resposta da AI ecoada pelo Chatwoot');
-          console.log('🤖 [CHATWOOT WEBHOOK] Conteúdo AI (cache):', recentAI.content.substring(0, 80) + '...');
           console.log('🤖 [CHATWOOT WEBHOOK] Conteúdo Chatwoot:', incomingContent.substring(0, 80) + '...');
-          console.log('✅ [CHATWOOT WEBHOOK] Human takeover NÃO ativado - mensagem é eco da AI');
+          console.log(`✅ [CHATWOOT WEBHOOK] Human takeover NÃO ativado - mensagem é eco da AI (match ${matchIndex + 1}/${recentAI.contents.length})`);
           console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-          recentAISentMessages.delete(matchingConversation.id);
+          // Remover apenas a entrada que deu match (outras podem ainda ser ecoadas)
+          recentAI.contents.splice(matchIndex, 1);
+          if (recentAI.contents.length === 0) {
+            recentAISentMessages.delete(matchingConversation.id);
+          }
           return res.status(200).json({ received: true, ignored: true, reason: 'AI echo detected - not a real human agent message' });
         }
       }
 
-      // Limpar cache para esta conversa (já foi verificado)
+      // Limpar cache para esta conversa (já foi verificado, sem match)
       recentAISentMessages.delete(matchingConversation.id);
 
       // Activate human takeover mode
@@ -7717,7 +7737,7 @@ if (ignoredNumbers !== undefined) {
                       console.log('✅ [HUMAN-REQUEST] Immediate confirmation sent to client');
                       // Registrar no cache para detectar eco no Chatwoot
                       if (conversation) {
-                        recentAISentMessages.set(conversation.id, { content: clientConfirmationMessage.substring(0, 200), timestamp: Date.now() });
+                        cacheAIResponse(conversation.id, clientConfirmationMessage);
                       }
 
                       // Save confirmation message to database (only if we paused AI)
@@ -8146,7 +8166,7 @@ if (ignoredNumbers !== undefined) {
                     console.log('✅ Fallback response sent for failed audio transcription');
                     // Registrar no cache para detectar eco no Chatwoot
                     if (conversation) {
-                      recentAISentMessages.set(conversation.id, { content: fallbackResponse.substring(0, 200), timestamp: Date.now() });
+                      cacheAIResponse(conversation.id, fallbackResponse);
                     }
                     return res.status(200).json({
                       received: true,
@@ -9214,7 +9234,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 
                 // Registrar no cache para detectar eco no Chatwoot
                 if (conversation) {
-                  recentAISentMessages.set(conversation.id, { content: interceptedResponse.substring(0, 200), timestamp: Date.now() });
+                  cacheAIResponse(conversation.id, interceptedResponse);
                 }
 
                 // Salvar resposta no banco
@@ -9396,7 +9416,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 
                 // Registrar no cache para detectar eco no Chatwoot
                 if (conversation) {
-                  recentAISentMessages.set(conversation.id, { content: rescheduleInterceptResponse.substring(0, 200), timestamp: Date.now() });
+                  cacheAIResponse(conversation.id, rescheduleInterceptResponse);
                 }
 
                 // Salvar resposta no banco
@@ -10677,7 +10697,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                         await uazapiSendText(instanceName, phoneForPayment, paymentQuestionMsg);
                         // Registrar no cache para detectar eco no Chatwoot
-                        recentAISentMessages.set(conversation.id, { content: paymentQuestionMsg.substring(0, 200), timestamp: Date.now() });
+                        cacheAIResponse(conversation.id, paymentQuestionMsg);
 
                         await storage.createMessage({
                           conversationId: conversation.id,
@@ -10754,10 +10774,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 // Quando o Chatwoot sincroniza esta resposta, o webhook message_created
                 // a identifica incorretamente como "mensagem de agente humano" e ativa o human takeover.
                 // Este cache permite que o handler do Chatwoot reconheça e ignore esses ecos.
-                recentAISentMessages.set(conversation.id, {
-                  content: aiResponse.substring(0, 200),
-                  timestamp: Date.now(),
-                });
+                cacheAIResponse(conversation.id, aiResponse);
                 console.log('🤖 [AI-CACHE] Resposta registrada no cache para detecção de eco no Chatwoot');
 
                 // ========================================
@@ -10813,7 +10830,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                       if (reminderResponse.ok) {
                         console.log(`✅ Lembrete de confirmação enviado para ${reminderPhoneNumber}`);
                         // Registrar no cache para detectar eco no Chatwoot
-                        recentAISentMessages.set(reminderConversationId, { content: reminderMessage.substring(0, 200), timestamp: Date.now() });
+                        cacheAIResponse(reminderConversationId, reminderMessage);
 
                         // Salvar lembrete no banco como mensagem do assistente
                         await storage.createMessage({
@@ -10949,7 +10966,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                         if (followUpResponse.ok) {
                           console.log(`✅ Follow-up de conversa enviado para ${followUpPhoneNumber}: ${followUpMessage}`);
                           // Registrar no cache para detectar eco no Chatwoot
-                          recentAISentMessages.set(followUpConversationId, { content: followUpMessage.substring(0, 200), timestamp: Date.now() });
+                          cacheAIResponse(followUpConversationId, followUpMessage);
 
                           // Salvar no histórico da conversa
                           await storage.createMessage({
@@ -11667,12 +11684,14 @@ Por favor, escolha um dos horários disponíveis acima.`;
                               const pixCodeOnlyCpf = pixPaymentWithCpf.pixQrCode.payload;
 
                               await uazapiSendText(instanceName, formattedPhoneForCpf, pixCodeOnlyCpf);
+                              cacheAIResponse(conversation.id, pixCodeOnlyCpf);
 
                               // Enviar orientações em mensagem separada
                               await new Promise(resolve => setTimeout(resolve, 500));
                               const pixInstructionsCpf = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
                               await uazapiSendText(instanceName, formattedPhoneForCpf, pixInstructionsCpf);
+                              cacheAIResponse(conversation.id, pixInstructionsCpf);
 
                               // Salvar mensagens no banco
                               await storage.createMessage({
@@ -11853,12 +11872,14 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 const pixCodeOnly = pixPayment.pixQrCode.payload;
 
                                 await uazapiSendText(instanceName, formattedPhoneForPaymentMsg, pixCodeOnly);
+                                cacheAIResponse(conversation.id, pixCodeOnly);
 
                                 // Enviar orientações em mensagem separada
                                 await new Promise(resolve => setTimeout(resolve, 500));
                                 const pixInstructions = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
                                 await uazapiSendText(instanceName, formattedPhoneForPaymentMsg, pixInstructions);
+                                cacheAIResponse(conversation.id, pixInstructions);
 
                                 await storage.createMessage({
                                   conversationId: conversation.id,
@@ -12329,12 +12350,14 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             const pixCodeOnly2 = pixPaymentResult.pixQrCode.payload;
 
                             await uazapiSendText(instanceName, formattedPhoneForPaymentProcess, pixCodeOnly2);
+                            cacheAIResponse(conversation.id, pixCodeOnly2);
 
                             // Enviar orientações em mensagem separada
                             await new Promise(resolve => setTimeout(resolve, 500));
                             const pixInstructions2 = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
                             await uazapiSendText(instanceName, formattedPhoneForPaymentProcess, pixInstructions2);
+                            cacheAIResponse(conversation.id, pixInstructions2);
 
                             await storage.createMessage({
                               conversationId: conversation.id,
@@ -12481,7 +12504,7 @@ Obrigado pela preferência! 🙏`;
                 if (uazapiResponse.ok) {
                   console.log('✅ Fallback message sent successfully');
                   // Registrar no cache para detectar eco no Chatwoot
-                  recentAISentMessages.set(conversation.id, { content: fallbackMessage.substring(0, 200), timestamp: Date.now() });
+                  cacheAIResponse(conversation.id, fallbackMessage);
 
                   // Save the fallback message to conversation
                   await storage.createMessage({
