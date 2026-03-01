@@ -7439,7 +7439,12 @@ if (ignoredNumbers !== undefined) {
           let shouldPauseCourseAI = false;
           let courseTimeoutValue = 0;
 
-          if (company.courseNotificationEnabled === 1) {
+          console.log('🔍 [COURSE-DEBUG] courseNotificationEnabled:', company.courseNotificationEnabled, 'type:', typeof company.courseNotificationEnabled);
+          console.log('🔍 [COURSE-DEBUG] coursesPdfs:', company.coursesPdfs ? company.coursesPdfs.substring(0, 200) : 'null/empty');
+          console.log('🔍 [COURSE-DEBUG] courseNotificationKeywords:', company.courseNotificationKeywords ? company.courseNotificationKeywords.substring(0, 200) : 'null/empty');
+          console.log('🔍 [COURSE-DEBUG] messageText:', messageText?.substring(0, 100));
+
+          if (company.courseNotificationEnabled == 1) {
             console.log('🔍 [COURSE-NOTIFICATION] Pre-check: Feature enabled - checking for keywords...');
 
             let messageTextToCheckForCourse = messageText;
@@ -7460,11 +7465,16 @@ if (ignoredNumbers !== undefined) {
               console.log('⚠️ [COURSE-NOTIFICATION] Error parsing keywords:', error);
             }
 
+            console.log('🔍 [COURSE-DEBUG] Keywords parsed:', JSON.stringify(courseKeywords));
+            console.log('🔍 [COURSE-DEBUG] messageTextToCheckForCourse:', messageTextToCheckForCourse?.substring(0, 100));
+
             if (courseKeywords.length > 0 && messageTextToCheckForCourse) {
               const messageTextLowerForCourse = messageTextToCheckForCourse.toLowerCase();
-              courseKeywordDetected = courseKeywords.some((keyword: string) =>
-                messageTextLowerForCourse.includes(keyword.toLowerCase())
-              );
+              courseKeywordDetected = courseKeywords.some((keyword: string) => {
+                const match = messageTextLowerForCourse.includes(keyword.toLowerCase());
+                console.log(`🔍 [COURSE-DEBUG] Keyword "${keyword}" match: ${match}`);
+                return match;
+              });
 
               if (courseKeywordDetected) {
                 console.log('✅ [COURSE-NOTIFICATION] Course keyword detected in pre-check!');
@@ -7725,10 +7735,13 @@ if (ignoredNumbers !== undefined) {
           // Now we just need to store data for sending notification AFTER AI responds
           // The AI will respond first, then we'll send notification and pause if configured
 
+          console.log('🔍 [COURSE-DEBUG] courseKeywordDetected after pre-check:', courseKeywordDetected);
+
           if (courseKeywordDetected) {
             console.log('🎓 [COURSE-NOTIFICATION] Course keyword was detected');
 
             // Check if course notification was already sent to this client
+            console.log('🔍 [COURSE-DEBUG] conversation.courseSentAt:', conversation?.courseSentAt);
             if (conversation && conversation.courseSentAt) {
               console.log('⏭️ [COURSE-NOTIFICATION] Course already sent to this client on:', conversation.courseSentAt);
               console.log('⏭️ [COURSE-NOTIFICATION] Skipping duplicate notification - letting AI respond normally');
@@ -10244,6 +10257,16 @@ Seu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é 
                 console.log('📝 Resposta após remoção dos comandos:', aiResponse.substring(0, 300));
               } else {
                 console.log('⚠️ NENHUM COMANDO [ENVIAR_ARQUIVO_CURSO:] ENCONTRADO NA RESPOSTA DA IA');
+                // Fallback: se keyword de curso foi detectada e empresa tem PDFs, enviar automaticamente
+                if (courseKeywordDetected && company.coursesPdfs) {
+                  courseFilesToSend = company.coursesPdfs
+                    .split(',')
+                    .map((url: string) => url.trim())
+                    .filter((url: string) => url.length > 0);
+                  if (courseFilesToSend.length > 0) {
+                    console.log('📄 [COURSE-PDF] Fallback: enviando PDFs automaticamente após resposta da IA:', courseFilesToSend);
+                  }
+                }
               }
               // ========================================
               // FIM DA DETECÇÃO DE COMANDOS
