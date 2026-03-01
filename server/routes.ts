@@ -86,7 +86,7 @@ async function uazapiSendText(instanceName: string, phoneNumber: string, text: s
   }
 }
 
-async function uazapiSendMedia(instanceName: string, phoneNumber: string, mediaType: string, fileData: string, caption?: string): Promise<{ ok: boolean; status: number }> {
+async function uazapiSendMedia(instanceName: string, phoneNumber: string, mediaType: string, fileData: string, caption?: string, docName?: string): Promise<{ ok: boolean; status: number }> {
   try {
     const uazapi = await getUazapiService();
     const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
@@ -95,7 +95,7 @@ async function uazapiSendMedia(instanceName: string, phoneNumber: string, mediaT
       return { ok: false, status: 404 };
     }
     const cleanNumber = cleanWhatsAppNumber(phoneNumber);
-    await uazapi.sendMedia(instance.instanceToken, { number: cleanNumber, type: mediaType as any, file: fileData, text: caption });
+    await uazapi.sendMedia(instance.instanceToken, { number: cleanNumber, type: mediaType as any, file: fileData, text: caption, docName: docName });
     return { ok: true, status: 200 };
   } catch (error) {
     console.error('❌ Erro ao enviar mídia UAZAPI:', error);
@@ -7748,6 +7748,8 @@ if (ignoredNumbers !== undefined) {
                 .map((url: string) => url.trim())
                 .filter((url: string) => url.length > 0);
               console.log('📄 [COURSE-NOTIFICATION] PDFs available:', coursePdfsToSend);
+            } else {
+              console.log('⚠️ [COURSE-NOTIFICATION] No coursesPdfs configured for company');
             }
 
             // If we have PDFs, send them directly WITHOUT AI response
@@ -7785,7 +7787,7 @@ if (ignoredNumbers !== undefined) {
               // Send PDFs directly
               try {
                 const globalSettings = await storage.getGlobalSettings();
-                if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
+                if (globalSettings?.uazapiUrl) {
                   for (const pdfUrl of coursePdfsToSend) {
                     try {
                       // Extract file path from URL
@@ -7830,7 +7832,7 @@ if (ignoredNumbers !== undefined) {
                         : '📄 Informações do Curso';
 
                       // Send document via UAZAPI
-                      const mediaResponse = await uazapiSendMedia(instanceName, pdfPhoneForApi, 'document', base64Data, caption);
+                      const mediaResponse = await uazapiSendMedia(instanceName, pdfPhoneForApi, 'document', base64Data, caption, customFileName);
 
                       if (mediaResponse.ok) {
                         console.log('✅ [COURSE-PDF] PDF sent successfully:', customFileName);
