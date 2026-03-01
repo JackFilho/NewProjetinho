@@ -957,15 +957,73 @@ async function generateBasicAvailabilityInfo(
 
 `;
 
-  // Listar profissionais ativos
+  // Listar profissionais ativos com seus dias/horários de trabalho
   const activeProfessionals = professionals.filter(p => p.active);
   text += `👥 PROFISSIONAIS DISPONÍVEIS:\n`;
   for (const prof of activeProfessionals) {
     text += `   • ${prof.name} (ID: ${prof.id})\n`;
+
+    // Buscar schedules do profissional para mostrar dias de trabalho
+    const professionalSchedules = await storage.getProfessionalSchedules(prof.id);
+    if (professionalSchedules.length > 0) {
+      const enabledDays = professionalSchedules
+        .filter(s => s.isEnabled)
+        .sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+
+      if (enabledDays.length > 0) {
+        text += `     📅 Dias de trabalho:\n`;
+        for (const schedule of enabledDays) {
+          text += `        - ${dayNames[schedule.dayOfWeek]}: ${schedule.startTime} às ${schedule.endTime}\n`;
+        }
+        // Listar dias que NÃO trabalha para ficar explícito
+        const workingDayNumbers = enabledDays.map(s => s.dayOfWeek);
+        const nonWorkingDays = dayNames.filter((_, index) => !workingDayNumbers.includes(index));
+        if (nonWorkingDays.length > 0) {
+          text += `     🚫 NÃO trabalha: ${nonWorkingDays.join(', ')}\n`;
+        }
+      }
+    } else {
+      // Fallback para sistema antigo
+      const workDays = prof.workDays || [1, 2, 3, 4, 5, 6];
+      const workStart = prof.workStartTime || '09:00';
+      const workEnd = prof.workEndTime || '18:00';
+      text += `     📅 Horário: ${workStart} às ${workEnd}\n`;
+      text += `     📅 Dias: ${workDays.map((day: number) => dayNames[day]).join(', ')}\n`;
+      const nonWorkingDays = dayNames.filter((_, index) => !workDays.includes(index));
+      if (nonWorkingDays.length > 0) {
+        text += `     🚫 NÃO trabalha: ${nonWorkingDays.join(', ')}\n`;
+      }
+    }
+
+    // Buscar dias de folga próximos
+    const startDate = formatDateLocal(today);
+    const endDateObj = getBrazilDate();
+    endDateObj.setDate(endDateObj.getDate() + 7);
+    const endDate = formatDateLocal(endDateObj);
+    const professionalDaysOff = await storage.getProfessionalDaysOffByDateRange(prof.id, startDate, endDate);
+    if (professionalDaysOff.length > 0) {
+      const daysOffInfo = professionalDaysOff.map(d => {
+        let displayDate: string;
+        if (typeof d.dateOff === 'string') {
+          const parts = d.dateOff.split('-');
+          displayDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        } else {
+          const date = new Date(d.dateOff);
+          const day = String(date.getUTCDate()).padStart(2, '0');
+          const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+          const year = date.getUTCFullYear();
+          displayDate = `${day}/${month}/${year}`;
+        }
+        return d.reason ? `${displayDate} (${d.reason})` : displayDate;
+      }).join(', ');
+      text += `     ⛔ FOLGAS: ${daysOffInfo}\n`;
+    }
+
+    text += `\n`;
   }
 
   // Listar serviços
-  text += `\n💇 SERVIÇOS OFERECIDOS:\n`;
+  text += `💇 SERVIÇOS OFERECIDOS:\n`;
   for (const service of services) {
     const price = service.price ? `R$ ${parseFloat(service.price).toFixed(2)}` : 'Consultar';
     text += `   • ${service.name} - ${service.duration || 30}min - ${price} (ID: ${service.id})\n`;
@@ -7014,11 +7072,20 @@ if (ignoredNumbers !== undefined) {
         // Detect audio messages from UAZAPI
         // UAZAPI messageType values: 'audio', 'ptt', 'myaudio', 'ptv' (voice video note)
         // Also handle legacy/raw WhatsApp types: 'audioMessage', 'pttMessage'
-        const isAudioType = ['audio', 'ptt', 'myaudio', 'ptv', 'audioMessage', 'pttMessage'].includes(msgType.toLowerCase());
+        // Check BOTH type and messageType fields since either could contain the audio indicator
+        const audioTypes = ['audio', 'ptt', 'myaudio', 'ptv', 'audiomessage', 'pttmessage'];
+        const uazType = (uazMsg.type || '').toLowerCase();
+        const uazMessageType = (uazMsg.messageType || '').toLowerCase();
+        const isAudioType = audioTypes.includes(msgType.toLowerCase())
+          || audioTypes.includes(uazType)
+          || audioTypes.includes(uazMessageType)
+          || (uazMsg.fileURL && (uazMsg.fileURL.includes('.ogg') || uazMsg.fileURL.includes('.opus') || uazMsg.fileURL.includes('.mp3') || uazMsg.fileURL.includes('.m4a') || uazMsg.fileURL.includes('.oga')));
         if (isAudioType) {
           message.message.audioMessage = uazMsg;
           message.messageType = 'audioMessage';
-          console.log('🎵 [UAZAPI] Audio message detected, type:', msgType);
+          console.log('🎵 [UAZAPI] Audio message detected, type:', msgType, 'uazType:', uazType, 'uazMessageType:', uazMessageType);
+        } else {
+          console.log('🔍 [UAZAPI] Not audio. type:', uazType, 'messageType:', uazMessageType, 'msgType:', msgType, 'fileURL:', uazMsg.fileURL?.substring(0, 80) || 'none');
         }
 
         console.log('📦 [UAZAPI] Normalized message');
@@ -7059,13 +7126,18 @@ if (ignoredNumbers !== undefined) {
 
       // Handle both text and audio messages
       const hasTextContent = message?.message?.conversation || message?.message?.extendedTextMessage?.text;
+      const uazRawType = (message?._uazapiRaw?.type || '').toLowerCase();
+      const uazRawMessageType = (message?._uazapiRaw?.messageType || '').toLowerCase();
+      const uazAudioTypes = ['audio', 'ptt', 'myaudio', 'ptv', 'audiomessage', 'pttmessage'];
       const hasAudioContent = message?.message?.audioMessage || message?.messageType === 'audioMessage'
-        || (message?._uazapiRaw?.fileURL && ['audio', 'ptt', 'myaudio', 'ptv', 'audioMessage', 'pttMessage'].includes((message?._uazapiRaw?.messageType || '').toLowerCase()));
+        || uazAudioTypes.includes(uazRawType)
+        || uazAudioTypes.includes(uazRawMessageType)
+        || (message?._uazapiRaw?.fileURL && /\.(ogg|opus|mp3|m4a|oga|wav|aac)/i.test(message._uazapiRaw.fileURL));
       // Accept both client messages (fromMe=false) and human messages (fromMe=true)
       const isTextMessage = hasTextContent;
       const isAudioMessage = hasAudioContent;
 
-      console.log('🎵 Audio message detected:', !!hasAudioContent);
+      console.log('🎵 Audio message detected:', !!hasAudioContent, '| uazRawType:', uazRawType, '| uazRawMessageType:', uazRawMessageType);
       console.log('💬 Text message detected:', !!hasTextContent);
       console.log('👤 From me (human):', message?.key?.fromMe);
 
@@ -7875,7 +7947,8 @@ if (ignoredNumbers !== undefined) {
 
               const globalSettings = await storage.getGlobalSettings();
               const instanceData = await getInstanceToken(companyId);
-              const msgId = message.key?.id || uazRaw.messageid || uazRaw.id || '';
+              const msgId = uazRaw.messageid || message.key?.id || uazRaw.id || '';
+              console.log('🔑 [AUDIO] Using message ID for download:', msgId);
 
               // ============================================
               // Method 1: UAZAPI /message/download with built-in transcription
@@ -8852,6 +8925,8 @@ INSTRUÇÕES ADICIONAIS:
 \${asaasPaymentInstructions}
 - NÃO invente serviços - use APENAS os serviços listados acima
 - NÃO confirme horários sem verificar disponibilidade real
+- 🚨 REGRA CRÍTICA - DISPONIBILIDADE POR DIA DA SEMANA: Antes de dizer que um profissional "trabalha" ou "tem atendimento" em determinado dia, SEMPRE consulte a seção "Dias de trabalho" e "NÃO trabalha" de cada profissional nas INFORMAÇÕES PARA AGENDAMENTO. Se o dia da semana mencionado pelo cliente (amanhã, domingo, segunda, etc.) estiver na lista "NÃO trabalha", NUNCA diga que tem atendimento. Diga diretamente que o profissional não trabalha naquele dia e sugira os dias disponíveis.
+- NUNCA responda "Sim, temos atendimento!" ou "Sim, trabalhamos!" sem antes verificar se o dia solicitado está nos dias de trabalho do profissional. Em caso de dúvida, use o comando [MOSTRAR_HORARIOS_LIVRES] para verificar
 - SEMPRE mostre todos os profissionais/serviços disponíveis antes de pedir para escolher
 - Mantenha respostas concisas e adequadas para mensagens de texto
 - Seja profissional mas amigável
