@@ -963,60 +963,64 @@ async function generateBasicAvailabilityInfo(
   for (const prof of activeProfessionals) {
     text += `   • ${prof.name} (ID: ${prof.id})\n`;
 
-    // Buscar schedules do profissional para mostrar dias de trabalho
-    const professionalSchedules = await storage.getProfessionalSchedules(prof.id);
-    if (professionalSchedules.length > 0) {
-      const enabledDays = professionalSchedules
-        .filter(s => s.isEnabled)
-        .sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+    try {
+      // Buscar schedules do profissional para mostrar dias de trabalho
+      const professionalSchedules = await storage.getProfessionalSchedules(prof.id);
+      if (professionalSchedules.length > 0) {
+        const enabledDays = professionalSchedules
+          .filter(s => s.isEnabled)
+          .sort((a, b) => a.dayOfWeek - b.dayOfWeek);
 
-      if (enabledDays.length > 0) {
-        text += `     📅 Dias de trabalho:\n`;
-        for (const schedule of enabledDays) {
-          text += `        - ${dayNames[schedule.dayOfWeek]}: ${schedule.startTime} às ${schedule.endTime}\n`;
+        if (enabledDays.length > 0) {
+          text += `     📅 Dias de trabalho:\n`;
+          for (const schedule of enabledDays) {
+            text += `        - ${dayNames[schedule.dayOfWeek]}: ${schedule.startTime} às ${schedule.endTime}\n`;
+          }
+          // Listar dias que NÃO trabalha para ficar explícito
+          const workingDayNumbers = enabledDays.map(s => s.dayOfWeek);
+          const nonWorkingDays = dayNames.filter((_, index) => !workingDayNumbers.includes(index));
+          if (nonWorkingDays.length > 0) {
+            text += `     🚫 NÃO trabalha: ${nonWorkingDays.join(', ')}\n`;
+          }
         }
-        // Listar dias que NÃO trabalha para ficar explícito
-        const workingDayNumbers = enabledDays.map(s => s.dayOfWeek);
-        const nonWorkingDays = dayNames.filter((_, index) => !workingDayNumbers.includes(index));
+      } else {
+        // Fallback para sistema antigo
+        const workDays = prof.workDays || [1, 2, 3, 4, 5, 6];
+        const workStart = prof.workStartTime || '09:00';
+        const workEnd = prof.workEndTime || '18:00';
+        text += `     📅 Horário: ${workStart} às ${workEnd}\n`;
+        text += `     📅 Dias: ${workDays.map((day: number) => dayNames[day]).join(', ')}\n`;
+        const nonWorkingDays = dayNames.filter((_, index) => !workDays.includes(index));
         if (nonWorkingDays.length > 0) {
           text += `     🚫 NÃO trabalha: ${nonWorkingDays.join(', ')}\n`;
         }
       }
-    } else {
-      // Fallback para sistema antigo
-      const workDays = prof.workDays || [1, 2, 3, 4, 5, 6];
-      const workStart = prof.workStartTime || '09:00';
-      const workEnd = prof.workEndTime || '18:00';
-      text += `     📅 Horário: ${workStart} às ${workEnd}\n`;
-      text += `     📅 Dias: ${workDays.map((day: number) => dayNames[day]).join(', ')}\n`;
-      const nonWorkingDays = dayNames.filter((_, index) => !workDays.includes(index));
-      if (nonWorkingDays.length > 0) {
-        text += `     🚫 NÃO trabalha: ${nonWorkingDays.join(', ')}\n`;
-      }
-    }
 
-    // Buscar dias de folga próximos
-    const startDate = formatDateLocal(today);
-    const endDateObj = getBrazilDate();
-    endDateObj.setDate(endDateObj.getDate() + 7);
-    const endDate = formatDateLocal(endDateObj);
-    const professionalDaysOff = await storage.getProfessionalDaysOffByDateRange(prof.id, startDate, endDate);
-    if (professionalDaysOff.length > 0) {
-      const daysOffInfo = professionalDaysOff.map(d => {
-        let displayDate: string;
-        if (typeof d.dateOff === 'string') {
-          const parts = d.dateOff.split('-');
-          displayDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
-        } else {
-          const date = new Date(d.dateOff);
-          const day = String(date.getUTCDate()).padStart(2, '0');
-          const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-          const year = date.getUTCFullYear();
-          displayDate = `${day}/${month}/${year}`;
-        }
-        return d.reason ? `${displayDate} (${d.reason})` : displayDate;
-      }).join(', ');
-      text += `     ⛔ FOLGAS: ${daysOffInfo}\n`;
+      // Buscar dias de folga próximos
+      const startDate = formatDateLocal(today);
+      const endDateObj = getBrazilDate();
+      endDateObj.setDate(endDateObj.getDate() + 7);
+      const endDate = formatDateLocal(endDateObj);
+      const professionalDaysOff = await storage.getProfessionalDaysOffByDateRange(prof.id, startDate, endDate);
+      if (professionalDaysOff.length > 0) {
+        const daysOffInfo = professionalDaysOff.map(d => {
+          let displayDate: string;
+          if (typeof d.dateOff === 'string') {
+            const parts = d.dateOff.split('-');
+            displayDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
+          } else {
+            const date = new Date(d.dateOff);
+            const day = String(date.getUTCDate()).padStart(2, '0');
+            const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+            const year = date.getUTCFullYear();
+            displayDate = `${day}/${month}/${year}`;
+          }
+          return d.reason ? `${displayDate} (${d.reason})` : displayDate;
+        }).join(', ');
+        text += `     ⛔ FOLGAS: ${daysOffInfo}\n`;
+      }
+    } catch (err) {
+      console.error(`⚠️ Erro ao buscar schedules/folgas do profissional ${prof.name}:`, err);
     }
 
     text += `\n`;
