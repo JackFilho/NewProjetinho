@@ -191,6 +191,28 @@ const conversationFollowUpTimers = new Map<string, {
 // Rastreia conversas que já receberam follow-up (só envia uma vez por conversa)
 const conversationFollowUpSent = new Set<string>();
 
+// 🤖 CACHE DE RESPOSTAS DA AI: Detecta quando o Chatwoot ecoa a resposta da AI como mensagem de "agente humano"
+// Quando a AI envia uma resposta via UAZAPI, ela é sincronizada ao Chatwoot e aparece como mensagem de um agente (tipo 'user').
+// Sem este cache, o webhook do Chatwoot ativaria o human takeover para cada resposta da AI.
+// Key: conversationId, Value: { contents (array de primeiros 200 chars de cada msg), timestamp }
+// Suporta múltiplas mensagens por conversa (ex: fluxo de pagamento envia QR + código + instruções)
+const recentAISentMessages = new Map<number, { contents: string[]; timestamp: number }>();
+
+// Helper para registrar resposta da AI no cache
+function cacheAIResponse(conversationId: number, content: string) {
+  const existing = recentAISentMessages.get(conversationId);
+  const trimmed = content.substring(0, 200);
+  if (existing && (Date.now() - existing.timestamp) < 60000) {
+    // Adicionar ao array existente (máximo 10 entradas)
+    if (existing.contents.length < 10) {
+      existing.contents.push(trimmed);
+    }
+    existing.timestamp = Date.now();
+  } else {
+    recentAISentMessages.set(conversationId, { contents: [trimmed], timestamp: Date.now() });
+  }
+}
+
 /**
  * Verifica se uma resposta da IA é um resumo de confirmação de agendamento.
  * Usa os mesmos padrões da detecção em PRÉ-VALIDAÇÃO (linhas 8489-8503).
@@ -319,8 +341,18 @@ setInterval(() => {
     }
   }
 
-  if (cleanedProcessing > 0 || cleanedLastMsg > 0 || cleanedTimers > 0 || cleanedFollowUp > 0 || cleanedFollowUpSent > 0) {
-    console.log(`🧹 Limpeza de Maps: processingLocks=${cleanedProcessing}, lastMessageTime=${cleanedLastMsg}, pendingTimers=${cleanedTimers}, followUpTimers=${cleanedFollowUp}, followUpSent=${cleanedFollowUpSent}`);
+  // recentAISentMessages: limpar entradas mais velhas que 60 segundos
+  // O eco do Chatwoot chega em menos de 5 segundos, então 60s é mais que suficiente
+  let cleanedAICache = 0;
+  for (const [key, entry] of recentAISentMessages) {
+    if (now - entry.timestamp > 60 * 1000) {
+      recentAISentMessages.delete(key);
+      cleanedAICache++;
+    }
+  }
+
+  if (cleanedProcessing > 0 || cleanedLastMsg > 0 || cleanedTimers > 0 || cleanedFollowUp > 0 || cleanedFollowUpSent > 0 || cleanedAICache > 0) {
+    console.log(`🧹 Limpeza de Maps: processingLocks=${cleanedProcessing}, lastMessageTime=${cleanedLastMsg}, pendingTimers=${cleanedTimers}, followUpTimers=${cleanedFollowUp}, followUpSent=${cleanedFollowUpSent}, aiCache=${cleanedAICache}`);
   }
 }, 5 * 60 * 1000); // 5 minutos
 
@@ -6710,6 +6742,30 @@ if (ignoredNumbers !== undefined) {
 
       console.log('✅ [CHATWOOT WEBHOOK] Found conversation:', matchingConversation.id);
 
+      // 🤖 DETECÇÃO DE ECO DA AI: Verificar se esta mensagem é a resposta da AI sendo ecoada pelo Chatwoot
+      // Quando a AI envia uma resposta via UAZAPI, o Chatwoot sincroniza e dispara message_created
+      // com sender.type='user', fazendo parecer que um agente humano enviou a mensagem.
+      // Comparamos o conteúdo com o cache de respostas recentes da AI para detectar esse eco.
+      const incomingContent = (payload.content || '').substring(0, 200);
+      const recentAI = recentAISentMessages.get(matchingConversation.id);
+
+      if (recentAI && (Date.now() - recentAI.timestamp) < 30000) {
+        // Verificar se o conteúdo bate com QUALQUER resposta recente da AI
+        const matchIndex = recentAI.contents.findIndex(c => c === incomingContent);
+        if (matchIndex !== -1) {
+          console.log('🤖 [CHATWOOT WEBHOOK] ⚠️ ECO DETECTADO: Esta mensagem é a resposta da AI ecoada pelo Chatwoot');
+          console.log('🤖 [CHATWOOT WEBHOOK] Conteúdo Chatwoot:', incomingContent.substring(0, 80) + '...');
+          console.log(`✅ [CHATWOOT WEBHOOK] Human takeover NÃO ativado - mensagem é eco da AI (match ${matchIndex + 1}/${recentAI.contents.length})`);
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          // Remover apenas a entrada que deu match (outras podem ainda ser ecoadas)
+          recentAI.contents.splice(matchIndex, 1);
+          if (recentAI.contents.length === 0) {
+            recentAISentMessages.delete(matchingConversation.id);
+          }
+          return res.status(200).json({ received: true, ignored: true, reason: 'AI echo detected - not a real human agent message' });
+        }
+      }
+
       // Activate human takeover mode
       await storage.updateConversation(matchingConversation.id, {
         takeoverMode: 'human',
@@ -7580,6 +7636,10 @@ if (ignoredNumbers !== undefined) {
 
                     if (clientResponse.ok) {
                       console.log('✅ [HUMAN-REQUEST] Immediate confirmation sent to client');
+                      // Registrar no cache para detectar eco no Chatwoot
+                      if (conversation) {
+                        cacheAIResponse(conversation.id, clientConfirmationMessage);
+                      }
 
                       // Save confirmation message to database (only if we paused AI)
                       if (shouldPauseAI) {
@@ -7999,6 +8059,10 @@ if (ignoredNumbers !== undefined) {
 
                   if (fallbackUAZAPIResponse.ok) {
                     console.log('✅ Fallback response sent for failed audio transcription');
+                    // Registrar no cache para detectar eco no Chatwoot
+                    if (conversation) {
+                      cacheAIResponse(conversation.id, fallbackResponse);
+                    }
                     return res.status(200).json({
                       received: true,
                       processed: true,
@@ -9063,6 +9127,11 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                   console.error('❌ Erro ao enviar mensagem interceptada:', error);
                 }
 
+                // Registrar no cache para detectar eco no Chatwoot
+                if (conversation) {
+                  cacheAIResponse(conversation.id, interceptedResponse);
+                }
+
                 // Salvar resposta no banco
                 await storage.createMessage({
                   conversationId: conversation.id,
@@ -9238,6 +9307,11 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                   }
                 } catch (error) {
                   console.error('❌ Erro ao enviar mensagem de reagendamento interceptado:', error);
+                }
+
+                // Registrar no cache para detectar eco no Chatwoot
+                if (conversation) {
+                  cacheAIResponse(conversation.id, rescheduleInterceptResponse);
                 }
 
                 // Salvar resposta no banco
@@ -10517,6 +10591,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
                         await uazapiSendTyping(instanceName, phoneForPayment, 1500);
 
                         await uazapiSendText(instanceName, phoneForPayment, paymentQuestionMsg);
+                        // Registrar no cache para detectar eco no Chatwoot
+                        cacheAIResponse(conversation.id, paymentQuestionMsg);
 
                         await storage.createMessage({
                           conversationId: conversation.id,
@@ -10589,6 +10665,10 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 });
                 console.log('✅ AI response saved to conversation history');
 
+                // 🤖 Registrar resposta da AI no cache para detecção de eco no Chatwoot
+                cacheAIResponse(conversation.id, aiResponse);
+                console.log('🤖 [AI-CACHE] Resposta registrada no cache para detecção de eco no Chatwoot');
+
                 // ========================================
                 // ⏰ AGENDAR LEMBRETE DE CONFIRMAÇÃO (10 MINUTOS)
                 // Se a IA enviou um resumo de confirmação, agendar lembrete
@@ -10641,6 +10721,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                       if (reminderResponse.ok) {
                         console.log(`✅ Lembrete de confirmação enviado para ${reminderPhoneNumber}`);
+                        // Registrar no cache para detectar eco no Chatwoot
+                        cacheAIResponse(reminderConversationId, reminderMessage);
 
                         // Salvar lembrete no banco como mensagem do assistente
                         await storage.createMessage({
@@ -10775,6 +10857,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                         if (followUpResponse.ok) {
                           console.log(`✅ Follow-up de conversa enviado para ${followUpPhoneNumber}: ${followUpMessage}`);
+                          // Registrar no cache para detectar eco no Chatwoot
+                          cacheAIResponse(followUpConversationId, followUpMessage);
 
                           // Salvar no histórico da conversa
                           await storage.createMessage({
@@ -11486,12 +11570,14 @@ Por favor, escolha um dos horários disponíveis acima.`;
                               const pixCodeOnlyCpf = pixPaymentWithCpf.pixQrCode.payload;
 
                               await uazapiSendText(instanceName, formattedPhoneForCpf, pixCodeOnlyCpf);
+                              cacheAIResponse(conversation.id, pixCodeOnlyCpf);
 
                               // Enviar orientações em mensagem separada
                               await new Promise(resolve => setTimeout(resolve, 500));
                               const pixInstructionsCpf = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
                               await uazapiSendText(instanceName, formattedPhoneForCpf, pixInstructionsCpf);
+                              cacheAIResponse(conversation.id, pixInstructionsCpf);
 
                               // Salvar mensagens no banco
                               await storage.createMessage({
@@ -12299,7 +12385,9 @@ Obrigado pela preferência! 🙏`;
 
                 if (uazapiResponse.ok) {
                   console.log('✅ Fallback message sent successfully');
-                  
+                  // Registrar no cache para detectar eco no Chatwoot
+                  cacheAIResponse(conversation.id, fallbackMessage);
+
                   // Save the fallback message to conversation
                   await storage.createMessage({
                     conversationId: conversation.id,
