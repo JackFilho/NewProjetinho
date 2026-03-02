@@ -2488,13 +2488,13 @@ export default function CompanySettings() {
                         <FormControl>
                           <select
                             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                            value={Number(field.value) || 30}
+                            value={String(Number(field.value) || 30)}
                             onChange={(e) => field.onChange(parseInt(e.target.value))}
                           >
-                            <option value={10}>10 minutos</option>
-                            <option value={20}>20 minutos</option>
-                            <option value={30}>30 minutos</option>
-                            <option value={60}>1 hora</option>
+                            <option value="30">30 minutos</option>
+                            <option value="60">1 hora</option>
+                            <option value="120">2 horas</option>
+                            <option value="180">3 horas</option>
                           </select>
                         </FormControl>
                         <FormMessage />

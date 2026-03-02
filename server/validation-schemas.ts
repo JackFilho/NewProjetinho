@@ -81,7 +81,7 @@ export const publicRegisterSchema = z.object({
 
 export const aiAgentSchema = z.object({
   aiAgentPrompt: z.string().trim().min(10, "Prompt deve ter pelo menos 10 caracteres").max(50000),
-  agentInactivityTimeout: z.coerce.number().int().min(5).max(120).optional().nullable(),
+  agentInactivityTimeout: z.coerce.number().int().min(30).max(180).optional().nullable(),
   autoSelectProfessional: z.union([z.boolean(), z.number()]).optional().nullable(),
   openaiApiKey: z.string().max(255).optional().nullable(),
   openaiModel: z.string().max(100).optional().default("gpt-4o-mini"),
