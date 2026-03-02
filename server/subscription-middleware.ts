@@ -20,9 +20,9 @@ export const checkSubscriptionStatus = async (req: CompanySession, res: Response
 
     // Verificar status da empresa
     const [companyRows] = await pool.execute(`
-      SELECT c.*, p.free_days, p.name as plan_name
-      FROM companies c 
-      LEFT JOIN plans p ON c.plan_id = p.id 
+      SELECT c.id, c.subscription_status, c.is_active, c.stripe_subscription_id, c.trial_expires_at, c.plan_id, c.plan_status, c.fantasy_name, p.free_days, p.name as plan_name
+      FROM companies c
+      LEFT JOIN plans p ON c.plan_id = p.id
       WHERE c.id = ?
     `, [companyId]);
 
@@ -127,8 +127,8 @@ async function generatePaymentAlert(companyId: number, daysRemaining: number) {
     
     // Verificar se alerta já foi criado
     const [existingAlert] = await pool.execute(`
-      SELECT id FROM payment_alerts 
-      WHERE company_id = ? AND alert_type = ? AND DATE(created_at) = CURDATE()
+      SELECT id FROM payment_alerts
+      WHERE company_id = ? AND alert_type = ? AND created_at >= CURDATE() AND created_at < CURDATE() + INTERVAL 1 DAY
     `, [companyId, alertType]);
 
     if (!(existingAlert as any[]).length) {

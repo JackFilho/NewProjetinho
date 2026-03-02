@@ -126,9 +126,8 @@ export async function getAvailableSlots(
 ): Promise<AvailabilityResult> {
   try {
 
-    // 1. Buscar informações do serviço
-    const services = await storage.getServicesByCompany(companyId);
-    const service = services.find(s => s.id === serviceId);
+    // 1. Buscar informações do serviço (lookup direto por ID)
+    const service = await storage.getService(serviceId);
 
     if (!service) {
       return {

@@ -764,7 +764,7 @@ async function listClientAppointmentsNumbered(clientPhone: string, companyId: nu
       LEFT JOIN professionals p ON a.professional_id = p.id
       WHERE REPLACE(REPLACE(REPLACE(a.client_phone, '-', ''), ' ', ''), '(', '') LIKE ?
         AND a.appointment_date >= ?
-        AND LOWER(a.status) IN ('pendente', 'confirmado', 'agendado', 'scheduled', 'confirmed')
+        AND a.status IN ('Pendente', 'Confirmado', 'confirmado', 'pendente', 'agendado', 'Agendado', 'scheduled', 'confirmed')
         AND p.company_id = ?
       ORDER BY a.appointment_date ASC, a.appointment_time ASC
       LIMIT 10
@@ -5562,7 +5562,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (month && year) {
         const monthNum = parseInt(month as string);
         const yearNum = parseInt(year as string);
-        dateFilter = sql`AND MONTH(a.appointment_date) = ${monthNum} AND YEAR(a.appointment_date) = ${yearNum}`;
+        const monthStr = String(monthNum).padStart(2, '0');
+        const startDate = `${yearNum}-${monthStr}-01`;
+        const nextMonth = monthNum === 12 ? 1 : monthNum + 1;
+        const nextYear = monthNum === 12 ? yearNum + 1 : yearNum;
+        const nextMonthStr = String(nextMonth).padStart(2, '0');
+        const endDate = `${nextYear}-${nextMonthStr}-01`;
+        dateFilter = sql`AND a.appointment_date >= ${startDate} AND a.appointment_date < ${endDate}`;
       }
 
       // Top companies by appointments
@@ -5630,44 +5636,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ORDER BY totalAppointments DESC
       `);
 
-      // Get top professional and client for each company
-      const companiesWithDetails = [];
+      // Get top professional and client for ALL companies in 2 bulk queries (avoids N+1)
       const companyDetailsArray = Array.isArray(companyDetailsResult) ? companyDetailsResult : [companyDetailsResult];
-      
-      for (const companyDetail of companyDetailsArray as any[]) {
-        if (!companyDetail || !companyDetail.id) continue;
-        
-        // Top professional for this company
-        const topProfResult = await db.execute(sql`
-          SELECT
-            p.name,
-            COUNT(a.id) as appointments
-          FROM professionals p
-          LEFT JOIN appointments a ON p.id = a.professional_id ${dateFilter}
-          WHERE p.company_id = ${companyDetail.id}
-          GROUP BY p.id, p.name
-          ORDER BY appointments DESC
-          LIMIT 1
-        `);
+      const validCompanyIds = (companyDetailsArray as any[]).filter(c => c && c.id).map(c => c.id);
 
-        // Top client for this company
-        const topClientResult = await db.execute(sql`
-          SELECT
-            a.client_name as name,
-            COUNT(a.id) as appointments
-          FROM appointments a
-          WHERE a.company_id = ${companyDetail.id} ${dateFilter}
-          GROUP BY a.client_name, a.client_phone
-          ORDER BY appointments DESC
-          LIMIT 1
-        `);
-
-        companiesWithDetails.push({
-          ...companyDetail,
-          topProfessional: Array.isArray(topProfResult) && topProfResult.length > 0 ? topProfResult[0] : null,
-          topClient: Array.isArray(topClientResult) && topClientResult.length > 0 ? topClientResult[0] : null
-        });
+      // Bulk query: top professional per company (single query for all companies)
+      let topProfByCompany = new Map<number, any>();
+      if (validCompanyIds.length > 0) {
+        const topProfBulkResult = await pool.execute(`
+          SELECT company_id, name, appointments FROM (
+            SELECT p.company_id, p.name, COUNT(a.id) as appointments,
+              ROW_NUMBER() OVER (PARTITION BY p.company_id ORDER BY COUNT(a.id) DESC) as rn
+            FROM professionals p
+            LEFT JOIN appointments a ON p.id = a.professional_id ${dateFilter ? `AND a.appointment_date >= ? AND a.appointment_date < ?` : ''}
+            WHERE p.company_id IN (${validCompanyIds.map(() => '?').join(',')})
+            GROUP BY p.company_id, p.id, p.name
+          ) ranked WHERE rn = 1
+        `, [...(month && year ? [
+          `${parseInt(year as string)}-${String(parseInt(month as string)).padStart(2, '0')}-01`,
+          `${parseInt(month as string) === 12 ? parseInt(year as string) + 1 : parseInt(year as string)}-${String(parseInt(month as string) === 12 ? 1 : parseInt(month as string) + 1).padStart(2, '0')}-01`
+        ] : []), ...validCompanyIds]);
+        const topProfRows = Array.isArray(topProfBulkResult[0]) ? topProfBulkResult[0] : [];
+        for (const row of topProfRows as any[]) {
+          topProfByCompany.set(row.company_id, { name: row.name, appointments: row.appointments });
+        }
       }
+
+      // Bulk query: top client per company (single query for all companies)
+      let topClientByCompany = new Map<number, any>();
+      if (validCompanyIds.length > 0) {
+        const topClientBulkResult = await pool.execute(`
+          SELECT company_id, name, appointments FROM (
+            SELECT a.company_id, a.client_name as name, COUNT(a.id) as appointments,
+              ROW_NUMBER() OVER (PARTITION BY a.company_id ORDER BY COUNT(a.id) DESC) as rn
+            FROM appointments a
+            WHERE a.company_id IN (${validCompanyIds.map(() => '?').join(',')})
+            ${month && year ? `AND a.appointment_date >= ? AND a.appointment_date < ?` : ''}
+            GROUP BY a.company_id, a.client_name, a.client_phone
+          ) ranked WHERE rn = 1
+        `, [...validCompanyIds, ...(month && year ? [
+          `${parseInt(year as string)}-${String(parseInt(month as string)).padStart(2, '0')}-01`,
+          `${parseInt(month as string) === 12 ? parseInt(year as string) + 1 : parseInt(year as string)}-${String(parseInt(month as string) === 12 ? 1 : parseInt(month as string) + 1).padStart(2, '0')}-01`
+        ] : [])]);
+        const topClientRows = Array.isArray(topClientBulkResult[0]) ? topClientBulkResult[0] : [];
+        for (const row of topClientRows as any[]) {
+          topClientByCompany.set(row.company_id, { name: row.name, appointments: row.appointments });
+        }
+      }
+
+      // Assemble results (no N+1 — all data already fetched)
+      const companiesWithDetails = (companyDetailsArray as any[])
+        .filter(c => c && c.id)
+        .map(companyDetail => ({
+          ...companyDetail,
+          topProfessional: topProfByCompany.get(companyDetail.id) || null,
+          topClient: topClientByCompany.get(companyDetail.id) || null
+        }));
 
       // Extract results from Drizzle's nested array format
       const topCompanies = Array.isArray(topCompaniesResult) && Array.isArray(topCompaniesResult[0]) 
@@ -5697,32 +5721,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Admin Dashboard stats
   app.get('/api/dashboard/stats', isAuthenticated, async (req, res) => {
     try {
-      // Total de empresas cadastradas
-      const totalCompaniesResult = await db.execute(sql`
-        SELECT COUNT(*) as total FROM companies
+      // Todas as estatísticas do dashboard em uma única query
+      const statsResult = await db.execute(sql`
+        SELECT
+          (SELECT COUNT(*) FROM companies) as totalCompanies,
+          (SELECT COUNT(*) FROM plans) as totalPlans,
+          (SELECT COUNT(*) FROM companies WHERE plan_status = 'active') as activeCompanies,
+          (SELECT COALESCE(SUM(p.price), 0) FROM companies c JOIN plans p ON c.plan_id = p.id WHERE c.plan_status = 'active') as monthlyRevenue
       `);
-      const totalCompanies = (totalCompaniesResult as any)[0][0]?.total || 0;
-
-      // Total de planos disponíveis
-      const totalPlansResult = await db.execute(sql`
-        SELECT COUNT(*) as total FROM plans
-      `);
-      const activePlans = (totalPlansResult as any)[0][0]?.total || 0;
-
-      // Empresas ativas (com plan_status = 'active')
-      const activeCompaniesResult = await db.execute(sql`
-        SELECT COUNT(*) as total FROM companies WHERE plan_status = 'active'
-      `);
-      const activeCompanies = (activeCompaniesResult as any)[0][0]?.total || 0;
-
-      // Receita estimada mensal (soma dos preços dos planos das empresas ativas)
-      const revenueResult = await db.execute(sql`
-        SELECT COALESCE(SUM(p.price), 0) as total 
-        FROM companies c 
-        JOIN plans p ON c.plan_id = p.id 
-        WHERE c.plan_status = 'active'
-      `);
-      const monthlyRevenue = parseFloat((revenueResult as any)[0][0]?.total || '0');
+      const stats = (statsResult as any)[0][0];
+      const totalCompanies = stats?.totalCompanies || 0;
+      const activePlans = stats?.totalPlans || 0;
+      const activeCompanies = stats?.activeCompanies || 0;
+      const monthlyRevenue = parseFloat(stats?.monthlyRevenue || '0');
 
       res.json({
         totalCompanies: Number(totalCompanies),
@@ -10198,7 +10209,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                   LEFT JOIN professionals p ON a.professional_id = p.id
                   WHERE REPLACE(REPLACE(REPLACE(a.client_phone, '-', ''), ' ', ''), '(', '') LIKE ?
                     AND a.appointment_date >= ?
-                    AND LOWER(a.status) IN ('pendente', 'confirmado', 'agendado', 'scheduled', 'confirmed')
+                    AND a.status IN ('Pendente', 'Confirmado', 'confirmado', 'pendente', 'agendado', 'Agendado', 'scheduled', 'confirmed')
                     AND p.company_id = ?
                   ORDER BY a.appointment_date ASC, a.appointment_time ASC
                   LIMIT 10
@@ -10343,7 +10354,7 @@ Seu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é 
                         WHERE REPLACE(REPLACE(REPLACE(a.client_phone, '-', ''), ' ', ''), '(', '') LIKE ?
                           AND a.appointment_date = ?
                           AND a.appointment_time = ?
-                          AND LOWER(a.status) IN ('pendente', 'confirmado', 'agendado', 'scheduled', 'confirmed')
+                          AND a.status IN ('Pendente', 'Confirmado', 'confirmado', 'pendente', 'agendado', 'Agendado', 'scheduled', 'confirmed')
                           AND p.company_id = ?
                         LIMIT 1
                       `, [`%${cleanPhone}%`, parsedDate, parsedTime, company.id]);

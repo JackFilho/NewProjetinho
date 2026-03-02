@@ -75,7 +75,7 @@ import {
 } from "@shared/schema";
 import { normalizePhone, validateBrazilianPhone, comparePhones } from "../shared/phone-utils";
 import { db, pool } from "./db";
-import { eq, desc, and, sql, gte, lte, lt, inArray } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lte, lt, inArray, not, type SQL } from "drizzle-orm";
 
 // Helper function to create conversation and message tables
 // Ensure professional password column exists
@@ -1141,14 +1141,10 @@ export class DatabaseStorage implements IStorage {
 
   async getMessagesByConversation(conversationId: number, limit?: number): Promise<Message[]> {
     try {
-      const query = db.select().from(messages)
+      return await db.select().from(messages)
         .where(eq(messages.conversationId, conversationId))
-        .orderBy(desc(messages.timestamp));
-      
-      if (limit) {
-        return await query.limit(limit);
-      }
-      return await query;
+        .orderBy(desc(messages.timestamp))
+        .limit(limit || 500);
     } catch (error: any) {
       console.error("Error getting messages by conversation:", error);
       return [];
@@ -1746,8 +1742,8 @@ export class DatabaseStorage implements IStorage {
         .where(
           and(
             eq(appointments.companyId, companyId),
-            sql`DATE(${appointments.appointmentDate}) >= ${startStr}`,
-            sql`DATE(${appointments.appointmentDate}) <= ${endStr}`
+            sql`${appointments.appointmentDate} >= ${startStr}`,
+            sql`${appointments.appointmentDate} <= ${endStr}`
           )
         );
       }
@@ -1792,8 +1788,8 @@ export class DatabaseStorage implements IStorage {
         .where(
           and(
             eq(appointments.companyId, companyId),
-            sql`DATE(${appointments.appointmentDate}) >= ${startDate.toISOString().split('T')[0]}`,
-            sql`DATE(${appointments.appointmentDate}) <= ${endDate.toISOString().split('T')[0]}`
+            sql`${appointments.appointmentDate} >= ${startDate.toISOString().split('T')[0]}`,
+            sql`${appointments.appointmentDate} <= ${endDate.toISOString().split('T')[0]}`
           )
         );
       }
@@ -2310,17 +2306,17 @@ export class DatabaseStorage implements IStorage {
         return { updated: 0, appointments: [] };
       }
 
-      // Update all found appointments to "Concluído"
-      for (const appointment of oldPendingAppointments) {
-        await db.update(appointments)
-          .set({
-            status: 'Concluído',
-            updatedAt: new Date()
-          })
-          .where(eq(appointments.id, appointment.id));
+      // Update all found appointments to "Concluído" in bulk
+      const appointmentIds = oldPendingAppointments.map(a => a.id);
+      await db.update(appointments)
+        .set({ status: 'Concluído', updatedAt: new Date() })
+        .where(and(
+          eq(appointments.companyId, companyId),
+          inArray(appointments.status, ['Pendente', 'agendado', 'Agendado', 'Confirmado', 'confirmado']),
+          lt(appointments.appointmentDate, threeDaysAgoStr)
+        ));
 
-        console.log(`✅ Agendamento #${appointment.id} (${appointment.clientName} - ${appointment.appointmentDate}) atualizado para Concluído`);
-      }
+      console.log(`✅ ${oldPendingAppointments.length} agendamentos atualizados para Concluído em massa`);
 
       return {
         updated: oldPendingAppointments.length,
@@ -2636,11 +2632,12 @@ export class DatabaseStorage implements IStorage {
 
       // Check for existing client with same phone in the company
       if (phoneToUse) {
-        const existingClients = await this.getClientsByCompany(clientData.companyId);
-
-        const duplicateClient = existingClients.find(client =>
-          client.phone && normalizePhone(client.phone) === phoneToUse
-        );
+        const [duplicateClient] = await db.select().from(clients)
+          .where(and(
+            eq(clients.companyId, clientData.companyId),
+            eq(clients.phone, phoneToUse)
+          ))
+          .limit(1);
 
         if (duplicateClient) {
           // Return the existing client instead of throwing an error
@@ -2682,12 +2679,13 @@ export class DatabaseStorage implements IStorage {
           throw new Error('Cliente não encontrado');
         }
 
-        const existingClients = await this.getClientsByCompany(currentClient.companyId);
-        
-        const duplicateClient = existingClients.find(client => 
-          client.id !== id && // Exclude current client
-          client.phone && normalizePhone(client.phone) === normalizedPhone
-        );
+        const [duplicateClient] = await db.select().from(clients)
+          .where(and(
+            eq(clients.companyId, currentClient.companyId),
+            eq(clients.phone, normalizedPhone),
+            not(eq(clients.id, id))
+          ))
+          .limit(1);
 
         if (duplicateClient) {
           throw new Error(`Já existe outro cliente cadastrado com este telefone: ${duplicateClient.name}`);
@@ -4130,38 +4128,47 @@ export async function createLoyaltyCampaign(campaignData: any) {
 
 export async function updateLoyaltyCampaign(id: number, updates: any, companyId: number) {
   try {
-    // Build dynamic update query
-    let updateQuery = 'UPDATE loyalty_campaigns SET ';
-    const updateFields = [];
-    
+    // Build parameterized update using pool.execute to prevent SQL injection
+    const setClauses: string[] = [];
+    const params: any[] = [];
+
     if (updates.name !== undefined) {
-      updateFields.push(`name = '${updates.name}'`);
+      setClauses.push('name = ?');
+      params.push(updates.name);
     }
     if (updates.conditionType !== undefined) {
-      updateFields.push(`condition_type = '${updates.conditionType}'`);
+      setClauses.push('condition_type = ?');
+      params.push(updates.conditionType);
     }
     if (updates.conditionValue !== undefined) {
-      updateFields.push(`condition_value = ${updates.conditionValue}`);
+      setClauses.push('condition_value = ?');
+      params.push(updates.conditionValue);
     }
     if (updates.rewardType !== undefined) {
-      updateFields.push(`reward_type = '${updates.rewardType}'`);
+      setClauses.push('reward_type = ?');
+      params.push(updates.rewardType);
     }
     if (updates.rewardValue !== undefined) {
-      updateFields.push(`reward_value = ${updates.rewardValue}`);
+      setClauses.push('reward_value = ?');
+      params.push(updates.rewardValue);
     }
     if (updates.rewardServiceId !== undefined) {
-      updateFields.push(`reward_service_id = ${updates.rewardServiceId || null}`);
+      setClauses.push('reward_service_id = ?');
+      params.push(updates.rewardServiceId || null);
     }
     if (updates.active !== undefined) {
-      updateFields.push(`active = ${updates.active}`);
+      setClauses.push('active = ?');
+      params.push(updates.active);
     }
-    
-    updateFields.push('updated_at = NOW()');
-    updateQuery += updateFields.join(', ');
-    updateQuery += ` WHERE id = ${id} AND company_id = ${companyId}`;
-    
-    await db.execute(sql.raw(updateQuery));
-    
+
+    setClauses.push('updated_at = NOW()');
+    params.push(id, companyId);
+
+    await pool.execute(
+      `UPDATE loyalty_campaigns SET ${setClauses.join(', ')} WHERE id = ? AND company_id = ?`,
+      params
+    );
+
     // Get the updated campaign
     const result = await db.execute(sql`
       SELECT * FROM loyalty_campaigns WHERE id = ${id} AND company_id = ${companyId}
