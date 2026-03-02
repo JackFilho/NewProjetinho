@@ -64,7 +64,7 @@ export const companies = mysqlTable("companies", {
   planStatus: varchar("plan_status", { length: 50 }).default("inactive"),
   isActive: int("is_active").notNull().default(1),
   aiAgentPrompt: text("ai_agent_prompt"),
-  agentInactivityTimeout: int("agent_inactivity_timeout").default(30), // Minutes: 10, 20, 30, 60
+  agentInactivityTimeout: int("agent_inactivity_timeout").default(30), // Minutes: 30, 60, 120, 180
   agentPaused: int("agent_paused").notNull().default(0), // 1 = paused, 0 = active
   autoSelectProfessional: int("auto_select_professional").notNull().default(0), // Auto select when only one professional exists
   openaiApiKey: varchar("openai_api_key", { length: 255 }), // OpenAI API key for this company
