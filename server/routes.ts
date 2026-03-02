@@ -7096,6 +7096,17 @@ if (ignoredNumbers !== undefined) {
         return res.status(200).json({ received: true, processed: false, reason: 'Reaction message ignored' });
       }
 
+      // Skip status/stories responses - when a client replies to a WhatsApp Status (story),
+      // the remoteJid is "status@broadcast" and should not trigger AI responses
+      const statusRemoteJid = uazMsgObj?.key?.remoteJid || webhookData?.data?.key?.remoteJid || '';
+      const isStatusMessage = statusRemoteJid === 'status@broadcast'
+        || statusRemoteJid.endsWith('@broadcast')
+        || eventType === 'status' || eventType === 'message.status';
+      if (isStatusMessage) {
+        console.log('🚫 [SKIP] Status/broadcast message detected, skipping processing');
+        return res.status(200).json({ received: true, processed: false, reason: 'Status message ignored' });
+      }
+
       // Handle multiple formats: UAZAPI format, array format, direct format, wrapped format
       let message;
       if (isUazapiMessage) {
