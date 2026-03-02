@@ -39,7 +39,7 @@ async function processPendingCampaigns() {
     // Get all pending campaigns that should be sent now
     const now = new Date();
     const [campaigns] = await pool.execute(
-      'SELECT id, company_id, name, target_audience, selected_clients, message, message_template, status, scheduled_date, scheduled_time, media_url, media_type, target_type FROM message_campaigns WHERE status = ? AND scheduled_date <= ? ORDER BY scheduled_date ASC',
+      'SELECT id, company_id, name, message, status, scheduled_date, target_type, selected_clients, sent_count, total_targets FROM message_campaigns WHERE status = ? AND scheduled_date <= ? ORDER BY scheduled_date ASC',
       ['pending', now]
     );
 
