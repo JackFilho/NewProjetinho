@@ -39,7 +39,7 @@ async function processPendingCampaigns() {
     // Get all pending campaigns that should be sent now
     const now = new Date();
     const [campaigns] = await pool.execute(
-      'SELECT * FROM message_campaigns WHERE status = ? AND scheduled_date <= ? ORDER BY scheduled_date ASC',
+      'SELECT id, company_id, name, target_audience, selected_clients, message, message_template, status, scheduled_date, scheduled_time, media_url, media_type, target_type FROM message_campaigns WHERE status = ? AND scheduled_date <= ? ORDER BY scheduled_date ASC',
       ['pending', now]
     );
 
@@ -115,7 +115,7 @@ async function processCampaign(campaign: any) {
     // Get target clients
     if (campaign.target_type === 'all') {
       const [clientResults] = await pool.execute(
-        'SELECT * FROM clients WHERE company_id = ? AND phone IS NOT NULL AND phone != ""',
+        'SELECT id, name, phone FROM clients WHERE company_id = ? AND phone IS NOT NULL AND phone != ""',
         [campaign.company_id]
       );
       clients = Array.isArray(clientResults) ? clientResults : [];
@@ -152,7 +152,7 @@ async function processCampaign(campaign: any) {
       // Ensure it's an array
       if (Array.isArray(selectedIds) && selectedIds.length > 0) {
         const placeholders = selectedIds.map(() => '?').join(',');
-        const query = `SELECT * FROM clients WHERE company_id = ? AND id IN (${placeholders}) AND phone IS NOT NULL AND phone != ""`;
+        const query = `SELECT id, name, phone FROM clients WHERE company_id = ? AND id IN (${placeholders}) AND phone IS NOT NULL AND phone != ""`;
         const params = [campaign.company_id, ...selectedIds];
 
         if (process.env.DEBUG_SQL_QUERIES === 'true') {
@@ -191,7 +191,7 @@ async function processCampaign(campaign: any) {
     // Get WhatsApp instance for the company (same logic as review invitations)
     // Don't check for 'connected' status - just get the first instance
     const [instanceResults] = await pool.execute(
-      'SELECT * FROM whatsapp_instances WHERE company_id = ? ORDER BY id ASC LIMIT 1',
+      'SELECT id, instance_name, instance_token FROM whatsapp_instances WHERE company_id = ? ORDER BY id ASC LIMIT 1',
       [campaign.company_id]
     );
 

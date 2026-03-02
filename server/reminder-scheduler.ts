@@ -1,7 +1,7 @@
 import { storage } from "./storage";
 import { db } from "./db";
 import { appointments, reminderSettings } from "@shared/schema";
-import { eq, and, gte, lte } from "drizzle-orm";
+import { eq, and, gte, lte, not, inArray } from "drizzle-orm";
 
 interface ScheduledReminder {
   appointmentId: number;
@@ -47,7 +47,8 @@ class ReminderScheduler {
       }).from(appointments)
         .where(and(
           gte(appointments.appointmentDate, now),
-          lte(appointments.appointmentDate, in25Hours)
+          lte(appointments.appointmentDate, in25Hours),
+          not(inArray(appointments.status, ['Cancelado', 'cancelado', 'cancelled', 'Concluído']))
         ));
 
       console.log(`📅 Verificando ${upcomingAppointments.length} agendamentos próximos`);
