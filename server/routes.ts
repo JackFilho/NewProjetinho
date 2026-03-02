@@ -9099,7 +9099,7 @@ INSTRUÇÕES ADICIONAIS:
   * AGUARDE o cliente responder "SIM", "OK", "CONFIRMO" ou confirmação similar
   * APENAS APÓS a confirmação explícita (SIM, OK, CONFIRMO), confirme o agendamento final
   * Se cliente pedir ALTERAÇÃO (ex: "meu nome está errado", "quero outro horário", "mudar para terça"), processe a alteração normalmente e envie novo resumo
-  * Se cliente responder com algo AMBÍGUO que NÃO seja confirmação NEM pedido de alteração (ex: emoji ❤️👍, "beleza", "show", "perfeito", "ótimo", "legal"), NÃO confirme o agendamento. Responda: "Que bom! 😊 Para finalizar seu agendamento, preciso da sua confirmação. Posso confirmar para [data] às [horário]? Digite SIM para confirmar."
+  * Se cliente responder com algo AMBÍGUO que NÃO seja confirmação NEM pedido de alteração (ex: emoji ❤️👍, "beleza", "show", "perfeito", "ótimo", "legal"), NÃO confirme o agendamento. Responda: "Para finalizar seu agendamento, preciso da sua confirmação. Posso confirmar para [data] às [horário]? Digite SIM para confirmar."
   * NUNCA diga "Agendamento realizado com sucesso" sem antes receber SIM, OK ou CONFIRMO explícito do cliente
 \${asaasPaymentInstructions}
 - NÃO invente serviços - use APENAS os serviços listados acima
