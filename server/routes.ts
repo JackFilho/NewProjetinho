@@ -191,6 +191,35 @@ const conversationFollowUpTimers = new Map<string, {
 // Rastreia conversas que já receberam follow-up (só envia uma vez por conversa)
 const conversationFollowUpSent = new Set<string>();
 
+/**
+ * Verifica se o cliente tem agendamento futuro ativo (consulta direta ao banco).
+ * Usado para suprimir follow-up de inatividade após o cliente já ter agendado.
+ */
+async function clientHasFutureAppointment(companyId: number, phoneNumber: string): Promise<boolean> {
+  try {
+    const cleanPhone = phoneNumber.replace(/\D/g, '');
+    const nowBrasilia = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+    const todayStr = nowBrasilia.toISOString().split('T')[0];
+
+    const [rows] = await pool.execute(`
+      SELECT COUNT(*) as total
+      FROM appointments a
+      LEFT JOIN professionals p ON a.professional_id = p.id
+      WHERE REPLACE(REPLACE(REPLACE(a.client_phone, '-', ''), ' ', ''), '(', '') LIKE ?
+        AND a.appointment_date >= ?
+        AND LOWER(a.status) IN ('pendente', 'confirmado', 'agendado', 'scheduled', 'confirmed')
+        AND p.company_id = ?
+      LIMIT 1
+    `, [`%${cleanPhone}%`, todayStr, companyId]);
+
+    const total = (rows as any[])[0]?.total || 0;
+    return total > 0;
+  } catch (error) {
+    console.error('❌ Erro ao verificar agendamento futuro do cliente:', error);
+    return false;
+  }
+}
+
 // 🤖 CACHE DE RESPOSTAS DA AI: Detecta quando o Chatwoot ecoa a resposta da AI como mensagem de "agente humano"
 // Quando a AI envia uma resposta via UAZAPI, ela é sincronizada ao Chatwoot e aparece como mensagem de um agente (tipo 'user').
 // Sem este cache, o webhook do Chatwoot ativaria o human takeover para cada resposta da AI.
@@ -3514,6 +3543,15 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
       console.log('✅ Broadcast notification sent for appointment type:', appointmentNotification?.type, 'companyId:', companyId);
     } catch (broadcastError) {
       console.error('⚠️ Broadcast error:', broadcastError);
+    }
+
+    // 🚫 Cancelar follow-up de inatividade — cliente já agendou, não precisa ser cobrado
+    const suppressKey = `${companyId}:${phoneNumber}`;
+    if (conversationFollowUpTimers.has(suppressKey)) {
+      const pendingFollowUp = conversationFollowUpTimers.get(suppressKey)!;
+      clearTimeout(pendingFollowUp.timer);
+      conversationFollowUpTimers.delete(suppressKey);
+      console.log(`🚫 [FOLLOW-UP] Timer de follow-up CANCELADO para ${suppressKey} (agendamento criado)`);
     }
 
     // 🔔 Send to n8n webhook if configured and enabled
@@ -7010,6 +7048,20 @@ if (ignoredNumbers !== undefined) {
       if (wasSentByApi) {
         console.log('🚫 [SKIP] Message was sent by API (wasSentByApi=true), skipping processing');
         return res.status(200).json({ received: true, processed: false, reason: 'Message sent by API (wasSentByApi)' });
+      }
+
+      // Skip reaction messages - reactions are not real messages and should not trigger AI responses
+      // UAZAPI sends reactions with type/messageType containing "reaction"
+      const uazMsgObj = webhookData.message || webhookData.data?.message || {};
+      const uazMsgType = (uazMsgObj.type || '').toLowerCase();
+      const uazMsgMessageType = (uazMsgObj.messageType || '').toLowerCase();
+      const isReaction = uazMsgType === 'reaction' || uazMsgMessageType === 'reaction'
+        || uazMsgMessageType === 'reactionmessage' || uazMsgType === 'reactionmessage'
+        || eventType === 'message.reaction' || eventType === 'messages.reaction'
+        || !!webhookData.data?.reactionMessage || !!uazMsgObj.reactionMessage;
+      if (isReaction) {
+        console.log('🚫 [SKIP] Reaction message detected, skipping processing');
+        return res.status(200).json({ received: true, processed: false, reason: 'Reaction message ignored' });
       }
 
       // Handle multiple formats: UAZAPI format, array format, direct format, wrapped format
@@ -10777,13 +10829,20 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 // ========================================
                 // 💬 AGENDAR FOLLOW-UP DE CONVERSA (30 MINUTOS)
                 // Se a IA NÃO enviou confirmação de agendamento, NÃO é conclusão de atendimento,
-                // e ainda não enviou follow-up, agendar lembrete contextual caso o cliente pare de responder
+                // cliente NÃO tem agendamento futuro, e ainda não enviou follow-up,
+                // agendar lembrete contextual caso o cliente pare de responder
                 // ========================================
                 if (!isConfirmationSummary(aiResponse) && !isConversationConcluded(aiResponse)) {
                   const followUpKeySched = `${company.id}:${phoneNumber}`;
 
+                  // Não agendar follow-up se o cliente já tem agendamento futuro (consulta banco)
+                  // (após agendar, o cliente pode tirar dúvidas sem ser "cobrado" por inatividade)
+                  const hasAppointment = await clientHasFutureAppointment(company.id, phoneNumber);
+                  if (hasAppointment) {
+                    console.log(`🚫 [FOLLOW-UP] Suprimido para ${followUpKeySched} — cliente já tem agendamento futuro`);
+                  }
                   // Só agendar se ainda não enviou follow-up nesta conversa
-                  if (!conversationFollowUpSent.has(followUpKeySched)) {
+                  else if (!conversationFollowUpSent.has(followUpKeySched)) {
                     // Cancelar timer anterior se existir (cada nova mensagem da IA reseta o timer)
                     if (conversationFollowUpTimers.has(followUpKeySched)) {
                       const existingFollowUp = conversationFollowUpTimers.get(followUpKeySched)!;
@@ -10803,6 +10862,14 @@ Por favor, escolha um dos horários disponíveis acima.`;
                     const followUpTimer = setTimeout(async () => {
                       try {
                         console.log(`💬 Timer de follow-up disparado para ${followUpKeySched}`);
+
+                        // Verificar se o cliente agendou durante os 30 min de espera (consulta banco)
+                        const hasAppointmentAtDispatch = await clientHasFutureAppointment(followUpCompanyId, followUpPhoneNumber);
+                        if (hasAppointmentAtDispatch) {
+                          console.log(`🚫 [FOLLOW-UP] Timer disparado mas cliente ${followUpKeySched} já tem agendamento futuro — suprimindo envio`);
+                          conversationFollowUpTimers.delete(followUpKeySched);
+                          return;
+                        }
 
                         // Marcar como enviado ANTES de enviar (evita duplicatas)
                         conversationFollowUpSent.add(followUpKeySched);
@@ -16480,6 +16547,15 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
       console.log('✅ Broadcast notification sent for appointment type:', appointmentNotification?.type, 'companyId:', companyId);
     } catch (broadcastError) {
       console.error('⚠️ Broadcast error:', broadcastError);
+    }
+
+    // 🚫 Cancelar follow-up de inatividade — cliente já agendou, não precisa ser cobrado
+    const suppressKey = `${companyId}:${phoneNumber}`;
+    if (conversationFollowUpTimers.has(suppressKey)) {
+      const pendingFollowUp = conversationFollowUpTimers.get(suppressKey)!;
+      clearTimeout(pendingFollowUp.timer);
+      conversationFollowUpTimers.delete(suppressKey);
+      console.log(`🚫 [FOLLOW-UP] Timer de follow-up CANCELADO para ${suppressKey} (agendamento criado)`);
     }
 
     // 🔔 Send to n8n webhook if configured and enabled
