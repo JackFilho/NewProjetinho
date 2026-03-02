@@ -201,19 +201,27 @@ async function clientHasFutureAppointment(companyId: number, phoneNumber: string
     const nowBrasilia = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
     const todayStr = nowBrasilia.toISOString().split('T')[0];
 
-    const [rows] = await pool.execute(`
-      SELECT COUNT(*) as total
-      FROM appointments a
-      LEFT JOIN professionals p ON a.professional_id = p.id
-      WHERE REPLACE(REPLACE(REPLACE(a.client_phone, '-', ''), ' ', ''), '(', '') LIKE ?
-        AND a.appointment_date >= ?
-        AND LOWER(a.status) IN ('pendente', 'confirmado', 'agendado', 'scheduled', 'confirmed')
-        AND p.company_id = ?
-      LIMIT 1
-    `, [`%${cleanPhone}%`, todayStr, companyId]);
+    // Gerar variações do telefone para comparação exata (evita REPLACE/LIKE no SQL)
+    // O telefone pode estar salvo como: "11999887766", "5511999887766", "(11) 99988-7766", etc.
+    const phoneVariations: string[] = [cleanPhone];
+    if (cleanPhone.startsWith('55') && cleanPhone.length >= 12) {
+      phoneVariations.push(cleanPhone.substring(2)); // sem código país
+    } else if (cleanPhone.length >= 10 && cleanPhone.length <= 11) {
+      phoneVariations.push('55' + cleanPhone); // com código país
+    }
 
-    const total = (rows as any[])[0]?.total || 0;
-    return total > 0;
+    // Usar SELECT 1 + LIMIT 1 e company_id direto (sem JOIN)
+    const placeholders = phoneVariations.map(() => '?').join(',');
+    const [rows] = await pool.execute(`
+      SELECT 1 FROM appointments
+      WHERE company_id = ?
+        AND appointment_date >= ?
+        AND status IN ('Pendente', 'Confirmado', 'confirmado', 'agendado', 'Agendado', 'scheduled', 'confirmed')
+        AND REPLACE(REPLACE(REPLACE(REPLACE(client_phone, '-', ''), ' ', ''), '(', ''), ')', '') IN (${placeholders})
+      LIMIT 1
+    `, [companyId, todayStr, ...phoneVariations]);
+
+    return (rows as any[]).length > 0;
   } catch (error) {
     console.error('❌ Erro ao verificar agendamento futuro do cliente:', error);
     return false;
