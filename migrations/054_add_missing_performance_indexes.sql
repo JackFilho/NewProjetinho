@@ -38,5 +38,6 @@ CREATE INDEX IF NOT EXISTS idx_support_tickets_created
   ON support_tickets (created_at DESC);
 
 -- Payment alerts by company + type + date (subscription middleware duplicate check)
-CREATE INDEX IF NOT EXISTS idx_payment_alerts_company_type_date
-  ON payment_alerts (company_id, alert_type, created_at);
+-- NOTE: Only run this if payment_alerts table exists (created by migration 008)
+-- CREATE INDEX IF NOT EXISTS idx_payment_alerts_company_type_date
+--   ON payment_alerts (company_id, alert_type, created_at);
