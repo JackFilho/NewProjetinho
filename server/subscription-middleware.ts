@@ -20,7 +20,7 @@ export const checkSubscriptionStatus = async (req: CompanySession, res: Response
 
     // Verificar status da empresa
     const [companyRows] = await pool.execute(`
-      SELECT c.id, c.subscription_status, c.is_active, c.stripe_subscription_id, c.trial_expires_at, c.plan_id, c.plan_status, c.fantasy_name, p.free_days, p.name as plan_name
+      SELECT c.id, c.subscription_status, c.is_active, c.trial_expires_at, c.plan_id, c.plan_status, c.fantasy_name, p.free_days, p.name as plan_name
       FROM companies c
       LEFT JOIN plans p ON c.plan_id = p.id
       WHERE c.id = ?
@@ -37,7 +37,6 @@ export const checkSubscriptionStatus = async (req: CompanySession, res: Response
     console.log('🔍 Subscription check - Company data:', {
       id: company.id,
       subscription_status: company.subscription_status,
-      stripe_subscription_id: company.stripe_subscription_id,
       trial_expires_at: company.trial_expires_at,
       trialExpiresAt: trialExpiresAt,
       now: now,
@@ -78,8 +77,8 @@ export const checkSubscriptionStatus = async (req: CompanySession, res: Response
     }
 
     // Verificar se período gratuito expirou E empresa não foi liberada pelo admin
-    if (trialExpiresAt <= now && !company.stripe_subscription_id && company.subscription_status !== 'active') {
-      console.log('❌ Trial expired, no subscription, and not released by admin');
+    if (trialExpiresAt <= now && company.subscription_status !== 'active') {
+      console.log('❌ Trial expired and not released by admin');
       
       // Bloquear empresa apenas se não foi liberada pelo admin
       await pool.execute(`
