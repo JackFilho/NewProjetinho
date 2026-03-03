@@ -7099,9 +7099,22 @@ if (ignoredNumbers !== undefined) {
       // Skip status/stories responses - when a client replies to a WhatsApp Status (story),
       // the remoteJid is "status@broadcast" and should not trigger AI responses
       const statusRemoteJid = uazMsgObj?.key?.remoteJid || webhookData?.data?.key?.remoteJid || '';
+      const chatSource = (webhookData.chatSource || '').toLowerCase();
+      // UAZAPI raw message content may contain contextInfo referencing status@broadcast
+      const rawContent = uazMsgObj?.content || {};
+      const rawContentStr = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
+      const hasStatusBroadcastInContent = rawContentStr.includes('status@broadcast');
+      const uazChatId = (uazMsgObj?.chatid || '').toLowerCase();
       const isStatusMessage = statusRemoteJid === 'status@broadcast'
         || statusRemoteJid.endsWith('@broadcast')
-        || eventType === 'status' || eventType === 'message.status';
+        || eventType === 'status' || eventType === 'message.status'
+        || chatSource === 'status' || chatSource === 'broadcast' || chatSource === 'stories'
+        || uazChatId === 'status@broadcast' || uazChatId.endsWith('@broadcast')
+        || hasStatusBroadcastInContent;
+
+      // DEBUG: log fields that help identify status/stories messages
+      console.log('🔍 [STATUS-DEBUG] chatSource:', webhookData.chatSource, '| statusRemoteJid:', statusRemoteJid, '| uazChatId:', uazMsgObj?.chatid, '| hasStatusInContent:', hasStatusBroadcastInContent);
+
       if (isStatusMessage) {
         console.log('🚫 [SKIP] Status/broadcast message detected, skipping processing');
         return res.status(200).json({ received: true, processed: false, reason: 'Status message ignored' });
@@ -7578,14 +7591,17 @@ if (ignoredNumbers !== undefined) {
             console.log('🔍 HUMAN TAKEOVER ACTIVE: Checking timeout...');
 
             // Determine which timeout to use:
-            // - If course notification is enabled and has a timeout > 0, use courseNotificationTimeout
-            // - Otherwise use agentInactivityTimeout
+            // - If takeover was caused by course notification (courseSentAt is recent), use courseNotificationTimeout
+            // - Otherwise always use agentInactivityTimeout (human agent takeover via Chatwoot, etc.)
             let effectiveTimeout = timeoutMinutes; // default: agentInactivityTimeout
 
-            if (company.courseNotificationEnabled === 1 && company.courseNotificationTimeout !== undefined && company.courseNotificationTimeout !== null) {
-              // Use course notification timeout if it's set (even if 0, which means no pause)
+            const courseSentAt = conversation.courseSentAt ? new Date(conversation.courseSentAt) : null;
+            const isCourseTriggeredTakeover = courseSentAt && company.courseNotificationEnabled === 1
+              && company.courseNotificationTimeout !== undefined && company.courseNotificationTimeout !== null;
+
+            if (isCourseTriggeredTakeover) {
               effectiveTimeout = company.courseNotificationTimeout;
-              console.log(`⚙️ Using Course Notification timeout: ${effectiveTimeout} minutes`);
+              console.log(`⚙️ Using Course Notification timeout: ${effectiveTimeout} minutes (course sent at: ${courseSentAt!.toISOString()})`);
             } else {
               console.log(`⚙️ Using Agent Inactivity timeout: ${effectiveTimeout} minutes`);
             }
