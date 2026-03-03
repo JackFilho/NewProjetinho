@@ -487,6 +487,13 @@ export default function CompanySettings() {
     }
   }, [company?.aiAgentPrompt, aiAgentForm]);
 
+  // Force update agentInactivityTimeout when company data changes
+  useEffect(() => {
+    if (company?.agentInactivityTimeout !== undefined) {
+      aiAgentForm.setValue('agentInactivityTimeout', Number(company.agentInactivityTimeout), { shouldValidate: false, shouldDirty: false });
+    }
+  }, [company?.agentInactivityTimeout, aiAgentForm]);
+
   // Force update autoSelectProfessional when company data changes
   useEffect(() => {
     if (company) {
