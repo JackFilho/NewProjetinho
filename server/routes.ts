@@ -7677,14 +7677,17 @@ if (ignoredNumbers !== undefined) {
             console.log('🔍 HUMAN TAKEOVER ACTIVE: Checking timeout...');
 
             // Determine which timeout to use:
-            // - If course notification is enabled and has a timeout > 0, use courseNotificationTimeout
-            // - Otherwise use agentInactivityTimeout
+            // - If takeover was caused by course notification (courseSentAt is recent), use courseNotificationTimeout
+            // - Otherwise always use agentInactivityTimeout (human agent takeover via Chatwoot, etc.)
             let effectiveTimeout = timeoutMinutes; // default: agentInactivityTimeout
 
-            if (company.courseNotificationEnabled === 1 && company.courseNotificationTimeout !== undefined && company.courseNotificationTimeout !== null) {
-              // Use course notification timeout if it's set (even if 0, which means no pause)
+            const courseSentAt = conversation.courseSentAt ? new Date(conversation.courseSentAt) : null;
+            const isCourseTriggeredTakeover = courseSentAt && company.courseNotificationEnabled === 1
+              && company.courseNotificationTimeout !== undefined && company.courseNotificationTimeout !== null;
+
+            if (isCourseTriggeredTakeover) {
               effectiveTimeout = company.courseNotificationTimeout;
-              console.log(`⚙️ Using Course Notification timeout: ${effectiveTimeout} minutes`);
+              console.log(`⚙️ Using Course Notification timeout: ${effectiveTimeout} minutes (course sent at: ${courseSentAt!.toISOString()})`);
             } else {
               console.log(`⚙️ Using Agent Inactivity timeout: ${effectiveTimeout} minutes`);
             }
