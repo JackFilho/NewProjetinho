@@ -9323,7 +9323,10 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               const isConfirmationReminderContext =
                   lastAssistantMsgPreCheck.includes('agendamento ainda não foi confirmado') ||
                   (lastAssistantMsgPreCheck.includes('Basta responder') && lastAssistantMsgPreCheck.includes('para confirmar')) ||
-                  (lastAssistantMsgPreCheck.includes('responder') && lastAssistantMsgPreCheck.includes('SIM') && lastAssistantMsgPreCheck.includes('confirmar') && !lastAssistantMsgPreCheck.includes('cancelar'));
+                  (lastAssistantMsgPreCheck.includes('responder') && lastAssistantMsgPreCheck.includes('SIM') && lastAssistantMsgPreCheck.includes('confirmar') && !lastAssistantMsgPreCheck.includes('cancelar')) ||
+                  (lastAssistantMsgPreCheck.includes('Responda') && lastAssistantMsgPreCheck.includes('SIM') && lastAssistantMsgPreCheck.includes('confirmar') && !lastAssistantMsgPreCheck.includes('cancelar')) ||
+                  (lastAssistantMsgPreCheck.includes('Está tudo correto') && lastAssistantMsgPreCheck.includes('confirmar')) ||
+                  (lastAssistantMsgPreCheck.includes('tudo correto') && lastAssistantMsgPreCheck.includes('SIM') && lastAssistantMsgPreCheck.includes('confirmar'));
 
               const isCancelContext = lastAssistantMsgPreCheck.includes('Confirma o cancelamento?') ||
                                      lastAssistantMsgPreCheck.includes('CANCELAR* para confirmar') ||
