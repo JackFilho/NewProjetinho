@@ -10975,7 +10975,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           messages: [
                             {
                               role: 'system',
-                              content: `Você é um assistente de atendimento via WhatsApp. O cliente parou de responder há 30 minutos durante a conversa. Gere UMA mensagem curta e amigável (máximo 2 frases) pedindo para o cliente continuar o atendimento. A mensagem deve ser contextual baseada no histórico da conversa. Não repita informações já dadas. Use tom amigável e informal. Não use markdown. Não mencione o tempo que passou.`
+                              content: `Você é um assistente de atendimento via WhatsApp. O cliente parou de responder há 30 minutos durante a conversa. Gere UMA mensagem curta e amigável (máximo 2 frases) pedindo para o cliente continuar o atendimento. A mensagem deve ser contextual baseada no histórico da conversa. Não repita informações já dadas. Use tom amigável e informal. Não use markdown. Não mencione o tempo que passou. IMPORTANTE: NÃO use nenhum nome na mensagem — nem o nome do cliente, nem o nome da empresa, nem nome de profissional ou atendente. Comece a mensagem de forma genérica (ex: "Oi!", "Olá!", "E aí!").`
                             },
                             ...lastMessages,
                             {
