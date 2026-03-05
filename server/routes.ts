@@ -183,6 +183,9 @@ const conversationFollowUpTimers = new Map<string, {
 // Rastreia conversas que já receberam follow-up (só envia uma vez por conversa)
 const conversationFollowUpSent = new Set<string>();
 
+// 🗑️ LIMPEZA DE CONVERSA: Timer de 2 horas após agendamento confirmado para deletar histórico
+const conversationCleanupTimers = new Map<string, NodeJS.Timeout>();
+
 // 🤖 CACHE DE RESPOSTAS DA AI: Detecta quando o Chatwoot ecoa a resposta da AI como mensagem de "agente humano"
 // Quando a AI envia uma resposta via UAZAPI, ela é sincronizada ao Chatwoot e aparece como mensagem de um agente (tipo 'user').
 // Sem este cache, o webhook do Chatwoot ativaria o human takeover para cada resposta da AI.
@@ -8656,7 +8659,7 @@ if (ignoredNumbers !== undefined) {
               // 📨 DEBOUNCE: Aguardar até que o cliente pare de enviar mensagens
               // Reseta o timer a cada nova mensagem (máximo 60s de espera total)
               // ========================================
-              const DEBOUNCE_INTERVAL_MS = 5000;    // 5 segundos entre verificações
+              const DEBOUNCE_INTERVAL_MS = 8000;    // 8 segundos entre verificações
               const MAX_DEBOUNCE_ITERATIONS = 12;   // 12 x 5s = 60 segundos máximo
 
               let debounceIteration = 0;
@@ -12276,6 +12279,25 @@ Por favor, escolha um dos horários disponíveis acima.`;
                         });
                       } else if (appointmentId) {
                         console.log('✅ Agendamento criado com ID:', appointmentId);
+
+                        // 🗑️ Agendar limpeza da conversa após 2 horas
+                        const cleanupKey = `${company.id}:${phoneNumber}`;
+                        const existingCleanupTimer = conversationCleanupTimers.get(cleanupKey);
+                        if (existingCleanupTimer) {
+                          clearTimeout(existingCleanupTimer);
+                        }
+                        const cleanupTimer = setTimeout(async () => {
+                          try {
+                            console.log(`🗑️ Executando limpeza de conversa para ${phoneNumber} (empresa ${company.id}) - 2h após agendamento`);
+                            await storage.deleteConversationsByPhone(company.id, phoneNumber);
+                          } catch (err) {
+                            console.error(`❌ Erro ao limpar conversa para ${phoneNumber}:`, err);
+                          } finally {
+                            conversationCleanupTimers.delete(cleanupKey);
+                          }
+                        }, 2 * 60 * 60 * 1000); // 2 horas
+                        conversationCleanupTimers.set(cleanupKey, cleanupTimer);
+                        console.log(`⏰ Limpeza de conversa agendada para ${phoneNumber} em 2 horas`);
                       }
                     }
                     } // Fim do else (FLUXO NORMAL - CRIAR AGENDAMENTO)

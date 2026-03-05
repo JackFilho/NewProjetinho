@@ -1163,6 +1163,23 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
+  // Conversation cleanup operations
+  async deleteConversationsByPhone(companyId: number, phoneNumber: string): Promise<number> {
+    try {
+      const result = await db.delete(conversations)
+        .where(and(
+          eq(conversations.companyId, companyId),
+          eq(conversations.phoneNumber, phoneNumber)
+        ));
+      const deletedCount = (result as any)[0]?.affectedRows || 0;
+      console.log(`🗑️ ${deletedCount} conversa(s) deletada(s) para telefone ${phoneNumber} da empresa ${companyId}`);
+      return deletedCount;
+    } catch (error: any) {
+      console.error("Error deleting conversations by phone:", error);
+      return 0;
+    }
+  }
+
   // Services operations
   async getServicesByCompany(companyId: number): Promise<Service[]> {
     try {
