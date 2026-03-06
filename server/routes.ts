@@ -932,7 +932,7 @@ function needsAvailabilityInfo(messageText: string, conversationHistory: any[]):
     // (números, confirmações, datas, etc.)
     const looksLikeSchedulingResponse = /\d{1,2}[:\h]?\d{0,2}/.test(messageText) || // Horários
                                         /\d{1,2}\/\d{1,2}/.test(messageText) || // Datas
-                                        /\b(sim|ok|confirmo|confirma|confirmar|confirmado|combinado|pode ser|tudo certo|tudo correto|tá bom|ta bom|com certeza|claro|positivo|afirmativo)\b/i.test(messageText);
+                                        /\b(sim|sin|sím|sii|ok|confirmo|confirma|confirmar|confirmado|combinado|pode ser|tudo certo|tudo correto|tá bom|ta bom|com certeza|claro|positivo|afirmativo)\b/i.test(messageText);
 
     return looksLikeSchedulingResponse;
   }
@@ -8526,7 +8526,7 @@ if (ignoredNumbers !== undefined) {
                 // Se o regex não reconhecer, o fallback com IA será acionado automaticamente.
                 // ================================================================
                 const normalizedMessage = messageText.toLowerCase().trim();
-                const isSimpleConfirmation = /\b(sim|ok|confirmo|confirma|confirmar|confirmado|combinado|pode ser|tudo certo|tudo correto|tá bom|ta bom|com certeza|claro|positivo|afirmativo)\b/i.test(normalizedMessage);
+                const isSimpleConfirmation = /\b(sim|sin|sím|sii|sim sim|ok|confirmo|confirma|confirmar|confirmado|combinado|pode ser|tudo certo|tudo correto|tá bom|ta bom|com certeza|claro|positivo|afirmativo)\b/i.test(normalizedMessage);
 
                 // Special case: if user is responding with payment method choice (PIX or CARTÃO)
                 const normalizedPaymentResponse = messageText.toLowerCase().trim().replace(/[!?.,:;'"]+$/g, '');
@@ -9474,10 +9474,10 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               // ========================================
               // Se cliente confirmou com SIM/OK, validar dados ANTES da IA responder
               const confirmationPatterns = [
-                /^(sim|s|ok|confirmo|confirmar|confirmado)$/i,
-                /^(sim|ok),?\s*(pode|por favor|obrigado|está correto|confirmo)?$/i,
+                /^(sim|sin|sím|sii|s|ok|confirmo|confirmar|confirmado)$/i,
+                /^(sim|sin|sím|ok),?\s*(pode|por favor|obrigado|está correto|confirmo)?$/i,
                 /^(está correto|tudo certo|tudo correto|pode confirmar|confirmo sim)$/i,
-                /^sim,?\s*(tudo correto|tudo certo|tudo)$/i,
+                /^(sim|sin),?\s*(tudo correto|tudo certo|tudo)$/i,
                 /^tudo\s*(ok|certo|correto)$/i
               ];
 
@@ -10391,7 +10391,7 @@ Confirma o cancelamento? Digite *CANCELAR* para confirmar ou *NÃO* para manter 
               // PROCESSAR CONFIRMAÇÃO DE CANCELAMENTO (SIM após escolha de número)
               // ========================================
               const isConfirmingCancelWord = messageText.match(/^(cancelar|cancela|cancelamento)$/i);
-              const isConfirmingSIM = messageText.match(/^(sim|s|ok|confirmo|confirmar)$/i);
+              const isConfirmingSIM = messageText.match(/^(sim|sin|sím|sii|s|ok|confirmo|confirmar)$/i);
               const lastAssistantMsg = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
               const isAskingCancelConfirmation = lastAssistantMsg.includes('Confirma o cancelamento?') ||
                                                  lastAssistantMsg.includes('CANCELAR* para confirmar') ||
