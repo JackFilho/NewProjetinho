@@ -2592,6 +2592,95 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
           if (singleAppointmentId) {
             createdAppointmentIds.push(singleAppointmentId);
             console.log(`✅ Agendamento ${i + 1} criado com ID: ${singleAppointmentId}`);
+
+            // 🔔 Enviar webhook N8N e broadcast para CADA agendamento múltiplo
+            try {
+              const multiCompany = await storage.getCompanyById(companyId);
+              const multiServices = await storage.getServicesByCompany(companyId);
+              const multiProfessionals = await storage.getProfessionalsByCompany(companyId);
+
+              const multiService = multiServices.find(s => s.name.toLowerCase() === (blockData.service || '').toLowerCase()) ||
+                                   multiServices.find(s => s.name.toLowerCase().includes((blockData.service || '').toLowerCase()) || (blockData.service || '').toLowerCase().includes(s.name.toLowerCase()));
+              const multiProfessional = multiProfessionals.find(p => p.name.toLowerCase() === (blockData.professional || '').toLowerCase()) ||
+                                        multiProfessionals.find(p => p.name.toLowerCase().includes((blockData.professional || '').toLowerCase()) || (blockData.professional || '').toLowerCase().includes(p.name.toLowerCase()));
+
+              // Converter data DD/MM/YYYY para YYYY-MM-DD
+              let multiDateStr = '';
+              if (blockData.date) {
+                const dp = blockData.date.split('/');
+                if (dp.length === 3) multiDateStr = `${dp[2]}-${dp[1]}-${dp[0]}`;
+              }
+
+              // Broadcast para dashboard em tempo real
+              try {
+                broadcastEvent({
+                  type: 'appointment_created',
+                  data: {
+                    appointment: {
+                      id: singleAppointmentId,
+                      clientName: blockData.clientName || contactName || 'Cliente',
+                      clientPhone: phoneNumber,
+                      appointmentDate: multiDateStr,
+                      appointmentTime: blockData.time,
+                      professionalId: multiProfessional?.id,
+                      serviceId: multiService?.id,
+                      status: 'Pendente'
+                    }
+                  }
+                }, companyId);
+              } catch (broadcastErr) {
+                console.error('⚠️ [Multi] Broadcast error:', broadcastErr);
+              }
+
+              // Webhook N8N
+              if (multiCompany?.n8nWebhookEnabled && multiCompany?.n8nWebhookUrl) {
+                const multiWebhookPayload = {
+                  event: 'appointment.created',
+                  timestamp: new Date().toISOString(),
+                  createdBy: 'whatsapp_ai',
+                  conversationId: conversationId,
+                  appointment: {
+                    id: singleAppointmentId,
+                    clientName: blockData.clientName || contactName || 'Cliente',
+                    clientPhone: phoneNumber,
+                    clientEmail: null,
+                    appointmentDate: multiDateStr,
+                    appointmentTime: blockData.time,
+                    status: initialStatus === 'payment_pending' ? 'Aguardando Pagamento' : 'Pendente',
+                    duration: multiService?.duration || 30,
+                    totalPrice: multiService?.price || 0,
+                    notes: `Agendamento via WhatsApp (múltiplos)`
+                  },
+                  service: {
+                    id: multiService?.id || null,
+                    name: multiService?.name || blockData.service || 'Serviço',
+                    price: multiService?.price || 0
+                  },
+                  professional: {
+                    id: multiProfessional?.id || null,
+                    name: multiProfessional?.name || blockData.professional || 'Profissional'
+                  },
+                  company: {
+                    id: companyId,
+                    name: multiCompany.fantasyName
+                  }
+                };
+
+                const multiWebhookResponse = await fetch(multiCompany.n8nWebhookUrl, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(multiWebhookPayload)
+                });
+
+                if (!multiWebhookResponse.ok) {
+                  console.error(`⚠️ [Multi] N8N webhook error for appointment ${i + 1}:`, multiWebhookResponse.status);
+                } else {
+                  console.log(`✅ [Multi] N8N webhook sent for appointment ${i + 1} (ID: ${singleAppointmentId})`);
+                }
+              }
+            } catch (multiWebhookError) {
+              console.error(`⚠️ [Multi] Error sending webhook/broadcast for appointment ${i + 1}:`, multiWebhookError);
+            }
           } else {
             console.log(`❌ Falha ao criar agendamento ${i + 1}`);
           }
@@ -9897,14 +9986,34 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 
               // Process [MOSTRAR_HORARIOS_LIVRES:serviceId:professionalId:date] command
               // Suporta tanto IDs numéricos quanto NOMES de serviço/profissional
-              const horariosLivresMatch = aiResponse.match(/\[MOSTRAR_HORARIOS_LIVRES:([^:]+):([^:]+):(\d{4}-\d{2}-\d{2})\]/);
-              if (horariosLivresMatch) {
+              // Fallback: detectar comandos [MOSTRAR_HORARIOS_LIVRES] SEM data (malformados)
+              // Isso pode acontecer quando a IA tenta usar o comando sem ter coletado a data do cliente
+              let horariosLivresMalformado;
+              while ((horariosLivresMalformado = aiResponse.match(/\[MOSTRAR_HORARIOS_LIVRES:([^\]]+)\]/)) !== null) {
+                if (/\d{4}-\d{2}-\d{2}/.test(horariosLivresMalformado[1])) break; // Tem data, sai do loop de malformados
+                console.log(`⚠️ Comando [MOSTRAR_HORARIOS_LIVRES] malformado (sem data): "${horariosLivresMalformado[0]}"`);
+                aiResponse = aiResponse.replace(horariosLivresMalformado[0], 'Em qual dia você gostaria de agendar? 😊');
+              }
+
+              // Processar TODOS os comandos [MOSTRAR_HORARIOS_LIVRES:serviço:profissional:data] (loop)
+              // Buscar serviços e profissionais uma vez só (reutilizar para múltiplos comandos)
+              let horariosLivresMatch;
+              let horariosCompanyServices: any[] | null = null;
+              let horariosCompanyProfessionals: any[] | null = null;
+
+              while ((horariosLivresMatch = aiResponse.match(/\[MOSTRAR_HORARIOS_LIVRES:([^:]+):([^:]+):(\d{4}-\d{2}-\d{2})\]/)) !== null) {
                 const [fullMatch, serviceIdentifier, professionalIdentifier, dateStr] = horariosLivresMatch;
                 console.log(`📅 Mostrando horários livres: Serviço "${serviceIdentifier}", Profissional "${professionalIdentifier}", Data ${dateStr}`);
 
-                // Buscar serviços e profissionais da empresa
-                const companyServices = await storage.getServicesByCompany(company.id);
-                const companyProfessionals = await storage.getProfessionalsByCompany(company.id);
+                // Buscar serviços e profissionais da empresa (apenas na primeira iteração)
+                if (!horariosCompanyServices) {
+                  horariosCompanyServices = await storage.getServicesByCompany(company.id);
+                }
+                if (!horariosCompanyProfessionals) {
+                  horariosCompanyProfessionals = await storage.getProfessionalsByCompany(company.id);
+                }
+                const companyServices = horariosCompanyServices;
+                const companyProfessionals = horariosCompanyProfessionals;
 
                 // Resolver ID do serviço (pode ser número ou nome)
                 // PRIORIDADE: 1) Match exato 2) Match único parcial 3) Nome mais curto se múltiplos
@@ -15669,6 +15778,95 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
           if (singleAppointmentId) {
             createdAppointmentIds.push(singleAppointmentId);
             console.log(`✅ Agendamento ${i + 1} criado com ID: ${singleAppointmentId}`);
+
+            // 🔔 Enviar webhook N8N e broadcast para CADA agendamento múltiplo
+            try {
+              const multiCompany = await storage.getCompanyById(companyId);
+              const multiServices = await storage.getServicesByCompany(companyId);
+              const multiProfessionals = await storage.getProfessionalsByCompany(companyId);
+
+              const multiService = multiServices.find(s => s.name.toLowerCase() === (blockData.service || '').toLowerCase()) ||
+                                   multiServices.find(s => s.name.toLowerCase().includes((blockData.service || '').toLowerCase()) || (blockData.service || '').toLowerCase().includes(s.name.toLowerCase()));
+              const multiProfessional = multiProfessionals.find(p => p.name.toLowerCase() === (blockData.professional || '').toLowerCase()) ||
+                                        multiProfessionals.find(p => p.name.toLowerCase().includes((blockData.professional || '').toLowerCase()) || (blockData.professional || '').toLowerCase().includes(p.name.toLowerCase()));
+
+              // Converter data DD/MM/YYYY para YYYY-MM-DD
+              let multiDateStr = '';
+              if (blockData.date) {
+                const dp = blockData.date.split('/');
+                if (dp.length === 3) multiDateStr = `${dp[2]}-${dp[1]}-${dp[0]}`;
+              }
+
+              // Broadcast para dashboard em tempo real
+              try {
+                broadcastEvent({
+                  type: 'appointment_created',
+                  data: {
+                    appointment: {
+                      id: singleAppointmentId,
+                      clientName: blockData.clientName || contactName || 'Cliente',
+                      clientPhone: phoneNumber,
+                      appointmentDate: multiDateStr,
+                      appointmentTime: blockData.time,
+                      professionalId: multiProfessional?.id,
+                      serviceId: multiService?.id,
+                      status: 'Pendente'
+                    }
+                  }
+                }, companyId);
+              } catch (broadcastErr) {
+                console.error('⚠️ [Multi] Broadcast error:', broadcastErr);
+              }
+
+              // Webhook N8N
+              if (multiCompany?.n8nWebhookEnabled && multiCompany?.n8nWebhookUrl) {
+                const multiWebhookPayload = {
+                  event: 'appointment.created',
+                  timestamp: new Date().toISOString(),
+                  createdBy: 'whatsapp_ai',
+                  conversationId: conversationId,
+                  appointment: {
+                    id: singleAppointmentId,
+                    clientName: blockData.clientName || contactName || 'Cliente',
+                    clientPhone: phoneNumber,
+                    clientEmail: null,
+                    appointmentDate: multiDateStr,
+                    appointmentTime: blockData.time,
+                    status: initialStatus === 'payment_pending' ? 'Aguardando Pagamento' : 'Pendente',
+                    duration: multiService?.duration || 30,
+                    totalPrice: multiService?.price || 0,
+                    notes: `Agendamento via WhatsApp (múltiplos)`
+                  },
+                  service: {
+                    id: multiService?.id || null,
+                    name: multiService?.name || blockData.service || 'Serviço',
+                    price: multiService?.price || 0
+                  },
+                  professional: {
+                    id: multiProfessional?.id || null,
+                    name: multiProfessional?.name || blockData.professional || 'Profissional'
+                  },
+                  company: {
+                    id: companyId,
+                    name: multiCompany.fantasyName
+                  }
+                };
+
+                const multiWebhookResponse = await fetch(multiCompany.n8nWebhookUrl, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(multiWebhookPayload)
+                });
+
+                if (!multiWebhookResponse.ok) {
+                  console.error(`⚠️ [Multi] N8N webhook error for appointment ${i + 1}:`, multiWebhookResponse.status);
+                } else {
+                  console.log(`✅ [Multi] N8N webhook sent for appointment ${i + 1} (ID: ${singleAppointmentId})`);
+                }
+              }
+            } catch (multiWebhookError) {
+              console.error(`⚠️ [Multi] Error sending webhook/broadcast for appointment ${i + 1}:`, multiWebhookError);
+            }
           } else {
             console.log(`❌ Falha ao criar agendamento ${i + 1}`);
           }
