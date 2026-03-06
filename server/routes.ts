@@ -167,9 +167,16 @@ import { asaasService } from "./services/asaas";
 import { clearMetaTagsCache } from "./vite";
 import { getAvailableSlots, validateSlot, getAvailabilitySummary, generateAvailabilityTextForAI } from "./services/availability";
 
-// 📨 MESSAGE GROUPING: Debounce - aguarda silêncio de 5s para agrupar mensagens (máx 60s)
+// 📨 MESSAGE GROUPING: Debounce - aguarda silêncio de 7s para agrupar mensagens (máx 84s)
 const processingLocks = new Map<string, boolean>();
 const lastMessageTime = new Map<string, number>();
+
+// 🔒 EARLY LOCK: Previne race condition quando duas mensagens chegam quase ao mesmo tempo
+// O lock principal (processingLocks) é setado ~1600 linhas após o webhook começar, após muitos awaits.
+// Sem este early lock, duas mensagens simultâneas podem ambas passar pelo lock check antes de setar o lock.
+// Este Map usa instanceName:phoneNumber como chave (disponível sem DB) para bloquear a segunda mensagem
+// até que a primeira tenha setado o lock principal.
+const earlyWebhookLocks = new Map<string, number>(); // key -> timestamp
 
 // ⏰ LEMBRETE DE CONFIRMAÇÃO: Timer de 10 minutos para clientes que não respondem "Sim"
 const pendingConfirmationTimers = new Map<string, {
@@ -391,8 +398,18 @@ setInterval(() => {
     }
   }
 
-  if (cleanedProcessing > 0 || cleanedLastMsg > 0 || cleanedTimers > 0 || cleanedFollowUp > 0 || cleanedFollowUpSent > 0 || cleanedAICache > 0) {
-    console.log(`🧹 Limpeza de Maps: processingLocks=${cleanedProcessing}, lastMessageTime=${cleanedLastMsg}, pendingTimers=${cleanedTimers}, followUpTimers=${cleanedFollowUp}, followUpSent=${cleanedFollowUpSent}, aiCache=${cleanedAICache}`);
+  // earlyWebhookLocks: limpar entradas mais velhas que 30 segundos
+  // Previne vazamento de memória caso algum return antecipado não limpe o early lock
+  let cleanedEarlyLocks = 0;
+  for (const [key, timestamp] of earlyWebhookLocks) {
+    if (now - timestamp > 30 * 1000) {
+      earlyWebhookLocks.delete(key);
+      cleanedEarlyLocks++;
+    }
+  }
+
+  if (cleanedProcessing > 0 || cleanedLastMsg > 0 || cleanedTimers > 0 || cleanedFollowUp > 0 || cleanedFollowUpSent > 0 || cleanedAICache > 0 || cleanedEarlyLocks > 0) {
+    console.log(`🧹 Limpeza de Maps: processingLocks=${cleanedProcessing}, lastMessageTime=${cleanedLastMsg}, pendingTimers=${cleanedTimers}, followUpTimers=${cleanedFollowUp}, followUpSent=${cleanedFollowUpSent}, aiCache=${cleanedAICache}, earlyLocks=${cleanedEarlyLocks}`);
   }
 }, 5 * 60 * 1000); // 5 minutos
 
@@ -7423,6 +7440,29 @@ if (ignoredNumbers !== undefined) {
           }
 
           // ========================================
+          // 🔒 EARLY LOCK: Previne race condition no debounce
+          // ========================================
+          // Quando duas mensagens chegam quase ao mesmo tempo, ambas podem passar pelo lock principal
+          // (linha ~8701) antes de qualquer uma setá-lo, porque há ~1600 linhas de awaits entre o webhook
+          // e o lock. Este early lock garante que a segunda mensagem espere a primeira setar o lock principal.
+          const earlyLockKey = `${instanceName}:${phoneNumber}`;
+          const earlyLockAge = earlyWebhookLocks.has(earlyLockKey) ? Date.now() - earlyWebhookLocks.get(earlyLockKey)! : Infinity;
+
+          if (earlyWebhookLocks.has(earlyLockKey) && earlyLockAge < 30000) {
+            // Outra requisição está no pipeline de setup (entre webhook e lock principal)
+            // Esperar até que ela sete o lock principal ou expire (máximo 5s)
+            console.log(`⏳ [EARLY-LOCK] Aguardando primeira mensagem setar lock principal (${earlyLockKey})...`);
+            const earlyWaitStart = Date.now();
+            while (earlyWebhookLocks.has(earlyLockKey) && Date.now() - earlyWaitStart < 5000) {
+              await new Promise(resolve => setTimeout(resolve, 150));
+            }
+            console.log(`✅ [EARLY-LOCK] Liberado após ${Date.now() - earlyWaitStart}ms`);
+          }
+
+          // Marcar que estamos no pipeline de setup
+          earlyWebhookLocks.set(earlyLockKey, Date.now());
+
+          // ========================================
           // 🚫 IGNORED NUMBERS CHECK
           // ========================================
 
@@ -7463,6 +7503,7 @@ if (ignoredNumbers !== undefined) {
               if (isIgnored) {
                 console.log('🚫 [IGNORED] Number is in ignored list');
                 console.log('📞 Phone number:', phoneToCheck);
+                earlyWebhookLocks.delete(earlyLockKey);
                 return res.status(200).json({ received: true, processed: false, reason: 'Number in ignored list' });
               }
             }
@@ -7476,6 +7517,9 @@ if (ignoredNumbers !== undefined) {
           const isFromHuman = message?.key?.fromMe === true;
 
           if (isFromHuman) {
+            // 🔓 Human messages não passam pelo debounce - liberar early lock imediatamente
+            earlyWebhookLocks.delete(earlyLockKey);
+
             console.log('👤 HUMAN TAKEOVER: Message from human detected');
             console.log('📞 Phone number:', phoneNumber);
 
@@ -7591,6 +7635,7 @@ if (ignoredNumbers !== undefined) {
           const whatsappInstance = await storage.getWhatsappInstanceByNameOnly(instanceName);
           if (!whatsappInstance) {
             console.log('❌ WhatsApp instance not found');
+            earlyWebhookLocks.delete(earlyLockKey);
             return res.status(404).json({ error: 'Instance not found' });
           }
 
@@ -7598,6 +7643,7 @@ if (ignoredNumbers !== undefined) {
           const company = await storage.getCompany(whatsappInstance.companyId);
           if (!company) {
             console.log('❌ Company not found');
+            earlyWebhookLocks.delete(earlyLockKey);
             return res.status(404).json({ error: 'Company not found' });
           }
 
@@ -7717,6 +7763,7 @@ if (ignoredNumbers !== undefined) {
                 console.log(`⏰ Time remaining: ${(effectiveTimeout - minutesSinceLastMessage).toFixed(2)} minutes`);
                 console.log('👤 Human is still in control of this conversation');
 
+                earlyWebhookLocks.delete(earlyLockKey);
                 return res.status(200).json({
                   received: true,
                   processed: true,
@@ -7909,6 +7956,7 @@ if (ignoredNumbers !== undefined) {
                 // In "no pause" mode, AI will continue responding to NEXT messages
                 if (shouldPauseAI) {
                   console.log('🚫 [HUMAN-REQUEST] AI blocked - human takeover active');
+                  earlyWebhookLocks.delete(earlyLockKey);
                   return res.status(200).json({
                     received: true,
                     processed: true,
@@ -7916,6 +7964,7 @@ if (ignoredNumbers !== undefined) {
                   });
                 } else {
                   console.log('✅ [HUMAN-REQUEST] No pause mode - confirmation sent, AI will respond to next messages');
+                  earlyWebhookLocks.delete(earlyLockKey);
                   return res.status(200).json({
                     received: true,
                     processed: true,
@@ -8096,6 +8145,7 @@ if (ignoredNumbers !== undefined) {
               }
 
               // Return - don't let AI respond
+              earlyWebhookLocks.delete(earlyLockKey);
               return res.status(200).json({
                 received: true,
                 processed: true,
@@ -8284,6 +8334,7 @@ if (ignoredNumbers !== undefined) {
                     if (conversation) {
                       cacheAIResponse(conversation.id, fallbackResponse);
                     }
+                    earlyWebhookLocks.delete(earlyLockKey);
                     return res.status(200).json({
                       received: true,
                       processed: true,
@@ -8291,15 +8342,18 @@ if (ignoredNumbers !== undefined) {
                     });
                   } else {
                     console.error('❌ Failed to send fallback response via UAZAPI');
+                    earlyWebhookLocks.delete(earlyLockKey);
                     return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
                   }
                 } catch (sendError) {
                   console.error('❌ Failed to send fallback response:', sendError);
+                  earlyWebhookLocks.delete(earlyLockKey);
                   return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
                 }
               }
             } catch (error) {
               console.error('❌ Error processing audio:', error);
+              earlyWebhookLocks.delete(earlyLockKey);
               return res.status(200).json({ received: true, processed: false, reason: 'Audio processing error' });
             }
           }
@@ -8320,6 +8374,7 @@ if (ignoredNumbers !== undefined) {
             const whatsappInstance = await storage.getWhatsappInstanceByNameOnly(instanceName);
             if (!whatsappInstance) {
               console.log(`❌ WhatsApp instance ${instanceName} not found`);
+              earlyWebhookLocks.delete(earlyLockKey);
               return res.status(404).json({ error: 'Instance not found' });
             }
             console.log('✅ Found instance:', whatsappInstance.id);
@@ -8330,6 +8385,7 @@ if (ignoredNumbers !== undefined) {
               console.log(`❌ Company or AI prompt not found for instance ${instanceName}`);
               console.log('Company:', company ? 'Found' : 'Not found');
               console.log('AI Prompt:', company?.aiAgentPrompt ? 'Configured' : 'Not configured');
+              earlyWebhookLocks.delete(earlyLockKey);
               return res.status(404).json({ error: 'Company or AI prompt not configured' });
             }
             console.log('✅ Found company and AI prompt configured');
@@ -8382,6 +8438,7 @@ if (ignoredNumbers !== undefined) {
                 timestamp: messageTimestamp,
               });
 
+              earlyWebhookLocks.delete(earlyLockKey);
               return res.status(200).json({
                 received: true,
                 processed: false,
@@ -8392,6 +8449,7 @@ if (ignoredNumbers !== undefined) {
             // Check company's OpenAI configuration
             if (!company.openaiApiKey) {
               console.log('❌ Company does not have OpenAI API key configured');
+              earlyWebhookLocks.delete(earlyLockKey);
               return res.status(400).json({ error: 'OpenAI not configured for this company' });
             }
 
@@ -8399,6 +8457,7 @@ if (ignoredNumbers !== undefined) {
             const globalSettings = await storage.getGlobalSettings();
             if (!globalSettings.uazapiUrl || !globalSettings.uazapiAdminToken) {
               console.log('❌ UAZAPI not configured');
+              earlyWebhookLocks.delete(earlyLockKey);
               return res.status(400).json({ error: 'UAZAPI not configured' });
             }
 
@@ -8607,6 +8666,9 @@ if (ignoredNumbers !== undefined) {
 
               // Se já está processando, apenas salvar mensagem e retornar
               if (processingLocks.get(lockKey)) {
+                // 🔓 Liberar early lock - a mensagem será enfileirada pelo lock principal
+                earlyWebhookLocks.delete(earlyLockKey);
+
                 console.log('⏱️  ❌ LOCK ATIVO - Salvando mensagem mas NÃO processando');
 
                 const messageTimestamp = message.messageTimestamp
@@ -8631,6 +8693,8 @@ if (ignoredNumbers !== undefined) {
               console.log('🔒 Marcando lock como ATIVO (primeira mensagem)');
               processingLocks.set(lockKey, true);
               lastMessageTime.set(lockKey, Date.now());
+              // 🔓 Liberar early lock - o lock principal agora está ativo
+              earlyWebhookLocks.delete(earlyLockKey);
               console.log(`🔍 Lock marcado! Estado: ${processingLocks.get(lockKey) ? 'ATIVO' : 'LIVRE'}`);
 
               // Save user message
@@ -8656,7 +8720,7 @@ if (ignoredNumbers !== undefined) {
               // 📨 DEBOUNCE: Aguardar até que o cliente pare de enviar mensagens
               // Reseta o timer a cada nova mensagem (máximo 60s de espera total)
               // ========================================
-              const DEBOUNCE_INTERVAL_MS = 8000;    // 8 segundos entre verificações
+              const DEBOUNCE_INTERVAL_MS = 7000;    // 7 segundos entre verificações
               const MAX_DEBOUNCE_ITERATIONS = 12;   // 12 x 5s = 60 segundos máximo
 
               let debounceIteration = 0;
