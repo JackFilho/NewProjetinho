@@ -8764,6 +8764,65 @@ if (ignoredNumbers !== undefined) {
                   lastMessageAt: new Date(),
                   contactName: message.pushName || conversation.contactName,
                 });
+
+                // Detectar confirmação também para conversas existentes
+                // (o bloco anterior só seta confirmationDetected quando !conversation)
+                if (!confirmationDetected) {
+                  const normalizedMsg = messageText.toLowerCase().trim();
+                  const isSimpleConf = /\b(sim|sin|sím|sii|sim sim|ok|confirmo|confirma|confirmar|confirmado|combinado|pode ser|tudo certo|tudo correto|tá bom|ta bom|com certeza|claro|positivo|afirmativo)\b/i.test(normalizedMsg);
+                  if (isSimpleConf) {
+                    // Verificar se a última mensagem do assistente está pedindo confirmação
+                    const recentMsgs = await storage.getMessagesByConversation(conversation.id);
+                    const lastAiMsg = recentMsgs.filter(m => m.role === 'assistant')[0];
+                    if (lastAiMsg && (
+                      lastAiMsg.content.includes('Confirma') ||
+                      lastAiMsg.content.includes('confirma') ||
+                      lastAiMsg.content.includes('confirmando') ||
+                      lastAiMsg.content.includes('📅') ||
+                      lastAiMsg.content.includes('Serviço:') ||
+                      lastAiMsg.content.includes('Data:') ||
+                      lastAiMsg.content.includes('Está tudo correto') ||
+                      lastAiMsg.content.includes('SIM para confirmar') ||
+                      lastAiMsg.content.includes('OK para confirmar')
+                    )) {
+                      confirmationDetected = true;
+                      console.log('✅ Confirmação detectada em conversa existente via regex simples');
+                    }
+                  }
+
+                  // Fallback com IA se regex não detectou
+                  if (!confirmationDetected && company.openaiApiKey) {
+                    const recentMsgs = await storage.getMessagesByConversation(conversation.id);
+                    const lastAiMsg = recentMsgs.filter(m => m.role === 'assistant')[0];
+                    if (lastAiMsg && (
+                      lastAiMsg.content.includes('Confirma') ||
+                      lastAiMsg.content.includes('confirma') ||
+                      lastAiMsg.content.includes('confirmando') ||
+                      lastAiMsg.content.includes('📅') ||
+                      lastAiMsg.content.includes('Serviço:') ||
+                      lastAiMsg.content.includes('Data:')
+                    )) {
+                      try {
+                        const OpenAI = (await import('openai')).default;
+                        const openaiClient = new OpenAI({ apiKey: company.openaiApiKey });
+                        const confirmationCheck = await openaiClient.chat.completions.create({
+                          model: 'gpt-4o-mini',
+                          messages: [
+                            { role: 'system', content: 'Você é um classificador de intenção. Responda APENAS "SIM" ou "NAO". Nada mais.' },
+                            { role: 'user', content: `A seguinte mensagem de um cliente é uma confirmação/concordância com algo que foi proposto? Mensagem: "${messageText.toLowerCase().trim()}"` }
+                          ],
+                          max_tokens: 5,
+                          temperature: 0
+                        });
+                        const aiAnswer = confirmationCheck.choices[0]?.message?.content?.trim().toUpperCase() || '';
+                        confirmationDetected = aiAnswer.includes('SIM');
+                        console.log(`🤖 [EXISTING-CONV] IA respondeu: "${aiAnswer}" → confirmação: ${confirmationDetected}`);
+                      } catch (aiError) {
+                        console.error('❌ Erro no fallback de IA para confirmação (conversa existente):', aiError);
+                      }
+                    }
+                  }
+                }
               }
 
               // ========================================
@@ -9569,11 +9628,11 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               // ========================================
               // Se cliente confirmou com SIM/OK, validar dados ANTES da IA responder
               const confirmationPatterns = [
-                /^(sim|sin|sím|sii|s|ok|confirmo|confirmar|confirmado)$/i,
-                /^(sim|sin|sím|ok),?\s*(pode|por favor|obrigado|está correto|confirmo)?$/i,
-                /^(está correto|tudo certo|tudo correto|pode confirmar|confirmo sim)$/i,
-                /^(sim|sin),?\s*(tudo correto|tudo certo|tudo)$/i,
-                /^tudo\s*(ok|certo|correto)$/i
+                /^(sim|sin|sím|sii|s|ok|confirmo|confirmar|confirmado)[!.?]*$/i,
+                /^(sim|sin|sím|ok)[!.?]?,?\s*(pode|por favor|obrigado|está correto|confirmo)?[!.?]*$/i,
+                /^(está correto|tudo certo|tudo correto|pode confirmar|confirmo sim)[!.?]*$/i,
+                /^(sim|sin)[!.?]?,?\s*(tudo correto|tudo certo|tudo)[!.?]*$/i,
+                /^tudo\s*(ok|certo|correto)[!.?]*$/i
               ];
 
               // Verificar confirmação na mensagem inteira E em cada linha individual
@@ -10486,7 +10545,7 @@ Confirma o cancelamento? Digite *CANCELAR* para confirmar ou *NÃO* para manter 
               // PROCESSAR CONFIRMAÇÃO DE CANCELAMENTO (SIM após escolha de número)
               // ========================================
               const isConfirmingCancelWord = messageText.match(/^(cancelar|cancela|cancelamento)$/i);
-              const isConfirmingSIM = messageText.match(/^(sim|sin|sím|sii|s|ok|confirmo|confirmar)$/i);
+              const isConfirmingSIM = messageText.match(/^(sim|sin|sím|sii|s|ok|confirmo|confirmar)[!.?]*$/i);
               const lastAssistantMsg = conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0]?.content || '';
               const isAskingCancelConfirmation = lastAssistantMsg.includes('Confirma o cancelamento?') ||
                                                  lastAssistantMsg.includes('CANCELAR* para confirmar') ||
@@ -11605,11 +11664,11 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 
                 // Check if this is a confirmation response (SIM/OK) after AI summary
                 const confirmationPatterns = [
-                  /^(sim|s|ok|confirmo|confirmar|confirmado)$/i,
-                  /^(sim|ok),?\s*(pode|por favor|obrigado|está correto|confirmo)?$/i,
-                  /^(está correto|tudo certo|tudo correto|pode confirmar|confirmo sim)$/i,
-                  /^sim,?\s*(tudo correto|tudo certo|tudo)$/i,
-                  /^tudo\s*(ok|certo|correto)$/i
+                  /^(sim|s|ok|confirmo|confirmar|confirmado)[!.?]*$/i,
+                  /^(sim|ok)[!.?]?,?\s*(pode|por favor|obrigado|está correto|confirmo)?[!.?]*$/i,
+                  /^(está correto|tudo certo|tudo correto|pode confirmar|confirmo sim)[!.?]*$/i,
+                  /^sim[!.?]?,?\s*(tudo correto|tudo certo|tudo)[!.?]*$/i,
+                  /^tudo\s*(ok|certo|correto)[!.?]*$/i
                 ];
 
                 // Verificar confirmação na mensagem inteira E em cada linha individual
