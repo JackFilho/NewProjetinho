@@ -8577,6 +8577,10 @@ if (ignoredNumbers !== undefined) {
               // First, try to find existing conversation for this exact instance
               let conversation = await storage.getConversation(company.id, whatsappInstance.id, phoneNumber);
               
+              // Variável de confirmação detectada - declarada no escopo externo para ser acessível
+              // tanto dentro do bloco if (!conversation) quanto nos blocos de pré-validação e pós-IA
+              let confirmationDetected = false;
+
               // If no conversation for this instance, look for any recent conversation for this phone number
               if (!conversation) {
                 console.log('🔍 Nenhuma conversa para esta instância, verificando conversas recentes para o número');
@@ -8623,7 +8627,7 @@ if (ignoredNumbers !== undefined) {
                 // 2. Existe uma conversa recente com resumo de agendamento pendente
                 // Assim reduz custos, pois a IA só é chamada quando necessário.
                 // ================================================================
-                let confirmationDetected = isSimpleConfirmation;
+                confirmationDetected = isSimpleConfirmation;
 
                 if (!confirmationDetected && phoneConversations.length > 0 && company.openaiApiKey) {
                   // Verificar se há uma conversa com resumo de agendamento aguardando confirmação
