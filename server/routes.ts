@@ -9434,7 +9434,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                                      (lastAssistantMsgPreCheck.includes('cancelar') && lastAssistantMsgPreCheck.includes('prosseguir'));
               // Detectar se usuário digitou "cancelar" como confirmação de cancelamento
               const isUserConfirmingCancelWord = /^(cancelar|cancela|cancelamento)$/i.test(messageText.toLowerCase().trim());
-              const isConfirmingCancel = (isUserConfirming || isUserConfirmingCancelWord) && isCancelContext;
+              const isConfirmingCancel = (isUserConfirming || confirmationDetected || isUserConfirmingCancelWord) && isCancelContext;
 
               // ========================================
               // VERIFICAR CONTEXTO DE REAGENDAMENTO
@@ -9573,9 +9573,9 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 );
               }
 
-              if ((isUserConfirming || isUserConfirmingCancelWord) && !isConfirmingCancel && (!isRescheduleContext || isConfirmationReminderContext) && !isPostConfirmationContext) {
+              if ((isUserConfirming || confirmationDetected || isUserConfirmingCancelWord) && !isConfirmingCancel && (!isRescheduleContext || isConfirmationReminderContext) && !isPostConfirmationContext) {
                 console.log('==================================================');
-                console.log('🔍 PRÉ-VALIDAÇÃO: Cliente confirmou com SIM/OK');
+                console.log(`🔍 PRÉ-VALIDAÇÃO: Cliente confirmou (regex: ${isUserConfirming}, IA: ${confirmationDetected})`);
                 console.log('==================================================');
 
                 // Buscar mensagem de resumo nas últimas mensagens
@@ -11439,9 +11439,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 console.log('✅ É confirmação?', isConfirmationResponse);
                 console.log('==================================================');
 
-                if (isConfirmationResponse && !isPostConfirmationContext) {
+                if ((isConfirmationResponse || confirmationDetected) && !isPostConfirmationContext) {
                   console.log('==================================================');
-                  console.log('🎯 CONFIRMAÇÃO SIM/OK DETECTADA!');
+                  console.log(`🎯 CONFIRMAÇÃO DETECTADA! (regex: ${isConfirmationResponse}, IA: ${confirmationDetected})`);
                   console.log('==================================================');
                   console.log('📩 Mensagem que confirmou:', messageText);
                   console.log('🔍 AI Response atual:', aiResponse.substring(0, 200));
