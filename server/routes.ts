@@ -7427,7 +7427,9 @@ if (ignoredNumbers !== undefined) {
       console.log('🌐 Origem detectada:', messageOrigin);
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-        if (isTextMessage || isAudioMessage) {
+        // Include fromMe media messages (images, videos, docs, stickers) so they trigger human takeover
+        const isFromMeMedia = message?.key?.fromMe === true && !isTextMessage && !isAudioMessage;
+        if (isTextMessage || isAudioMessage || isFromMeMedia) {
           // Extract phone number - always get the REAL number (not @lid)
           let rawPhoneNumber = '';
           const remoteJid = message?.key?.remoteJid || '';
@@ -7658,6 +7660,14 @@ if (ignoredNumbers !== undefined) {
               console.log('🎵 [HUMAN TAKEOVER] Áudio detectado do humano - salvando como referência');
             }
 
+            // Detectar se é mídia do humano (imagem, vídeo, documento - não tem texto mas deve ativar takeover)
+            const isHumanMedia = isFromMeMedia && !humanMessageText;
+            if (isHumanMedia) {
+              const mediaType = uazRawMessageType || message?.messageType || 'media';
+              humanMessageText = `[Mídia enviada pelo atendente: ${mediaType}]`;
+              console.log('📷 [HUMAN TAKEOVER] Mídia detectada do humano - salvando como referência');
+            }
+
             console.log('✅ Texto extraído:', humanMessageText || '(VAZIO!)');
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
@@ -7682,7 +7692,7 @@ if (ignoredNumbers !== undefined) {
                 messageId: message.key?.id || `msg_human_${Date.now()}`,
                 content: humanMessageText,
                 role: 'assistant', // Human messages are saved as 'assistant' since they're responses
-                messageType: isHumanAudio ? 'audio' : (message.messageType || 'text'),
+                messageType: isHumanAudio ? 'audio' : isHumanMedia ? 'media' : (message.messageType || 'text'),
                 timestamp: messageTimestamp,
               });
               console.log('✅ Mensagem salva com sucesso no banco de dados');
