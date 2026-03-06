@@ -7251,7 +7251,10 @@ if (ignoredNumbers !== undefined) {
         const msgType = uazMsg.type || uazMsg.messageType || (msgText ? 'conversation' : 'unknown');
 
         // Determine if message was sent by the instance (fromMe)
-        const fromMe = uazMsg.fromMe === true || uazMsg.fromMe === 'true';
+        // Check multiple sources: UAZAPI pode enviar fromMe no message, no chat, ou no root
+        const fromMe = uazMsg.fromMe === true || uazMsg.fromMe === 'true'
+          || webhookData.fromMe === true || webhookData.fromMe === 'true'
+          || uazChat.fromMe === true || uazChat.fromMe === 'true';
 
         // Extract message ID (UAZAPI uses messageid field)
         const msgId = uazMsg.messageid || uazMsg.id || uazMsg.messageId || uazMsg.key?.id || '';
@@ -7514,7 +7517,14 @@ if (ignoredNumbers !== undefined) {
           // ========================================
 
           // Check if message is from human (fromMe = true)
+          // Verificar fromMe em múltiplas fontes para robustez com UAZAPI
           const isFromHuman = message?.key?.fromMe === true;
+
+          console.log(`🔍 [FROM-ME] message.key.fromMe=${message?.key?.fromMe} (${typeof message?.key?.fromMe}) | isFromHuman=${isFromHuman} | isAudio=${isAudioMessage}`);
+          // Log raw UAZAPI fromMe sources para debug
+          if (webhookData.message) {
+            console.log(`🔍 [FROM-ME] raw: webhookData.message.fromMe=${webhookData.message.fromMe}, webhookData.fromMe=${webhookData.fromMe}, webhookData.chat?.fromMe=${webhookData.chat?.fromMe}`);
+          }
 
           if (isFromHuman) {
             // 🔓 Human messages não passam pelo debounce - liberar early lock imediatamente
@@ -7556,6 +7566,13 @@ if (ignoredNumbers !== undefined) {
 
             let humanMessageText = message?.message?.conversation || message?.message?.extendedTextMessage?.text || '';
 
+            // Detectar se é áudio do humano (áudio não tem texto mas deve salvar e ativar takeover)
+            const isHumanAudio = isAudioMessage && !humanMessageText;
+            if (isHumanAudio) {
+              humanMessageText = '[Áudio enviado pelo atendente]';
+              console.log('🎵 [HUMAN TAKEOVER] Áudio detectado do humano - salvando como referência');
+            }
+
             console.log('✅ Texto extraído:', humanMessageText || '(VAZIO!)');
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
@@ -7580,7 +7597,7 @@ if (ignoredNumbers !== undefined) {
                 messageId: message.key?.id || `msg_human_${Date.now()}`,
                 content: humanMessageText,
                 role: 'assistant', // Human messages are saved as 'assistant' since they're responses
-                messageType: message.messageType || 'text',
+                messageType: isHumanAudio ? 'audio' : (message.messageType || 'text'),
                 timestamp: messageTimestamp,
               });
               console.log('✅ Mensagem salva com sucesso no banco de dados');
