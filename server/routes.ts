@@ -1903,7 +1903,7 @@ async function checkSpecificTimeAvailability(
       // Verificar se é dia de folga
       const isDayOff = professionalDaysOff.some(d => {
         const dateObj = new Date(d.dateOff);
-        const dayOffDate = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
+        const dayOffDate = `${dateObj.getUTCFullYear()}-${String(dateObj.getUTCMonth() + 1).padStart(2, '0')}-${String(dateObj.getUTCDate()).padStart(2, '0')}`;
         return dayOffDate === day.date;
       });
 
@@ -1971,6 +1971,139 @@ async function checkSpecificTimeAvailability(
   } catch (error) {
     console.error('Erro ao verificar disponibilidade de horário:', error);
     return `Desculpe, ocorreu um erro ao verificar a disponibilidade. Pode tentar novamente?`;
+  }
+}
+
+/**
+ * Validação pós-resposta: detecta datas mencionadas pela IA e verifica se são dias de folga.
+ * Se a IA sugerir uma data indisponível, corrige automaticamente usando checkSpecificTimeAvailability.
+ * Isso garante robustez mesmo quando a IA ignora as instruções do prompt.
+ */
+async function validateAvailabilityInResponse(
+  aiResponse: string,
+  companyId: number,
+  activeProfessionals: any[]
+): Promise<string> {
+  try {
+    // Padrões que indicam que a IA está sugerindo uma data para agendamento
+    const availabilityPatterns = [
+      /disponível\s+(?:na|no)\s+\w+[\-\s]*feira\s*\((\d{2})\/(\d{2})\)/gi,
+      /disponível\s+(?:na|no)\s+\w+[\-\s]*feira[,\s]+(?:dia\s+)?(\d{2})\/(\d{2})/gi,
+      /disponível\s+(?:na|no)\s+sábado\s*\((\d{2})\/(\d{2})\)/gi,
+      /disponível\s+(?:na|no)\s+domingo\s*\((\d{2})\/(\d{2})\)/gi,
+      /horário\s+das?\s+\d{1,2}:\d{2}\s+disponível\s+(?:na|no)\s+\w+[\-\s]*(?:feira)?\s*\((\d{2})\/(\d{2})\)/gi,
+      /agendar\s+(?:para\s+)?(?:na|no)\s+\w+[\-\s]*(?:feira)?\s*[,\s]*\(?\s*(\d{2})\/(\d{2})\s*\)?/gi,
+    ];
+
+    // Extrair todas as datas DD/MM mencionadas no contexto de disponibilidade
+    const mentionedDates: { day: string; month: string; original: string }[] = [];
+
+    for (const pattern of availabilityPatterns) {
+      let match;
+      while ((match = pattern.exec(aiResponse)) !== null) {
+        const day = match[1];
+        const month = match[2];
+        if (day && month) {
+          mentionedDates.push({ day, month, original: match[0] });
+        }
+      }
+    }
+
+    // Fallback: capturar padrão genérico "disponível" + data DD/MM na mesma frase
+    if (mentionedDates.length === 0) {
+      const hasAvailabilityContext = /disponível|agendar|horário/i.test(aiResponse);
+      if (hasAvailabilityContext) {
+        const datePattern = /\((\d{2})\/(\d{2})\)/g;
+        let match;
+        while ((match = datePattern.exec(aiResponse)) !== null) {
+          mentionedDates.push({ day: match[1], month: match[2], original: match[0] });
+        }
+      }
+    }
+
+    if (mentionedDates.length === 0) return aiResponse;
+
+    // Determinar o ano atual
+    const now = getBrazilDate();
+    const currentYear = now.getFullYear();
+
+    // Verificar cada data contra folgas de cada profissional mencionado
+    for (const dateInfo of mentionedDates) {
+      const dateStr = `${currentYear}-${dateInfo.month}-${dateInfo.day}`;
+
+      // Identificar qual profissional está sendo mencionado na resposta
+      let targetProfessional = activeProfessionals.length === 1 ? activeProfessionals[0] : null;
+      if (!targetProfessional) {
+        for (const prof of activeProfessionals) {
+          if (aiResponse.toLowerCase().includes(prof.name.toLowerCase())) {
+            targetProfessional = prof;
+            break;
+          }
+        }
+      }
+
+      if (!targetProfessional) continue;
+
+      // Verificar se a data é dia de folga
+      const daysOff = await storage.getProfessionalDaysOffByDateRange(
+        targetProfessional.id, dateStr, dateStr
+      );
+
+      if (daysOff.length > 0) {
+        console.log(`🚫 VALIDAÇÃO PÓS-RESPOSTA: IA sugeriu data ${dateInfo.day}/${dateInfo.month} que é FOLGA de ${targetProfessional.name}. Corrigindo...`);
+
+        // Extrair horário da resposta se mencionado
+        const timeMatch = aiResponse.match(/(\d{1,2}:\d{2})/);
+        if (timeMatch) {
+          // Re-executar a verificação correta
+          const correctedResponse = await checkSpecificTimeAvailability(
+            companyId,
+            targetProfessional.id,
+            timeMatch[1],
+            14 // verificar mais dias para encontrar alternativa
+          );
+          console.log(`✅ VALIDAÇÃO PÓS-RESPOSTA: Resposta corrigida para: ${correctedResponse}`);
+          return correctedResponse;
+        } else {
+          // Sem horário específico — informar indisponibilidade
+          return `😕 ${targetProfessional.name} não está disponível no dia ${dateInfo.day}/${dateInfo.month} (folga). Gostaria de verificar outro dia?`;
+        }
+      }
+
+      // Verificar se a data tem horário excepcional e a IA sugeriu horário fora do expediente
+      const exceptionalSchedules = await storage.getProfessionalExceptionalSchedulesByDateRange(
+        targetProfessional.id, dateStr, dateStr
+      );
+
+      if (exceptionalSchedules.length > 0) {
+        const exc = exceptionalSchedules[0];
+        const timeMatch = aiResponse.match(/(\d{1,2}):(\d{2})/);
+        if (timeMatch) {
+          const suggestedMinutes = parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]);
+          const [excStartH, excStartM] = exc.startTime.split(':').map(Number);
+          const [excEndH, excEndM] = exc.endTime.split(':').map(Number);
+          const excStart = excStartH * 60 + excStartM;
+          const excEnd = excEndH * 60 + excEndM;
+
+          if (suggestedMinutes < excStart || suggestedMinutes >= excEnd) {
+            console.log(`🚫 VALIDAÇÃO PÓS-RESPOSTA: IA sugeriu ${timeMatch[0]} em ${dateInfo.day}/${dateInfo.month} mas expediente excepcional é ${exc.startTime}-${exc.endTime}. Corrigindo...`);
+            const correctedResponse = await checkSpecificTimeAvailability(
+              companyId,
+              targetProfessional.id,
+              `${timeMatch[1]}:${timeMatch[2]}`,
+              14
+            );
+            console.log(`✅ VALIDAÇÃO PÓS-RESPOSTA: Resposta corrigida para: ${correctedResponse}`);
+            return correctedResponse;
+          }
+        }
+      }
+    }
+
+    return aiResponse;
+  } catch (error) {
+    console.error('⚠️ Erro na validação pós-resposta (continuando com resposta original):', error);
+    return aiResponse;
   }
 }
 
@@ -9306,6 +9439,7 @@ O sistema vai retornar quais dias da semana têm esse horário disponível, cons
 ✅ Dias de folga
 
 ⚠️ Use este comando SEMPRE que o cliente perguntar sobre um horário específico sem mencionar um dia!
+🚫 NUNCA tente responder sobre disponibilidade de horário por conta própria - SEMPRE use o comando acima. Você NÃO tem capacidade de calcular disponibilidade sozinha. Apenas o sistema pode verificar corretamente.
 
 ═══════════════════════════════════════════════════════════════════
 
@@ -9378,7 +9512,8 @@ INSTRUÇÕES ADICIONAIS:
 - NÃO invente serviços - use APENAS os serviços listados acima
 - NÃO confirme horários sem verificar disponibilidade real
 - 🚨 REGRA CRÍTICA - DISPONIBILIDADE POR DIA DA SEMANA: Antes de dizer que um profissional "trabalha" ou "tem atendimento" em determinado dia, SEMPRE consulte a seção "Dias de trabalho" e "NÃO trabalha" de cada profissional nas INFORMAÇÕES PARA AGENDAMENTO. Se o dia da semana mencionado pelo cliente (amanhã, domingo, segunda, etc.) estiver na lista "NÃO trabalha", NUNCA diga que tem atendimento. Diga diretamente que o profissional não trabalha naquele dia e sugira os dias disponíveis.
-- NUNCA responda "Sim, temos atendimento!" ou "Sim, trabalhamos!" sem antes verificar se o dia solicitado está nos dias de trabalho do profissional. Em caso de dúvida, use o comando [MOSTRAR_HORARIOS_LIVRES] para verificar
+- 🚨 REGRA CRÍTICA - FOLGAS E DIAS INDISPONÍVEIS: Se uma data estiver listada na seção "⛔ FOLGAS" do profissional, esse dia é INDISPONÍVEL. NUNCA sugira, ofereça ou confirme agendamento em datas que estejam nas FOLGAS, mesmo que seja um dia normal de trabalho. Sempre verifique as FOLGAS antes de sugerir qualquer data.
+- NUNCA responda "Sim, temos atendimento!" ou "Sim, trabalhamos!" sem antes verificar se o dia solicitado está nos dias de trabalho do profissional E se NÃO está nas FOLGAS. Em caso de dúvida, use o comando [MOSTRAR_HORARIOS_LIVRES] para verificar
 - SEMPRE mostre todos os profissionais/serviços disponíveis antes de pedir para escolher
 - Mantenha respostas concisas e adequadas para mensagens de texto
 - Seja profissional mas amigável
@@ -11112,6 +11247,11 @@ Por favor, escolha um dos horários disponíveis acima.`;
               // ========================================
               // FIM DA INTERCEPTAÇÃO ASAAS
               // ========================================
+
+              // ========================================
+              // VALIDAÇÃO PÓS-RESPOSTA: Verificar se a IA sugeriu datas indisponíveis
+              // ========================================
+              aiResponse = await validateAvailabilityInResponse(aiResponse, company.id, activeProfessionals);
 
               // Flag para controlar se deve enviar resposta da IA
               const shouldSkipAIResponse = isRespondingToPaymentQuestion && isPaymentChoiceMessage;
