@@ -2367,6 +2367,250 @@ async function getAvailableTimesForService(
 
 // ==================== FIM DO CÁLCULO DE HORÁRIOS DISPONÍVEIS PARA SERVIÇO ====================
 
+// ==================== CÁLCULO DE HORÁRIOS DISPONÍVEIS PARA MÚLTIPLOS SERVIÇOS ====================
+async function getAvailableTimesForMultipleServices(
+  companyId: number,
+  serviceIds: number[],
+  professionalId: number,
+  dateStr: string
+): Promise<string> {
+  try {
+    // Buscar informações dos serviços
+    const allServices = await storage.getServicesByCompany(companyId);
+    const resolvedServices: { id: number; name: string; duration: number; price: any }[] = [];
+
+    for (const sid of serviceIds) {
+      const svc = allServices.find(s => s.id === sid);
+      if (!svc) {
+        console.log(`⚠️ Serviço ID ${sid} não encontrado para multi-serviço.`);
+        return `Desculpe, não consegui identificar um dos serviços. Pode me informar novamente quais serviços você deseja?`;
+      }
+      resolvedServices.push({ id: svc.id, name: svc.name, duration: svc.duration || 30, price: svc.price });
+    }
+
+    const totalDuration = resolvedServices.reduce((sum, s) => sum + s.duration, 0);
+    console.log(`📦 Multi-serviço: ${resolvedServices.map(s => `${s.name}(${s.duration}min)`).join(' + ')} = ${totalDuration}min`);
+
+    // Buscar informações do profissional
+    const professionals = await storage.getProfessionalsByCompany(companyId);
+    const professional = professionals.find(p => p.id === professionalId);
+
+    if (!professional) {
+      return `Desculpe, não consegui identificar o profissional. Pode me informar novamente com quem você gostaria de agendar?`;
+    }
+
+    // Buscar horários de trabalho do profissional
+    const professionalSchedules = await storage.getProfessionalSchedules(professionalId);
+    const professionalBreaks = await storage.getProfessionalBreaks(professionalId);
+    const professionalDaysOff = await storage.getProfessionalDaysOffByDateRange(professionalId, dateStr, dateStr);
+    const professionalExceptionalSchedules = await storage.getProfessionalExceptionalSchedulesByDateRange(professionalId, dateStr, dateStr);
+
+    // Verificar se é dia de folga
+    if (professionalDaysOff.length > 0) {
+      try {
+        // Usar o primeiro serviço para buscar sugestões (já que getAvailabilitySummary aceita um serviceId)
+        const nextDaySuggestions = await getAvailabilitySummary(companyId, professionalId, resolvedServices[0].id, dateStr, 8);
+        const daysWithSlots = nextDaySuggestions
+          .filter(d => d.date !== dateStr && (d.status === 'available' || d.status === 'partial') && d.slotsCount > 0);
+
+        if (daysWithSlots.length > 0) {
+          const suggestions = daysWithSlots.slice(0, 5).map(d =>
+            `📅 *${d.dayName}*, ${d.dateFormatted} — ${d.slotsCount} horário${d.slotsCount > 1 ? 's' : ''} disponível${d.slotsCount > 1 ? 'is' : ''}`
+          ).join('\n');
+
+          return `😕 ${professional.name} não está disponível nesta data.\n\nMas temos disponibilidade nos seguintes dias:\n\n${suggestions}\n\nQual desses dias fica melhor pra você?`;
+        }
+      } catch (err) {
+        console.error('⚠️ Erro ao buscar sugestões de dias:', err);
+      }
+      return `❌ ${professional.name} não está disponível nesta data (dia de folga ou indisponível).\n\nQue tal escolher outro dia?`;
+    }
+
+    // Determinar dia da semana
+    const date = new Date(dateStr + 'T00:00:00');
+    const dayOfWeek = date.getDay();
+    const dayOfWeekKeyMap: { [key: number]: string } = {
+      0: 'domingo', 1: 'segunda', 2: 'terca', 3: 'quarta',
+      4: 'quinta', 5: 'sexta', 6: 'sabado'
+    };
+    const dayOfWeekKey = dayOfWeekKeyMap[dayOfWeek];
+
+    // Verificar horário excepcional ou regular
+    let workStartTime: string;
+    let workEndTime: string;
+
+    if (professionalExceptionalSchedules.length > 0) {
+      const exceptionalSchedule = professionalExceptionalSchedules[0];
+      workStartTime = exceptionalSchedule.startTime;
+      workEndTime = exceptionalSchedule.endTime;
+    } else {
+      const daySchedule = professionalSchedules.find(s => s.dayOfWeek === dayOfWeek && s.isEnabled);
+
+      if (!daySchedule) {
+        const dayNames = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+        try {
+          const nextDaySuggestions = await getAvailabilitySummary(companyId, professionalId, resolvedServices[0].id, dateStr, 8);
+          const daysWithSlots = nextDaySuggestions
+            .filter(d => d.date !== dateStr && (d.status === 'available' || d.status === 'partial') && d.slotsCount > 0);
+
+          if (daysWithSlots.length > 0) {
+            const suggestions = daysWithSlots.slice(0, 5).map(d =>
+              `📅 *${d.dayName}*, ${d.dateFormatted} — ${d.slotsCount} horário${d.slotsCount > 1 ? 's' : ''} disponível${d.slotsCount > 1 ? 'is' : ''}`
+            ).join('\n');
+
+            return `😕 ${professional.name} não trabalha às ${dayNames[dayOfWeek]}.\n\nMas temos disponibilidade nos seguintes dias:\n\n${suggestions}\n\nQual desses dias fica melhor pra você?`;
+          }
+        } catch (err) {
+          console.error('⚠️ Erro ao buscar sugestões de dias:', err);
+        }
+
+        return `😕 ${professional.name} não trabalha às ${dayNames[dayOfWeek]}.\n\nQue tal escolher outro dia? Estou aqui para ajudar!`;
+      }
+
+      workStartTime = daySchedule.startTime;
+      workEndTime = daySchedule.endTime;
+    }
+
+    // Buscar agendamentos existentes
+    const [existingAppointments] = await pool.execute(
+      `SELECT appointment_time, duration, status, client_name FROM appointments
+       WHERE company_id = ? AND professional_id = ? AND appointment_date = ?
+       AND status NOT IN ('Cancelado', 'cancelado', 'cancelled')
+       ORDER BY appointment_time`,
+      [companyId, professionalId, dateStr]
+    ) as any;
+
+    console.log(`\n========== DEBUG HORÁRIOS MULTI-SERVIÇO ==========`);
+    console.log(`📌 Parâmetros: companyId=${companyId}, professionalId=${professionalId}, date=${dateStr}`);
+    console.log(`📦 Duração total combinada: ${totalDuration}min`);
+    console.log(`📊 Agendamentos existentes: ${existingAppointments.length}`);
+    console.log(`====================================\n`);
+
+    // Converter horários para minutos
+    const [startHour, startMin] = workStartTime.split(':').map(Number);
+    const [endHour, endMin] = workEndTime.split(':').map(Number);
+    const workStartMinutes = startHour * 60 + startMin;
+    const workEndMinutes = endHour * 60 + endMin;
+
+    // Intervalo - usar duração do primeiro serviço para step (ou timeInterval configurado)
+    const configuredInterval = professional.timeInterval || 0;
+    const firstServiceDuration = resolvedServices[0].duration;
+    const timeInterval = configuredInterval === 0 ? firstServiceDuration : configuredInterval;
+
+    // Filtro de horários passados e antecedência mínima
+    const brazilNowStr = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' });
+    const brazilNow = new Date(brazilNowStr);
+    const todayStr = `${brazilNow.getFullYear()}-${String(brazilNow.getMonth() + 1).padStart(2, '0')}-${String(brazilNow.getDate()).padStart(2, '0')}`;
+
+    let minTimeMinutes = workStartMinutes;
+    const minimumAdvanceHours = Number(professional.minimumAdvanceHours) || 0;
+
+    if (dateStr === todayStr) {
+      const currentMinutes = brazilNow.getHours() * 60 + brazilNow.getMinutes();
+      const advanceMinutes = minimumAdvanceHours * 60;
+      const minAdvanceMinutes = currentMinutes + advanceMinutes;
+      minTimeMinutes = Math.max(workStartMinutes, minAdvanceMinutes);
+
+      if (timeInterval > 0) {
+        minTimeMinutes = Math.ceil(minTimeMinutes / timeInterval) * timeInterval;
+      }
+    }
+
+    // Calcular horários disponíveis usando duração TOTAL combinada
+    const availableTimes: string[] = [];
+    let currentTimeMinutes = workStartMinutes;
+
+    while (currentTimeMinutes + totalDuration <= workEndMinutes) {
+      if (currentTimeMinutes < minTimeMinutes) {
+        currentTimeMinutes += timeInterval;
+        continue;
+      }
+
+      const currentHour = Math.floor(currentTimeMinutes / 60);
+      const currentMin = currentTimeMinutes % 60;
+      const timeStr = `${String(currentHour).padStart(2, '0')}:${String(currentMin).padStart(2, '0')}`;
+
+      // Verificar conflito com agendamentos existentes usando duração TOTAL
+      let hasConflict = false;
+      for (const apt of existingAppointments) {
+        const [aptHour, aptMin] = apt.appointment_time.split(':').map(Number);
+        const aptStartMinutes = aptHour * 60 + aptMin;
+        const aptDuration = apt.duration || 30;
+        const aptEndMinutes = aptStartMinutes + aptDuration;
+
+        const newEndMinutes = currentTimeMinutes + totalDuration;
+        if ((currentTimeMinutes < aptEndMinutes) && (newEndMinutes > aptStartMinutes)) {
+          hasConflict = true;
+          break;
+        }
+      }
+
+      // Verificar pausas usando duração TOTAL
+      let isBreakTime = false;
+      let breaksToCheck: { startTime: string; endTime: string }[] = [];
+      if (professionalExceptionalSchedules.length > 0) {
+        breaksToCheck = await storage.getExceptionBreaks(professionalExceptionalSchedules[0].id);
+      } else {
+        breaksToCheck = professionalBreaks.filter(brk => brk.dayOfWeek === dayOfWeekKey);
+      }
+      for (const brk of breaksToCheck) {
+        const [brkStartHour, brkStartMin] = brk.startTime.split(':').map(Number);
+        const [brkEndHour, brkEndMin] = brk.endTime.split(':').map(Number);
+        const brkStartMinutes = brkStartHour * 60 + brkStartMin;
+        const brkEndMinutes = brkEndHour * 60 + brkEndMin;
+
+        const newEndMinutes = currentTimeMinutes + totalDuration;
+        if ((currentTimeMinutes < brkEndMinutes) && (newEndMinutes > brkStartMinutes)) {
+          isBreakTime = true;
+          break;
+        }
+      }
+
+      if (!hasConflict && !isBreakTime) {
+        availableTimes.push(timeStr);
+      }
+
+      currentTimeMinutes += timeInterval;
+    }
+
+    // Formatar resposta
+    if (availableTimes.length === 0) {
+      try {
+        const nextDaySuggestions = await getAvailabilitySummary(companyId, professionalId, resolvedServices[0].id, dateStr, 8);
+        const daysWithSlots = nextDaySuggestions
+          .filter(d => d.date !== dateStr && (d.status === 'available' || d.status === 'partial') && d.slotsCount > 0);
+
+        if (daysWithSlots.length > 0) {
+          const suggestions = daysWithSlots.slice(0, 5).map(d =>
+            `📅 *${d.dayName}*, ${d.dateFormatted} — ${d.slotsCount} horário${d.slotsCount > 1 ? 's' : ''} disponível${d.slotsCount > 1 ? 'is' : ''}`
+          ).join('\n');
+
+          const servicesList = resolvedServices.map(s => s.name).join(' + ');
+          return `😕 Não há horários disponíveis para ${servicesList} (${totalDuration}min total) nesta data.\n\nMas temos disponibilidade nos seguintes dias:\n\n${suggestions}\n\nQual desses dias fica melhor pra você?`;
+        }
+      } catch (err) {
+        console.error('⚠️ Erro ao buscar sugestões de dias:', err);
+      }
+
+      return `😕 Não temos horários disponíveis para todos os serviços juntos nesta data.\n\nQue tal escolher outro dia? Estou aqui para ajudar!`;
+    }
+
+    // Retornar horários com info dos serviços combinados
+    const servicesList = resolvedServices.map(s => `${s.name} (${s.duration}min)`).join(' + ');
+    let response = `Serviços combinados: ${servicesList} = ${totalDuration}min total\n\n`;
+    for (let i = 0; i < availableTimes.length; i += 5) {
+      const group = availableTimes.slice(i, i + 5);
+      response += `${group.join(' | ')}\n`;
+    }
+
+    return response.trim();
+  } catch (error) {
+    console.error('❌ Erro ao calcular horários disponíveis para múltiplos serviços:', error);
+    return '❌ Erro ao calcular horários disponíveis. Por favor, tente novamente.';
+  }
+}
+// ==================== FIM DO CÁLCULO DE HORÁRIOS PARA MÚLTIPLOS SERVIÇOS ====================
+
 // ========================================
 // FUNÇÃO AUXILIAR GLOBAL: Criar um único agendamento a partir de dados extraídos
 // ========================================
@@ -7484,20 +7728,24 @@ if (ignoredNumbers !== undefined) {
         // Detect audio messages from UAZAPI
         // UAZAPI messageType values: 'audio', 'ptt', 'myaudio', 'ptv' (voice video note)
         // Also handle legacy/raw WhatsApp types: 'audioMessage', 'pttMessage'
-        // Check BOTH type and messageType fields since either could contain the audio indicator
+        // Check type, messageType, AND mediaType fields since UAZAPI may send type='media' with mediaType='audio'
         const audioTypes = ['audio', 'ptt', 'myaudio', 'ptv', 'audiomessage', 'pttmessage'];
         const uazType = (uazMsg.type || '').toLowerCase();
         const uazMessageType = (uazMsg.messageType || '').toLowerCase();
+        const uazMediaType = (uazMsg.mediaType || '').toLowerCase();
+        const uazMimetype = (uazMsg.mimetype || '').toLowerCase();
         const isAudioType = audioTypes.includes(msgType.toLowerCase())
           || audioTypes.includes(uazType)
           || audioTypes.includes(uazMessageType)
-          || (uazMsg.fileURL && (uazMsg.fileURL.includes('.ogg') || uazMsg.fileURL.includes('.opus') || uazMsg.fileURL.includes('.mp3') || uazMsg.fileURL.includes('.m4a') || uazMsg.fileURL.includes('.oga')));
+          || audioTypes.includes(uazMediaType)
+          || uazMimetype.startsWith('audio/')
+          || (uazMsg.fileURL && /\.(ogg|opus|mp3|m4a|oga|wav|aac)/i.test(uazMsg.fileURL));
         if (isAudioType) {
           message.message.audioMessage = uazMsg;
           message.messageType = 'audioMessage';
-          console.log('🎵 [UAZAPI] Audio message detected, type:', msgType, 'uazType:', uazType, 'uazMessageType:', uazMessageType);
+          console.log('🎵 [UAZAPI] Audio message detected, type:', msgType, 'uazType:', uazType, 'uazMessageType:', uazMessageType, 'mediaType:', uazMediaType, 'mimetype:', uazMimetype);
         } else {
-          console.log('🔍 [UAZAPI] Not audio. type:', uazType, 'messageType:', uazMessageType, 'msgType:', msgType, 'fileURL:', uazMsg.fileURL?.substring(0, 80) || 'none');
+          console.log('🔍 [UAZAPI] Not audio. type:', uazType, 'messageType:', uazMessageType, 'mediaType:', uazMediaType, 'mimetype:', uazMimetype, 'msgType:', msgType, 'fileURL:', uazMsg.fileURL?.substring(0, 80) || 'none');
         }
 
         console.log('📦 [UAZAPI] Normalized message');
@@ -7540,16 +7788,20 @@ if (ignoredNumbers !== undefined) {
       const hasTextContent = message?.message?.conversation || message?.message?.extendedTextMessage?.text;
       const uazRawType = (message?._uazapiRaw?.type || '').toLowerCase();
       const uazRawMessageType = (message?._uazapiRaw?.messageType || '').toLowerCase();
+      const uazRawMediaType = (message?._uazapiRaw?.mediaType || '').toLowerCase();
+      const uazRawMimetype = (message?._uazapiRaw?.mimetype || '').toLowerCase();
       const uazAudioTypes = ['audio', 'ptt', 'myaudio', 'ptv', 'audiomessage', 'pttmessage'];
       const hasAudioContent = message?.message?.audioMessage || message?.messageType === 'audioMessage'
         || uazAudioTypes.includes(uazRawType)
         || uazAudioTypes.includes(uazRawMessageType)
+        || uazAudioTypes.includes(uazRawMediaType)
+        || uazRawMimetype.startsWith('audio/')
         || (message?._uazapiRaw?.fileURL && /\.(ogg|opus|mp3|m4a|oga|wav|aac)/i.test(message._uazapiRaw.fileURL));
       // Accept both client messages (fromMe=false) and human messages (fromMe=true)
       const isTextMessage = hasTextContent;
       const isAudioMessage = hasAudioContent;
 
-      console.log('🎵 Audio message detected:', !!hasAudioContent, '| uazRawType:', uazRawType, '| uazRawMessageType:', uazRawMessageType);
+      console.log('🎵 Audio message detected:', !!hasAudioContent, '| uazRawType:', uazRawType, '| uazRawMessageType:', uazRawMessageType, '| mediaType:', uazRawMediaType, '| mimetype:', uazRawMimetype);
       console.log('💬 Text message detected:', !!hasTextContent);
       console.log('👤 From me (human):', message?.key?.fromMe);
 
@@ -9462,13 +9714,14 @@ ETAPA 2 - SERVIÇO:
    → AGUARDE o cliente escolher o serviço`}
 
 ETAPA ${shouldAutoSelect ? '2' : '3'} - DATA:
-   → APÓS o cliente escolher o SERVIÇO, pergunte a data
+   → APÓS o cliente escolher o SERVIÇO (ou serviços, se ele pedir mais de um), pergunte a data
    → "Em qual dia você gostaria de agendar?"
    → AGUARDE o cliente informar a data
 
 ETAPA ${shouldAutoSelect ? '3' : '4'} - HORÁRIO:
    → APÓS ter a data, use o comando para buscar horários:
-   → [MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
+   → Se for UM serviço: [MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
+   → Se o cliente pediu MÚLTIPLOS serviços: [MOSTRAR_HORARIOS_LIVRES_MULTI:SERVICO1,SERVICO2:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
    → Se o resultado mostrar HORÁRIOS (ex: "09:00 | 10:00 | 11:00"): pergunte "Qual horário você prefere?"
    → Se o resultado mostrar INDISPONIBILIDADE (contém "não trabalha", "não disponível", "não temos horários", "agenda cheia", etc): NÃO ADICIONE NADA - a mensagem já está completa com a pergunta sobre outro dia!
 
@@ -9609,6 +9862,57 @@ Quando o cliente quiser agendar para MÚLTIPLAS PESSOAS (ex: "quero agendar para
 - NÃO pergunte a data novamente para cada pessoa
 - NÃO use [MOSTRAR_HORARIOS_LIVRES] mais de uma vez
 - NÃO ofereça escolha de horário para nenhuma pessoa além da primeira - é automático/consecutivo
+
+═══════════════════════════════════════════════════════════════════
+🎯 MÚLTIPLOS SERVIÇOS PARA O MESMO CLIENTE
+═══════════════════════════════════════════════════════════════════
+
+Quando o cliente quiser MAIS DE UM SERVIÇO para SI MESMO (ex: "quero Design com henna e Remoção de sinais", "quero corte e barba"), siga estas regras:
+
+⚠️ DIFERENÇA IMPORTANTE:
+- MÚLTIPLAS PESSOAS (seção acima) = cada PESSOA faz UM serviço diferente
+- MÚLTIPLOS SERVIÇOS (esta seção) = UMA PESSOA faz DOIS ou mais serviços
+
+FLUXO:
+1. O cliente pode pedir dois ou mais serviços de uma vez (ex: "quero agendar Design com henna e Remoção de sinais"). Nesse caso, reconheça TODOS os serviços mencionados e prossiga com o fluxo normalmente (profissional → data → horário → nome → confirmação)
+
+2. Quando tiver TODOS os serviços + profissional + data, use o comando MULTI:
+   [MOSTRAR_HORARIOS_LIVRES_MULTI:Servico1,Servico2:Profissional:YYYY-MM-DD]
+   Exemplo: [MOSTRAR_HORARIOS_LIVRES_MULTI:Design com henna,Remoção de pequenos sinais:Erica:2026-03-15]
+
+3. O sistema calculará automaticamente a duração COMBINADA e mostrará horários que CABEM TODOS os serviços consecutivos
+
+4. Após o cliente escolher o HORÁRIO, calcule os horários de cada serviço:
+   - Serviço 1 começa no horário escolhido
+   - Serviço 2 começa = horário do serviço 1 + duração do serviço 1
+   - Ex: Se escolheu 10:00, Design com henna (40min) começa 10:00, Remoção de sinais (30min) começa 10:40
+
+5. NO RESUMO DE CONFIRMAÇÃO, use o formato com números:
+   "Perfeito! Vou confirmar seus agendamentos:
+
+   1️⃣
+   👤 Nome: [nome]
+   🏢 Profissional: [profissional]
+   💼 Serviço: [serviço 1]
+   📅 Data: [data]
+   🕐 Horário: [horário do serviço 1]
+
+   2️⃣
+   👤 Nome: [nome]
+   🏢 Profissional: [profissional]
+   💼 Serviço: [serviço 2]
+   📅 Data: [data]
+   🕐 Horário: [horário do serviço 2]
+
+   Está tudo correto? Responda SIM para confirmar."
+
+⚠️ REGRAS:
+- Use SEMPRE [MOSTRAR_HORARIOS_LIVRES_MULTI] (com MULTI) quando forem múltiplos serviços para a mesma pessoa
+- NÃO use [MOSTRAR_HORARIOS_LIVRES] separadamente para cada serviço
+- Os serviços são CONSECUTIVOS no mesmo profissional
+- O NOME do cliente é o MESMO em ambos os agendamentos
+- Se o cliente pedir apenas UM serviço, continue o fluxo normal com [MOSTRAR_HORARIOS_LIVRES]
+- NUNCA invente durações - o sistema calcula automaticamente
 
 ═══════════════════════════════════════════════════════════════════
 
@@ -10365,6 +10669,103 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                 }
               }
 
+              // Process [MOSTRAR_HORARIOS_LIVRES_MULTI:service1,service2:professional:date] command
+              // Para múltiplos serviços do mesmo cliente - calcula duração COMBINADA
+              {
+                let horariosMultiMatch;
+                let multiCompanyServices: any[] | null = null;
+                let multiCompanyProfessionals: any[] | null = null;
+
+                while ((horariosMultiMatch = aiResponse.match(/\[MOSTRAR_HORARIOS_LIVRES_MULTI:([^:]+):([^:]+):(\d{4}-\d{2}-\d{2})\]/)) !== null) {
+                  const [fullMatch, servicesStr, professionalIdentifier, dateStr] = horariosMultiMatch;
+                  const serviceNames = servicesStr.split(',').map((s: string) => s.trim());
+                  console.log(`📦 Multi-serviço: Serviços "${serviceNames.join(', ')}", Profissional "${professionalIdentifier}", Data ${dateStr}`);
+
+                  // Buscar serviços e profissionais da empresa (apenas na primeira iteração)
+                  if (!multiCompanyServices) {
+                    multiCompanyServices = await storage.getServicesByCompany(company.id);
+                  }
+                  if (!multiCompanyProfessionals) {
+                    multiCompanyProfessionals = await storage.getProfessionalsByCompany(company.id);
+                  }
+                  const companyServices = multiCompanyServices;
+                  const companyProfessionals = multiCompanyProfessionals;
+
+                  // Resolver IDs dos serviços (reutilizando lógica de match fuzzy)
+                  const resolvedServiceIds: number[] = [];
+                  let allServicesFound = true;
+
+                  for (const svcName of serviceNames) {
+                    const searchName = svcName.toLowerCase();
+                    let foundService = null;
+
+                    // 1. Match exato
+                    foundService = companyServices.find((s: any) => s.name.toLowerCase() === searchName);
+
+                    if (!foundService) {
+                      // 2. Match parcial
+                      const partialMatches = companyServices.filter((s: any) =>
+                        s.name.toLowerCase().includes(searchName) || searchName.includes(s.name.toLowerCase())
+                      );
+
+                      if (partialMatches.length === 1) {
+                        foundService = partialMatches[0];
+                      } else if (partialMatches.length > 1) {
+                        foundService = partialMatches.find((s: any) => s.name.toLowerCase().startsWith(searchName)) || partialMatches[0];
+                      }
+                    }
+
+                    if (foundService) {
+                      resolvedServiceIds.push(foundService.id);
+                      console.log(`   ✅ Serviço "${svcName}" → ID ${foundService.id} (${foundService.name})`);
+                    } else {
+                      allServicesFound = false;
+                      console.log(`   ❌ Serviço "${svcName}" não encontrado`);
+                    }
+                  }
+
+                  // Resolver ID do profissional
+                  let professionalId: number | null = null;
+                  if (/^\d+$/.test(professionalIdentifier.trim())) {
+                    professionalId = parseInt(professionalIdentifier.trim());
+                  } else {
+                    const profName = professionalIdentifier.trim().toLowerCase();
+                    let foundProf = companyProfessionals.find((p: any) => p.name.toLowerCase() === profName);
+                    if (!foundProf) {
+                      foundProf = companyProfessionals.find((p: any) =>
+                        p.name.toLowerCase().includes(profName) ||
+                        p.name.toLowerCase().split(' ')[0] === profName
+                      );
+                    }
+                    if (foundProf) {
+                      professionalId = foundProf.id;
+                      console.log(`   ✅ Profissional "${professionalIdentifier}" → ID ${foundProf.id} (${foundProf.name})`);
+                    }
+                  }
+
+                  // Buscar horários combinados
+                  if (allServicesFound && resolvedServiceIds.length > 0 && professionalId) {
+                    const horariosLivres = await getAvailableTimesForMultipleServices(
+                      company.id,
+                      resolvedServiceIds,
+                      professionalId,
+                      dateStr
+                    );
+                    aiResponse = aiResponse.replace(fullMatch, horariosLivres);
+                  } else {
+                    let errorMsg = '';
+                    if (!allServicesFound) {
+                      errorMsg = `Desculpe, não consegui identificar todos os serviços. Pode me informar novamente quais serviços você deseja?`;
+                    } else if (!professionalId) {
+                      errorMsg = `Desculpe, não consegui identificar o profissional "${professionalIdentifier}". Pode me informar novamente?`;
+                    } else {
+                      errorMsg = `Desculpe, houve um erro ao buscar os horários. Pode tentar novamente?`;
+                    }
+                    aiResponse = aiResponse.replace(fullMatch, errorMsg);
+                  }
+                }
+              }
+
               // Process [MOSTRAR_HORARIOS_LIVRES:serviceId:professionalId:date] command
               // Suporta tanto IDs numéricos quanto NOMES de serviço/profissional
               // Fallback: detectar comandos [MOSTRAR_HORARIOS_LIVRES] SEM data (malformados)
@@ -10907,6 +11308,125 @@ Seu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é 
                 console.log('==================================================');
                 console.log('📝 Resposta da IA:', aiResponse.substring(0, 300));
 
+                // ========================================
+                // VALIDAÇÃO DE MULTI-SERVIÇO (mesmo cliente, múltiplos serviços)
+                // Detectar se a confirmação tem múltiplos blocos numerados
+                // ========================================
+                const numericMarkersMulti = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+                const foundMarkersMulti = numericMarkersMulti.filter(marker => aiResponse.includes(marker));
+
+                if (foundMarkersMulti.length >= 2) {
+                  console.log(`📦 Detectado multi-bloco (${foundMarkersMulti.length} blocos) - validando cada bloco individualmente`);
+
+                  try {
+                    // Separar blocos por marcadores numéricos
+                    const markerPattern = new RegExp(`(?=${numericMarkersMulti.map(m => m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'g');
+                    const blocks = aiResponse.split(markerPattern).filter((b: string) => b.trim().length > 0);
+
+                    const professionals = await storage.getProfessionalsByCompany(company.id);
+                    const services = await storage.getServicesByCompany(company.id);
+                    const allAppointments = await storage.getAppointmentsByCompany(company.id);
+
+                    let hasAnyConflict = false;
+
+                    for (let blockIdx = 0; blockIdx < blocks.length; blockIdx++) {
+                      const block = blocks[blockIdx];
+                      // Extrair dados do bloco
+                      const blockDateMatch = block.match(/(\d{2}\/\d{2}\/\d{4})/);
+                      const blockTimeMatch = block.match(/(?:🕐\s*Horário:\s*|às\s+)?(\d{1,2}:\d{2})/i);
+                      const blockServiceMatch = block.match(/💼\s*Serviço:\s*(.+?)(?:\n|$)/i);
+                      const blockProfMatch = block.match(/🏢\s*Profissional:\s*(.+?)(?:\n|$)/i);
+
+                      if (!blockDateMatch || !blockTimeMatch) {
+                        // Tentar pegar data/profissional do header (antes dos blocos)
+                        const headerDateMatch = aiResponse.match(/(\d{2}\/\d{2}\/\d{4})/);
+                        if (!blockDateMatch && headerDateMatch) {
+                          // Usa data do header
+                        }
+                        continue;
+                      }
+
+                      const bDate = blockDateMatch[1];
+                      const bTime = blockTimeMatch[1];
+                      const bServiceName = blockServiceMatch?.[1]?.trim();
+                      const bProfName = blockProfMatch?.[1]?.trim();
+
+                      // Converter data
+                      const bDateParts = bDate.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+                      const bParsedDate = bDateParts ? `${bDateParts[3]}-${bDateParts[2]}-${bDateParts[1]}` : null;
+                      const bTimeParts = bTime.match(/(\d{1,2}):(\d{2})/);
+                      const bParsedTime = bTimeParts ? `${bTimeParts[1].padStart(2, '0')}:${bTimeParts[2]}` : null;
+
+                      if (!bParsedDate || !bParsedTime || !bServiceName) continue;
+
+                      // Encontrar profissional e serviço
+                      const bProfessional = bProfName ? professionals.find(p =>
+                        p.name.toLowerCase().includes(bProfName.toLowerCase()) ||
+                        bProfName.toLowerCase().includes(p.name.toLowerCase())
+                      ) : null;
+
+                      const bService = services.find(s =>
+                        s.name.toLowerCase().includes(bServiceName.toLowerCase()) ||
+                        bServiceName.toLowerCase().includes(s.name.toLowerCase())
+                      );
+
+                      if (!bProfessional || !bService) continue;
+
+                      const bDuration = bService.duration || 30;
+                      const [bHour, bMin] = bParsedTime.split(':').map(Number);
+                      const bTimeMinutes = bHour * 60 + bMin;
+                      const bEndMinutes = bTimeMinutes + bDuration;
+
+                      console.log(`   📋 Bloco ${blockIdx + 1}: ${bService.name} às ${bParsedTime} (${bDuration}min) com ${bProfessional.name}`);
+
+                      // Verificar conflito
+                      const bConflicts = allAppointments.filter(apt => {
+                        if (
+                          apt.professionalId === bProfessional.id &&
+                          apt.appointmentDate === bParsedDate &&
+                          apt.status !== 'cancelado' &&
+                          apt.status !== 'Cancelado'
+                        ) {
+                          const [aptH, aptM] = apt.appointmentTime.split(':').map(Number);
+                          const aptStart = aptH * 60 + aptM;
+                          const aptEnd = aptStart + (apt.duration || 30);
+
+                          return (bTimeMinutes < aptEnd) && (bEndMinutes > aptStart);
+                        }
+                        return false;
+                      });
+
+                      if (bConflicts.length > 0) {
+                        hasAnyConflict = true;
+                        console.log(`   ❌ CONFLITO no bloco ${blockIdx + 1}: ${bService.name} às ${bParsedTime}`);
+                      } else {
+                        console.log(`   ✅ Bloco ${blockIdx + 1} sem conflito`);
+                      }
+                    }
+
+                    if (hasAnyConflict) {
+                      console.log('❌ CONFLITO DETECTADO EM MULTI-SERVIÇO - substituindo resposta');
+
+                      // Extrair data e profissional do primeiro bloco para sugestões
+                      const firstDateMatch = aiResponse.match(/(\d{2}\/\d{2}\/\d{4})/);
+                      const firstDate = firstDateMatch?.[1] || '';
+
+                      aiResponse = `❌ Conflito de Horário Detectado
+
+Desculpe, mas não foi possível confirmar seus agendamentos pois um ou mais horários já estão ocupados.
+
+Por favor, escolha outro horário disponível.`;
+                    } else {
+                      console.log('✅ Todos os blocos validados sem conflito - multi-serviço pode prosseguir');
+                    }
+                  } catch (error) {
+                    console.error('❌ Erro ao validar conflito multi-serviço:', error);
+                  }
+                } else {
+                // ========================================
+                // VALIDAÇÃO DE SERVIÇO ÚNICO (fluxo original)
+                // ========================================
+
                 // Extrair dados do agendamento da resposta da IA ou histórico recente
                 const extractAppointmentDataFromAI = (text: string) => {
                   // Buscar data no formato DD/MM/YYYY
@@ -11107,6 +11627,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 } else {
                   console.log('⚠️ Dados insuficientes para validar conflito');
                 }
+                } // fecha else do multi-serviço
               }
               // ========================================
               // FIM DA VALIDAÇÃO DE CONFLITO
