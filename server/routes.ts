@@ -7657,11 +7657,24 @@ if (ignoredNumbers !== undefined) {
         // Detect audio messages from UAZAPI
         // UAZAPI messageType values: 'audio', 'ptt', 'myaudio', 'ptv' (voice video note)
         // Also handle legacy/raw WhatsApp types: 'audioMessage', 'pttMessage'
-        const isAudioType = ['audio', 'ptt', 'myaudio', 'ptv', 'audioMessage', 'pttMessage'].includes(msgType.toLowerCase());
+        // Check type, messageType, AND mediaType fields since UAZAPI may send type='media' with mediaType='audio'
+        const audioTypes = ['audio', 'ptt', 'myaudio', 'ptv', 'audiomessage', 'pttmessage'];
+        const uazType = (uazMsg.type || '').toLowerCase();
+        const uazMessageType = (uazMsg.messageType || '').toLowerCase();
+        const uazMediaType = (uazMsg.mediaType || '').toLowerCase();
+        const uazMimetype = (uazMsg.mimetype || '').toLowerCase();
+        const isAudioType = audioTypes.includes(msgType.toLowerCase())
+          || audioTypes.includes(uazType)
+          || audioTypes.includes(uazMessageType)
+          || audioTypes.includes(uazMediaType)
+          || uazMimetype.startsWith('audio/')
+          || (uazMsg.fileURL && /\.(ogg|opus|mp3|m4a|oga|wav|aac)/i.test(uazMsg.fileURL));
         if (isAudioType) {
           message.message.audioMessage = uazMsg;
           message.messageType = 'audioMessage';
-          console.log('🎵 [UAZAPI] Audio message detected, type:', msgType);
+          console.log('🎵 [UAZAPI] Audio message detected, type:', msgType, 'uazType:', uazType, 'uazMessageType:', uazMessageType, 'mediaType:', uazMediaType, 'mimetype:', uazMimetype);
+        } else {
+          console.log('🔍 [UAZAPI] Not audio. type:', uazType, 'messageType:', uazMessageType, 'mediaType:', uazMediaType, 'mimetype:', uazMimetype, 'msgType:', msgType, 'fileURL:', uazMsg.fileURL?.substring(0, 80) || 'none');
         }
 
         console.log('📦 [UAZAPI] Normalized message');
@@ -7702,13 +7715,22 @@ if (ignoredNumbers !== undefined) {
 
       // Handle both text and audio messages
       const hasTextContent = message?.message?.conversation || message?.message?.extendedTextMessage?.text;
+      const uazRawType = (message?._uazapiRaw?.type || '').toLowerCase();
+      const uazRawMessageType = (message?._uazapiRaw?.messageType || '').toLowerCase();
+      const uazRawMediaType = (message?._uazapiRaw?.mediaType || '').toLowerCase();
+      const uazRawMimetype = (message?._uazapiRaw?.mimetype || '').toLowerCase();
+      const uazAudioTypes = ['audio', 'ptt', 'myaudio', 'ptv', 'audiomessage', 'pttmessage'];
       const hasAudioContent = message?.message?.audioMessage || message?.messageType === 'audioMessage'
-        || (message?._uazapiRaw?.fileURL && ['audio', 'ptt', 'myaudio', 'ptv', 'audioMessage', 'pttMessage'].includes((message?._uazapiRaw?.messageType || '').toLowerCase()));
+        || uazAudioTypes.includes(uazRawType)
+        || uazAudioTypes.includes(uazRawMessageType)
+        || uazAudioTypes.includes(uazRawMediaType)
+        || uazRawMimetype.startsWith('audio/')
+        || (message?._uazapiRaw?.fileURL && /\.(ogg|opus|mp3|m4a|oga|wav|aac)/i.test(message._uazapiRaw.fileURL));
       // Accept both client messages (fromMe=false) and human messages (fromMe=true)
       const isTextMessage = hasTextContent;
       const isAudioMessage = hasAudioContent;
 
-      console.log('🎵 Audio message detected:', !!hasAudioContent);
+      console.log('🎵 Audio message detected:', !!hasAudioContent, '| uazRawType:', uazRawType, '| uazRawMessageType:', uazRawMessageType, '| mediaType:', uazRawMediaType, '| mimetype:', uazRawMimetype);
       console.log('💬 Text message detected:', !!hasTextContent);
       console.log('👤 From me (human):', message?.key?.fromMe);
 
