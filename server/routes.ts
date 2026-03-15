@@ -19746,6 +19746,149 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     }
   });
 
+  // ==========================================
+  // Meta WhatsApp Templates API
+  // ==========================================
+
+  // List all Meta message templates for this company's WhatsApp instance
+  app.get('/api/company/meta-templates', isCompanyAuthenticated, async (req, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const statusFilter = req.query.status as string | undefined;
+
+      const whatsappInstances = await storage.getWhatsappInstancesByCompany(companyId);
+      const whatsappInstance = whatsappInstances[0];
+
+      if (!whatsappInstance?.metaPhoneNumberId || !whatsappInstance?.metaAccessToken || !whatsappInstance?.metaWabaId) {
+        return res.status(400).json({
+          error: 'Instância WhatsApp Meta não configurada. Configure o Phone Number ID, WABA ID e Access Token.'
+        });
+      }
+
+      const metaService = createMetaWhatsAppService({
+        phoneNumberId: whatsappInstance.metaPhoneNumberId,
+        wabaId: whatsappInstance.metaWabaId,
+        accessToken: whatsappInstance.metaAccessToken,
+      });
+
+      const templates = await metaService.listTemplates(statusFilter);
+      res.json(templates);
+    } catch (error: any) {
+      console.error('Error listing Meta templates:', error);
+      res.status(500).json({ error: 'Erro ao listar templates: ' + error.message });
+    }
+  });
+
+  // Create a new Meta message template
+  app.post('/api/company/meta-templates', isCompanyAuthenticated, async (req, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const { name, category, language, components } = req.body;
+
+      if (!name || !category || !language || !components) {
+        return res.status(400).json({ error: 'Campos obrigatórios: name, category, language, components' });
+      }
+
+      const validCategories = ['AUTHENTICATION', 'MARKETING', 'UTILITY'];
+      if (!validCategories.includes(category)) {
+        return res.status(400).json({ error: `Categoria inválida. Use: ${validCategories.join(', ')}` });
+      }
+
+      const whatsappInstances = await storage.getWhatsappInstancesByCompany(companyId);
+      const whatsappInstance = whatsappInstances[0];
+
+      if (!whatsappInstance?.metaPhoneNumberId || !whatsappInstance?.metaAccessToken || !whatsappInstance?.metaWabaId) {
+        return res.status(400).json({ error: 'Instância WhatsApp Meta não configurada' });
+      }
+
+      const metaService = createMetaWhatsAppService({
+        phoneNumberId: whatsappInstance.metaPhoneNumberId,
+        wabaId: whatsappInstance.metaWabaId,
+        accessToken: whatsappInstance.metaAccessToken,
+      });
+
+      const result = await metaService.createTemplate({ name, category, language, components });
+      res.json({ success: true, result });
+    } catch (error: any) {
+      console.error('Error creating Meta template:', error);
+      res.status(500).json({ error: 'Erro ao criar template: ' + error.message });
+    }
+  });
+
+  // Delete a Meta message template
+  app.delete('/api/company/meta-templates/:name', isCompanyAuthenticated, async (req, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const templateName = req.params.name;
+
+      const whatsappInstances = await storage.getWhatsappInstancesByCompany(companyId);
+      const whatsappInstance = whatsappInstances[0];
+
+      if (!whatsappInstance?.metaPhoneNumberId || !whatsappInstance?.metaAccessToken || !whatsappInstance?.metaWabaId) {
+        return res.status(400).json({ error: 'Instância WhatsApp Meta não configurada' });
+      }
+
+      const metaService = createMetaWhatsAppService({
+        phoneNumberId: whatsappInstance.metaPhoneNumberId,
+        wabaId: whatsappInstance.metaWabaId,
+        accessToken: whatsappInstance.metaAccessToken,
+      });
+
+      await metaService.deleteTemplate(templateName);
+      res.json({ success: true, message: `Template "${templateName}" deletado com sucesso` });
+    } catch (error: any) {
+      console.error('Error deleting Meta template:', error);
+      res.status(500).json({ error: 'Erro ao deletar template: ' + error.message });
+    }
+  });
+
+  // Send a Meta template message to a client
+  app.post('/api/company/meta-templates/send', isCompanyAuthenticated, async (req, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const { templateName, languageCode, to, components } = req.body;
+
+      if (!templateName || !to) {
+        return res.status(400).json({ error: 'Campos obrigatórios: templateName, to (número de telefone)' });
+      }
+
+      const whatsappInstances = await storage.getWhatsappInstancesByCompany(companyId);
+      const whatsappInstance = whatsappInstances[0];
+
+      if (!whatsappInstance?.metaPhoneNumberId || !whatsappInstance?.metaAccessToken || !whatsappInstance?.metaWabaId) {
+        return res.status(400).json({ error: 'Instância WhatsApp Meta não configurada' });
+      }
+
+      const metaService = createMetaWhatsAppService({
+        phoneNumberId: whatsappInstance.metaPhoneNumberId,
+        wabaId: whatsappInstance.metaWabaId,
+        accessToken: whatsappInstance.metaAccessToken,
+      });
+
+      // Format phone number
+      let phone = to.replace(/\D/g, '');
+      if (phone.length >= 10 && !phone.startsWith('55')) {
+        phone = '55' + phone;
+      }
+
+      const result = await metaService.sendTemplate({
+        to: phone,
+        templateName,
+        languageCode: languageCode || 'pt_BR',
+        components: components || [],
+      });
+
+      res.json({
+        success: true,
+        messageId: result.messages?.[0]?.id,
+        message: `Template "${templateName}" enviado para ${to}`
+      });
+    } catch (error: any) {
+      console.error('Error sending Meta template:', error);
+      res.status(500).json({ error: 'Erro ao enviar template: ' + error.message });
+    }
+  });
+
   // Test birthday message function
   app.post('/api/company/test-birthday-message', isCompanyAuthenticated, async (req, res) => {
     try {

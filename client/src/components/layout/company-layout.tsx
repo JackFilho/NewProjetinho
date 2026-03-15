@@ -21,7 +21,8 @@ import {
   DollarSign,
   BarChart3,
   CreditCard,
-  HelpCircle
+  HelpCircle,
+  FileText
 } from "lucide-react";
 import { useCompanyAuth } from "@/hooks/useCompanyAuth";
 import { useGlobalTheme } from "@/hooks/use-global-theme";
@@ -92,6 +93,12 @@ const menuItems = [
     href: "/company/relatorios",
     icon: BarChart3,
     permission: "reports" as keyof PlanPermissions | null,
+  },
+  {
+    title: "Templates",
+    href: "/company/templates",
+    icon: FileText,
+    permission: "settings" as keyof PlanPermissions | null,
   },
   {
     title: "Configurações",

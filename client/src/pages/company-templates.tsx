@@ -1,0 +1,706 @@
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { useToast } from '@/hooks/use-toast';
+import { FloatingHelpButton } from "@/components/floating-help-button";
+import {
+  FileText,
+  Plus,
+  Send,
+  Trash2,
+  RefreshCw,
+  CheckCircle,
+  Clock,
+  XCircle,
+  AlertTriangle,
+  Info,
+  Search
+} from 'lucide-react';
+
+interface MetaTemplate {
+  id: string;
+  name: string;
+  status: string;
+  category: string;
+  language: string;
+  components: MetaTemplateComponent[];
+}
+
+interface MetaTemplateComponent {
+  type: string;
+  text?: string;
+  format?: string;
+  example?: any;
+  buttons?: any[];
+}
+
+export default function CompanyTemplates() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sendDialogOpen, setSendDialogOpen] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<MetaTemplate | null>(null);
+  const [sendPhone, setSendPhone] = useState('');
+  const [sendParams, setSendParams] = useState<{ [key: string]: string }>({});
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  // New template form state
+  const [newTemplate, setNewTemplate] = useState({
+    name: '',
+    category: 'UTILITY' as 'UTILITY' | 'MARKETING' | 'AUTHENTICATION',
+    language: 'pt_BR',
+    headerText: '',
+    bodyText: '',
+    footerText: '',
+  });
+
+  // Fetch templates from Meta API
+  const { data: templates = [], isLoading, isError, error } = useQuery<MetaTemplate[]>({
+    queryKey: ['/api/company/meta-templates', statusFilter],
+    queryFn: async () => {
+      const url = statusFilter
+        ? `/api/company/meta-templates?status=${statusFilter}`
+        : '/api/company/meta-templates';
+      const response = await fetch(url, { credentials: 'include' });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Erro ao carregar templates');
+      }
+      return response.json();
+    },
+  });
+
+  // Create template mutation
+  const createMutation = useMutation({
+    mutationFn: async (data: typeof newTemplate) => {
+      const components: any[] = [];
+
+      if (data.headerText.trim()) {
+        components.push({
+          type: 'HEADER',
+          format: 'TEXT',
+          text: data.headerText,
+        });
+      }
+
+      components.push({
+        type: 'BODY',
+        text: data.bodyText,
+      });
+
+      if (data.footerText.trim()) {
+        components.push({
+          type: 'FOOTER',
+          text: data.footerText,
+        });
+      }
+
+      const response = await fetch('/api/company/meta-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: data.name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''),
+          category: data.category,
+          language: data.language,
+          components,
+        }),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Erro ao criar template');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/company/meta-templates'] });
+      toast({ title: 'Template criado', description: 'O template foi enviado para aprovação da Meta.' });
+      setNewTemplate({ name: '', category: 'UTILITY', language: 'pt_BR', headerText: '', bodyText: '', footerText: '' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Erro ao criar template', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  // Delete template mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (templateName: string) => {
+      const response = await fetch(`/api/company/meta-templates/${templateName}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Erro ao deletar template');
+      }
+      return response.json();
+    },
+    onSuccess: (_, templateName) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/company/meta-templates'] });
+      toast({ title: 'Template deletado', description: `Template "${templateName}" removido com sucesso.` });
+      setDeleteConfirm(null);
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Erro ao deletar', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  // Send template mutation
+  const sendMutation = useMutation({
+    mutationFn: async (data: { templateName: string; to: string; languageCode: string; components?: any[] }) => {
+      const response = await fetch('/api/company/meta-templates/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Erro ao enviar template');
+      }
+      return response.json();
+    },
+    onSuccess: (data) => {
+      toast({ title: 'Mensagem enviada', description: data.message });
+      setSendDialogOpen(false);
+      setSendPhone('');
+      setSendParams({});
+      setSelectedTemplate(null);
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Erro ao enviar', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const getStatusBadge = (status: string) => {
+    switch (status.toUpperCase()) {
+      case 'APPROVED':
+        return <Badge className="bg-green-100 text-green-800 hover:bg-green-100"><CheckCircle className="h-3 w-3 mr-1" />Aprovado</Badge>;
+      case 'PENDING':
+        return <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100"><Clock className="h-3 w-3 mr-1" />Pendente</Badge>;
+      case 'REJECTED':
+        return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Rejeitado</Badge>;
+      case 'PAUSED':
+        return <Badge className="bg-orange-100 text-orange-800 hover:bg-orange-100"><AlertTriangle className="h-3 w-3 mr-1" />Pausado</Badge>;
+      default:
+        return <Badge variant="outline">{status}</Badge>;
+    }
+  };
+
+  const getCategoryBadge = (category: string) => {
+    switch (category.toUpperCase()) {
+      case 'UTILITY':
+        return <Badge variant="outline" className="border-blue-300 text-blue-700">Utilidade</Badge>;
+      case 'MARKETING':
+        return <Badge variant="outline" className="border-purple-300 text-purple-700">Marketing</Badge>;
+      case 'AUTHENTICATION':
+        return <Badge variant="outline" className="border-gray-300 text-gray-700">Autenticacao</Badge>;
+      default:
+        return <Badge variant="outline">{category}</Badge>;
+    }
+  };
+
+  const getTemplateBodyText = (template: MetaTemplate): string => {
+    const bodyComponent = template.components?.find(c => c.type === 'BODY');
+    return bodyComponent?.text || '';
+  };
+
+  const getTemplateHeaderText = (template: MetaTemplate): string => {
+    const headerComponent = template.components?.find(c => c.type === 'HEADER');
+    return headerComponent?.text || '';
+  };
+
+  const getTemplateFooterText = (template: MetaTemplate): string => {
+    const footerComponent = template.components?.find(c => c.type === 'FOOTER');
+    return footerComponent?.text || '';
+  };
+
+  // Extract {{1}}, {{2}} etc. variable placeholders from body
+  const extractVariables = (template: MetaTemplate): string[] => {
+    const body = getTemplateBodyText(template);
+    const matches = body.match(/\{\{\d+\}\}/g);
+    return matches ? [...new Set(matches)] : [];
+  };
+
+  const handleSendTemplate = () => {
+    if (!selectedTemplate || !sendPhone.trim()) return;
+
+    const variables = extractVariables(selectedTemplate);
+    const bodyComponents: any[] = [];
+
+    if (variables.length > 0) {
+      const parameters = variables.map((v) => ({
+        type: 'text' as const,
+        text: sendParams[v] || v,
+      }));
+      bodyComponents.push({
+        type: 'body',
+        parameters,
+      });
+    }
+
+    sendMutation.mutate({
+      templateName: selectedTemplate.name,
+      to: sendPhone,
+      languageCode: selectedTemplate.language || 'pt_BR',
+      components: bodyComponents.length > 0 ? bodyComponents : undefined,
+    });
+  };
+
+  const filteredTemplates = templates.filter((t: MetaTemplate) => {
+    if (searchTerm) {
+      return t.name.toLowerCase().includes(searchTerm.toLowerCase());
+    }
+    return true;
+  });
+
+  return (
+    <div className="container mx-auto py-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight ml-16 sm:ml-0">Templates WhatsApp</h1>
+          <p className="text-muted-foreground">
+            Gerencie seus templates de mensagem da Meta WhatsApp Cloud API
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/company/meta-templates'] })}
+          className="flex items-center gap-2"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Atualizar
+        </Button>
+      </div>
+
+      <Alert>
+        <Info className="h-4 w-4" />
+        <AlertDescription>
+          <strong>Regras da Meta:</strong> Mensagens fora da janela de 24 horas so podem ser enviadas via templates aprovados.
+          Templates passam por revisao da Meta (geralmente 24-48h). Use a categoria <strong>UTILITY</strong> para lembretes e confirmacoes,
+          e <strong>MARKETING</strong> para campanhas e promocoes.
+        </AlertDescription>
+      </Alert>
+
+      <Tabs defaultValue="templates" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="templates" className="flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Meus Templates
+          </TabsTrigger>
+          <TabsTrigger value="create" className="flex items-center gap-2">
+            <Plus className="h-4 w-4" />
+            Criar Template
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Tab: Lista de Templates */}
+        <TabsContent value="templates" className="space-y-4">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar template pelo nome..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Todos os status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="APPROVED">Aprovados</SelectItem>
+                <SelectItem value="PENDING">Pendentes</SelectItem>
+                <SelectItem value="REJECTED">Rejeitados</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <RefreshCw className="h-6 w-6 animate-spin mr-2" />
+              Carregando templates da Meta...
+            </div>
+          ) : isError ? (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                {(error as Error)?.message || 'Erro ao carregar templates. Verifique se a instancia WhatsApp esta configurada.'}
+              </AlertDescription>
+            </Alert>
+          ) : filteredTemplates.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <FileText className="h-12 w-12 mb-4 opacity-50" />
+                <p className="text-lg font-medium">Nenhum template encontrado</p>
+                <p className="text-sm">Crie seu primeiro template na aba "Criar Template"</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-4">
+              {filteredTemplates.map((template: MetaTemplate) => {
+                const bodyText = getTemplateBodyText(template);
+                const headerText = getTemplateHeaderText(template);
+                const footerText = getTemplateFooterText(template);
+                const isApproved = template.status?.toUpperCase() === 'APPROVED';
+
+                return (
+                  <Card key={template.id} className="overflow-hidden">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1">
+                          <CardTitle className="text-lg flex items-center gap-2">
+                            <FileText className="h-5 w-5 text-muted-foreground" />
+                            {template.name}
+                          </CardTitle>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {getStatusBadge(template.status)}
+                            {getCategoryBadge(template.category)}
+                            <Badge variant="outline" className="text-xs">{template.language}</Badge>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {isApproved && (
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                setSelectedTemplate(template);
+                                setSendParams({});
+                                setSendPhone('');
+                                setSendDialogOpen(true);
+                              }}
+                              className="flex items-center gap-1"
+                            >
+                              <Send className="h-3 w-3" />
+                              Enviar
+                            </Button>
+                          )}
+                          {deleteConfirm === template.name ? (
+                            <div className="flex items-center gap-1">
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => deleteMutation.mutate(template.name)}
+                                disabled={deleteMutation.isPending}
+                              >
+                                Confirmar
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setDeleteConfirm(null)}
+                              >
+                                Cancelar
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setDeleteConfirm(template.name)}
+                              className="text-destructive hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="bg-muted rounded-lg p-4 space-y-2">
+                        {headerText && (
+                          <div>
+                            <span className="text-xs font-semibold text-muted-foreground uppercase">Cabecalho</span>
+                            <p className="font-medium">{headerText}</p>
+                          </div>
+                        )}
+                        {bodyText && (
+                          <div>
+                            <span className="text-xs font-semibold text-muted-foreground uppercase">Corpo</span>
+                            <p className="whitespace-pre-wrap text-sm">{bodyText}</p>
+                          </div>
+                        )}
+                        {footerText && (
+                          <div>
+                            <span className="text-xs font-semibold text-muted-foreground uppercase">Rodape</span>
+                            <p className="text-xs text-muted-foreground">{footerText}</p>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* Tab: Criar Template */}
+        <TabsContent value="create" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Plus className="h-5 w-5" />
+                Criar Novo Template
+              </CardTitle>
+              <CardDescription>
+                Preencha os campos abaixo para submeter um novo template para aprovacao da Meta.
+                A aprovacao leva geralmente de 24 a 48 horas.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="template-name">Nome do Template *</Label>
+                  <Input
+                    id="template-name"
+                    placeholder="ex: lembrete_agendamento"
+                    value={newTemplate.name}
+                    onChange={(e) => setNewTemplate(prev => ({ ...prev, name: e.target.value }))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Apenas letras minusculas, numeros e underscores
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="template-category">Categoria *</Label>
+                  <Select
+                    value={newTemplate.category}
+                    onValueChange={(value) => setNewTemplate(prev => ({ ...prev, category: value as any }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="UTILITY">Utilidade (lembretes, confirmacoes)</SelectItem>
+                      <SelectItem value="MARKETING">Marketing (campanhas, promocoes)</SelectItem>
+                      <SelectItem value="AUTHENTICATION">Autenticacao (codigos OTP)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="template-language">Idioma *</Label>
+                  <Select
+                    value={newTemplate.language}
+                    onValueChange={(value) => setNewTemplate(prev => ({ ...prev, language: value }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pt_BR">Portugues (Brasil)</SelectItem>
+                      <SelectItem value="en_US">English (US)</SelectItem>
+                      <SelectItem value="es">Espanol</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-2">
+                <Label htmlFor="template-header">Cabecalho (opcional)</Label>
+                <Input
+                  id="template-header"
+                  placeholder="ex: Lembrete de Agendamento"
+                  value={newTemplate.headerText}
+                  onChange={(e) => setNewTemplate(prev => ({ ...prev, headerText: e.target.value }))}
+                  maxLength={60}
+                />
+                <p className="text-xs text-muted-foreground">Maximo 60 caracteres</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="template-body">Corpo da Mensagem *</Label>
+                <Textarea
+                  id="template-body"
+                  placeholder={`ex: Ola! Seu agendamento esta confirmado:\n\nServico: {{1}}\nData: {{2}}\nHorario: {{3}}\n\nAguardamos voce!`}
+                  value={newTemplate.bodyText}
+                  onChange={(e) => setNewTemplate(prev => ({ ...prev, bodyText: e.target.value }))}
+                  rows={8}
+                  maxLength={1024}
+                />
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <p>Use {'{{1}}'}, {'{{2}}'}, {'{{3}}'} para variaveis dinamicas</p>
+                  <p>{newTemplate.bodyText.length}/1024</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="template-footer">Rodape (opcional)</Label>
+                <Input
+                  id="template-footer"
+                  placeholder="ex: Enviado automaticamente pelo sistema"
+                  value={newTemplate.footerText}
+                  onChange={(e) => setNewTemplate(prev => ({ ...prev, footerText: e.target.value }))}
+                  maxLength={60}
+                />
+                <p className="text-xs text-muted-foreground">Maximo 60 caracteres</p>
+              </div>
+
+              {newTemplate.bodyText && (
+                <>
+                  <Separator />
+                  <div>
+                    <Label className="text-sm font-semibold">Pre-visualizacao</Label>
+                    <div className="mt-2 bg-green-50 border border-green-200 rounded-lg p-4 max-w-sm">
+                      {newTemplate.headerText && (
+                        <p className="font-bold text-sm mb-1">{newTemplate.headerText}</p>
+                      )}
+                      <p className="text-sm whitespace-pre-wrap">{newTemplate.bodyText}</p>
+                      {newTemplate.footerText && (
+                        <p className="text-xs text-muted-foreground mt-2">{newTemplate.footerText}</p>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <Button
+                onClick={() => createMutation.mutate(newTemplate)}
+                disabled={createMutation.isPending || !newTemplate.name.trim() || !newTemplate.bodyText.trim()}
+                className="w-full sm:w-auto"
+              >
+                {createMutation.isPending ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Enviando...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Submeter Template para Aprovacao
+                  </>
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertDescription className="space-y-2">
+              <p><strong>Dicas para aprovacao rapida:</strong></p>
+              <ul className="list-disc list-inside space-y-1 text-sm">
+                <li>Use a categoria correta (UTILITY para servicos, MARKETING para promocoes)</li>
+                <li>Nao inclua conteudo ofensivo ou enganoso</li>
+                <li>Templates de UTILITY tem menor custo por conversa</li>
+                <li>Variaveis (<code>{'{{1}}'}</code>) permitem personalizar cada envio</li>
+                <li>O nome do template deve ser unico e usar apenas letras minusculas e underscores</li>
+              </ul>
+            </AlertDescription>
+          </Alert>
+        </TabsContent>
+      </Tabs>
+
+      {/* Dialog: Enviar Template */}
+      <Dialog open={sendDialogOpen} onOpenChange={setSendDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Send className="h-5 w-5" />
+              Enviar Template
+            </DialogTitle>
+            <DialogDescription>
+              Envie o template <strong>{selectedTemplate?.name}</strong> para um cliente via WhatsApp.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="send-phone">Numero do WhatsApp *</Label>
+              <Input
+                id="send-phone"
+                placeholder="ex: 11999999999"
+                value={sendPhone}
+                onChange={(e) => setSendPhone(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                DDD + numero (o codigo do pais 55 sera adicionado automaticamente)
+              </p>
+            </div>
+
+            {selectedTemplate && extractVariables(selectedTemplate).length > 0 && (
+              <>
+                <Separator />
+                <div className="space-y-3">
+                  <Label className="font-semibold">Variaveis do Template</Label>
+                  {extractVariables(selectedTemplate).map((variable) => (
+                    <div key={variable} className="space-y-1">
+                      <Label htmlFor={`param-${variable}`} className="text-sm">
+                        {variable}
+                      </Label>
+                      <Input
+                        id={`param-${variable}`}
+                        placeholder={`Valor para ${variable}`}
+                        value={sendParams[variable] || ''}
+                        onChange={(e) => setSendParams(prev => ({ ...prev, [variable]: e.target.value }))}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {selectedTemplate && (
+              <>
+                <Separator />
+                <div>
+                  <Label className="text-xs font-semibold text-muted-foreground">Pre-visualizacao</Label>
+                  <div className="mt-1 bg-green-50 border border-green-200 rounded-lg p-3 text-sm">
+                    <p className="whitespace-pre-wrap">
+                      {(() => {
+                        let body = getTemplateBodyText(selectedTemplate);
+                        Object.entries(sendParams).forEach(([key, value]) => {
+                          if (value) body = body.replace(key, value);
+                        });
+                        return body;
+                      })()}
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSendDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleSendTemplate}
+              disabled={sendMutation.isPending || !sendPhone.trim()}
+            >
+              {sendMutation.isPending ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Enviando...
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4 mr-2" />
+                  Enviar Mensagem
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <FloatingHelpButton menuLocation="templates" />
+    </div>
+  );
+}
