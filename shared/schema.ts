@@ -102,6 +102,12 @@ export const companies = mysqlTable("companies", {
   financialPassword: varchar("financial_password", { length: 255 }),
   logoUrl: varchar("logo_url", { length: 500 }),
   primaryColor: varchar("primary_color", { length: 7 }),
+  // Chatwoot integration
+  chatwootEnabled: int("chatwoot_enabled").notNull().default(0),
+  chatwootBaseUrl: varchar("chatwoot_base_url", { length: 500 }),
+  chatwootApiToken: varchar("chatwoot_api_token", { length: 500 }),
+  chatwootAccountId: int("chatwoot_account_id"),
+  chatwootInboxId: int("chatwoot_inbox_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
@@ -209,6 +215,15 @@ export const globalSettings = mysqlTable("global_settings", {
   customDomainUrl: varchar("custom_domain_url", { length: 500 }),
   systemUrl: varchar("system_url", { length: 500 }),
   supportWhatsapp: varchar("support_whatsapp", { length: 20 }),
+  // Meta Tech Provider settings
+  metaAppId: varchar("meta_app_id", { length: 100 }),
+  metaAppSecret: varchar("meta_app_secret", { length: 255 }),
+  metaWebhookVerifyToken: varchar("meta_webhook_verify_token", { length: 255 }),
+  metaBusinessId: varchar("meta_business_id", { length: 100 }),
+  // Chatwoot global defaults
+  chatwootBaseUrl: varchar("chatwoot_base_url", { length: 500 }),
+  chatwootApiToken: varchar("chatwoot_api_token", { length: 500 }),
+  chatwootAccountId: int("chatwoot_account_id"),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
 
@@ -235,6 +250,19 @@ export const whatsappInstances = mysqlTable("whatsapp_instances", {
   webhook: varchar("webhook", { length: 500 }),
   apiUrl: varchar("api_url", { length: 500 }),
   apiKey: varchar("api_key", { length: 500 }),
+  // Provider type: 'uazapi' (legado) ou 'meta_official' (API oficial Meta)
+  providerType: varchar("provider_type", { length: 20 }).notNull().default("uazapi"),
+  // Campos específicos Meta Cloud API
+  metaPhoneNumberId: varchar("meta_phone_number_id", { length: 100 }),
+  metaWabaId: varchar("meta_waba_id", { length: 100 }),
+  metaAccessToken: text("meta_access_token"),
+  metaAppId: varchar("meta_app_id", { length: 100 }),
+  metaAppSecret: varchar("meta_app_secret", { length: 255 }),
+  metaWebhookVerifyToken: varchar("meta_webhook_verify_token", { length: 255 }),
+  metaBusinessId: varchar("meta_business_id", { length: 100 }),
+  displayPhoneNumber: varchar("display_phone_number", { length: 20 }),
+  qualityRating: varchar("quality_rating", { length: 20 }),
+  messagingLimit: varchar("messaging_limit", { length: 20 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
@@ -249,6 +277,7 @@ export const conversations = mysqlTable("conversations", {
   lastMessageAt: timestamp("last_message_at").defaultNow(),
   takeoverMode: mysqlEnum("takeover_mode", ["agent", "human"]).default("agent"),
   courseSentAt: timestamp("course_sent_at"), // Timestamp when course notification was sent (null = never sent)
+  providerType: varchar("provider_type", { length: 20 }).notNull().default("uazapi"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
@@ -872,3 +901,51 @@ export type TourStep = typeof tourSteps.$inferSelect;
 export type InsertTourStep = z.infer<typeof insertTourStepSchema>;
 export type CompanyTourProgress = typeof companyTourProgress.$inferSelect;
 export type InsertCompanyTourProgress = z.infer<typeof insertCompanyTourProgressSchema>;
+
+// ===== Chatwoot Conversation Mapping =====
+export const chatwootConversationMap = mysqlTable("chatwoot_conversation_map", {
+  id: serial("id").primaryKey(),
+  companyId: int("company_id").notNull(),
+  conversationId: int("conversation_id").notNull(),
+  chatwootConversationId: int("chatwoot_conversation_id").notNull(),
+  chatwootContactId: int("chatwoot_contact_id").notNull(),
+  phoneNumber: varchar("phone_number", { length: 50 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
+// ===== Meta Message Templates =====
+export const metaMessageTemplates = mysqlTable("meta_message_templates", {
+  id: serial("id").primaryKey(),
+  companyId: int("company_id").notNull(),
+  wabaId: varchar("waba_id", { length: 100 }).notNull(),
+  templateId: varchar("template_id", { length: 100 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  category: varchar("category", { length: 50 }).notNull(),
+  language: varchar("language", { length: 10 }).notNull().default("pt_BR"),
+  status: varchar("status", { length: 50 }).notNull().default("PENDING"),
+  components: json("components"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
+// ===== Message Delivery Status =====
+export const messageDeliveryStatus = mysqlTable("message_delivery_status", {
+  id: serial("id").primaryKey(),
+  messageId: int("message_id").notNull(),
+  providerMessageId: varchar("provider_message_id", { length: 255 }).notNull(),
+  providerType: varchar("provider_type", { length: 20 }).notNull().default("uazapi"),
+  status: varchar("status", { length: 20 }).notNull().default("sent"),
+  errorCode: int("error_code"),
+  errorMessage: text("error_message"),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertChatwootConversationMapSchema = createInsertSchema(chatwootConversationMap).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertMetaMessageTemplateSchema = createInsertSchema(metaMessageTemplates).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertMessageDeliveryStatusSchema = createInsertSchema(messageDeliveryStatus).omit({ id: true, createdAt: true, updatedAt: true });
+
+export type ChatwootConversationMap = typeof chatwootConversationMap.$inferSelect;
+export type MetaMessageTemplate = typeof metaMessageTemplates.$inferSelect;
+export type MessageDeliveryStatus = typeof messageDeliveryStatus.$inferSelect;
