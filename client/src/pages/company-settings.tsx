@@ -927,7 +927,7 @@ export default function CompanySettings() {
       setSelectedInstance(null);
       toast({
         title: "Agente IA configurado",
-        description: "Webhook configurado com sucesso na UAZAPI.",
+        description: "Webhook configurado com sucesso na Meta API.",
       });
     },
     onError: (error: any) => {
@@ -992,7 +992,7 @@ export default function CompanySettings() {
 
   const connectInstanceMutation = useMutation({
     mutationFn: async (instanceName: string) => {
-      // Trigger connection in UAZAPI
+      // Trigger connection in Meta API
       const result = await apiRequest(`/api/company/whatsapp/instances/${instanceName}/connect`, "GET");
       return result;
     },
@@ -1071,10 +1071,10 @@ export default function CompanySettings() {
     onError: (error: any) => {
       let errorMessage = error.message || "Erro ao conectar instância";
       
-      if (error.message?.includes("UAZAPI não configurada")) {
-        errorMessage = "Configure a UAZAPI nas configurações do administrador antes de conectar instâncias WhatsApp.";
+      if (error.message?.includes("Meta API não configurada")) {
+        errorMessage = "Configure a Meta API nas configurações do administrador antes de conectar instâncias WhatsApp.";
       } else if (error.message?.includes("Instância não encontrada")) {
-        errorMessage = "Esta instância não foi encontrada na UAZAPI. Verifique se foi criada corretamente.";
+        errorMessage = "Esta instância não foi encontrada na Meta API. Verifique se foi criada corretamente.";
       }
       
       toast({
@@ -4228,7 +4228,7 @@ export default function CompanySettings() {
             <DialogHeader>
               <DialogTitle>Configurar Agente IA - {selectedInstance?.instanceName}</DialogTitle>
               <DialogDescription>
-                O agente IA será configurado automaticamente usando as configurações globais da UAZAPI definidas pelo administrador.
+                O agente IA será configurado automaticamente usando as configurações globais da Meta API definidas pelo administrador.
               </DialogDescription>
             </DialogHeader>
             
@@ -4236,7 +4236,7 @@ export default function CompanySettings() {
               <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
                 <h4 className="font-semibold text-blue-900 mb-2">Como funciona</h4>
                 <ul className="text-sm text-blue-800 space-y-1">
-                  <li>• O webhook será configurado automaticamente na UAZAPI</li>
+                  <li>• O webhook será configurado automaticamente na Meta API</li>
                   <li>• Mensagens recebidas no WhatsApp serão processadas pelo agente IA</li>
                   <li>• As respostas serão enviadas automaticamente usando seu prompt personalizado</li>
                   <li>• Utiliza as configurações globais definidas pelo administrador</li>

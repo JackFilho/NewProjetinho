@@ -59,7 +59,8 @@ export function schedulePixExpirationCheck(
       const instances = await storage.getWhatsappInstancesByCompany(companyId);
       const activeInstance = instances[0];
 
-      if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken && activeInstance?.instanceToken) {
+      const inst = activeInstance as any;
+      if (inst?.metaPhoneNumberId && inst?.metaWabaId && inst?.metaAccessToken) {
         let formattedPhone = clientPhone.replace(/\D/g, '');
         if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
           formattedPhone = '55' + formattedPhone;
@@ -67,9 +68,13 @@ export function schedulePixExpirationCheck(
 
         const expirationMsg = `⏰ *Tempo de pagamento expirado*\n\nO prazo de 10 minutos para o pagamento via PIX se encerrou e o agendamento não foi realizado.\n\nCaso ainda deseje agendar, é só enviar uma nova mensagem que estaremos prontos para atendê-lo! 😊`;
 
-        const { createUazapiService } = await import('./services/uazapi');
-        const uazapi = createUazapiService(globalSettings.uazapiUrl!, globalSettings.uazapiAdminToken!);
-        await uazapi.sendText(activeInstance.instanceToken, { number: formattedPhone, text: expirationMsg });
+        const { createMetaWhatsAppService } = await import('./services/meta-whatsapp');
+        const metaService = createMetaWhatsAppService({
+          phoneNumberId: inst.metaPhoneNumberId,
+          wabaId: inst.metaWabaId,
+          accessToken: inst.metaAccessToken,
+        });
+        await metaService.sendText({ to: formattedPhone, text: expirationMsg });
 
         console.log(`[PIX Expiration] Mensagem de expiração enviada para ${formattedPhone}`);
 
@@ -602,7 +607,8 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
             const instances = await storage.getWhatsappInstancesByCompany(pendingData.companyId);
             const activeInstance = instances[0];
 
-            if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken && activeInstance?.instanceToken) {
+            const instMP = activeInstance as any;
+            if (instMP?.metaPhoneNumberId && instMP?.metaWabaId && instMP?.metaAccessToken) {
               let formattedPhone = pendingData.clientPhone.replace(/\D/g, '');
               if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
                 formattedPhone = '55' + formattedPhone;
@@ -622,7 +628,6 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
               const dateForDisplay = appointmentDate || pendingData.date || '';
               let formattedDateDisplay = dateForDisplay;
               try {
-                // appointmentDate está em YYYY-MM-DD
                 const [year, month, day] = dateForDisplay.split('-').map(Number);
                 const dateObj = new Date(year, month - 1, day);
                 const diaSemana = diasSemana[dateObj.getDay()];
@@ -634,9 +639,13 @@ router.post("/api/webhook/mercadopago/:companyId", async (req: any, res: any) =>
 
               const confirmationMessage = `*Pagamento Confirmado!* ✅\n\nAgendamento realizado com sucesso! Nos vemos no dia ${formattedDateDisplay} às ${timeForDisplay}${profPart}.`;
 
-              const { createUazapiService } = await import('./services/uazapi');
-              const uazapi = createUazapiService(globalSettings.uazapiUrl!, globalSettings.uazapiAdminToken!);
-              await uazapi.sendText(activeInstance.instanceToken, { number: formattedPhone, text: confirmationMessage });
+              const { createMetaWhatsAppService } = await import('./services/meta-whatsapp');
+              const metaServiceMP = createMetaWhatsAppService({
+                phoneNumberId: instMP.metaPhoneNumberId,
+                wabaId: instMP.metaWabaId,
+                accessToken: instMP.metaAccessToken,
+              });
+              await metaServiceMP.sendText({ to: formattedPhone, text: confirmationMessage });
 
               console.log(`[MP Webhook] Mensagem de confirmação enviada para ${formattedPhone}`);
 

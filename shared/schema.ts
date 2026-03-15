@@ -199,8 +199,8 @@ export const globalSettings = mysqlTable("global_settings", {
   backgroundColor: varchar("background_color", { length: 7 }).notNull().default("#f8fafc"),
   textColor: varchar("text_color", { length: 7 }).notNull().default("#1e293b"),
   // tourColor: varchar("tour_color", { length: 7 }).notNull().default("#b845dc"), // Temporarily disabled for schema sync
-  uazapiUrl: varchar("uazapi_url", { length: 500 }),
-  uazapiAdminToken: varchar("uazapi_admin_token", { length: 500 }),
+  // Campos Meta Cloud API (configuração global)
+  // Os campos Meta estão definidos mais abaixo (metaAppId, metaAppSecret, etc.)
   defaultBirthdayMessage: text("default_birthday_message"),
   defaultAiPrompt: text("default_ai_prompt"), // Default AI prompt for new companies
   // SMTP Configuration
@@ -250,8 +250,8 @@ export const whatsappInstances = mysqlTable("whatsapp_instances", {
   webhook: varchar("webhook", { length: 500 }),
   apiUrl: varchar("api_url", { length: 500 }),
   apiKey: varchar("api_key", { length: 500 }),
-  // Provider type: 'uazapi' (legado) ou 'meta_official' (API oficial Meta)
-  providerType: varchar("provider_type", { length: 20 }).notNull().default("uazapi"),
+  // Provider type — agora apenas 'meta_official' (API oficial Meta)
+  providerType: varchar("provider_type", { length: 20 }).notNull().default("meta_official"),
   // Campos específicos Meta Cloud API
   metaPhoneNumberId: varchar("meta_phone_number_id", { length: 100 }),
   metaWabaId: varchar("meta_waba_id", { length: 100 }),
@@ -277,7 +277,7 @@ export const conversations = mysqlTable("conversations", {
   lastMessageAt: timestamp("last_message_at").defaultNow(),
   takeoverMode: mysqlEnum("takeover_mode", ["agent", "human"]).default("agent"),
   courseSentAt: timestamp("course_sent_at"), // Timestamp when course notification was sent (null = never sent)
-  providerType: varchar("provider_type", { length: 20 }).notNull().default("uazapi"),
+  providerType: varchar("provider_type", { length: 20 }).notNull().default("meta_official"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
@@ -934,7 +934,7 @@ export const messageDeliveryStatus = mysqlTable("message_delivery_status", {
   id: serial("id").primaryKey(),
   messageId: int("message_id").notNull(),
   providerMessageId: varchar("provider_message_id", { length: 255 }).notNull(),
-  providerType: varchar("provider_type", { length: 20 }).notNull().default("uazapi"),
+  providerType: varchar("provider_type", { length: 20 }).notNull().default("meta_official"),
   status: varchar("status", { length: 20 }).notNull().default("sent"),
   errorCode: int("error_code"),
   errorMessage: text("error_message"),

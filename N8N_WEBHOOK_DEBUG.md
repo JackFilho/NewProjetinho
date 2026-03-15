@@ -264,7 +264,7 @@ npm run dev
 
 ### Como Ativar Logs do WhatsApp
 
-Para ver logs detalhados dos webhooks recebidos do WhatsApp (UAZAPI):
+Para ver logs detalhados dos webhooks recebidos do WhatsApp (Meta Cloud API):
 
 1. **Adicione a variável de ambiente** no arquivo `.env`:
    ```bash

@@ -1,15 +1,14 @@
 -- Migration 055: Meta WhatsApp Cloud API + Chatwoot Integration
--- Adiciona suporte para API oficial da Meta (Tech Provider) e integração com Chatwoot
--- Mantém coexistência com UAZAPI (provider legado)
+-- Configura API oficial da Meta (Tech Provider) e integra Chatwoot
 
 -- ============================================================
 -- 1. Campos para WhatsApp Provider na tabela whatsapp_instances
 -- ============================================================
 
--- Tipo de provider (uazapi ou meta_official)
+-- Tipo de provider (meta_official)
 ALTER TABLE whatsapp_instances
-  ADD COLUMN provider_type VARCHAR(20) NOT NULL DEFAULT 'uazapi'
-  COMMENT 'Provider: uazapi (legado) ou meta_official (API oficial Meta)';
+  ADD COLUMN provider_type VARCHAR(20) NOT NULL DEFAULT 'meta_official'
+  COMMENT 'Provider: meta_official (API oficial Meta)';
 
 -- Campos específicos da Meta Cloud API
 ALTER TABLE whatsapp_instances
@@ -156,8 +155,8 @@ CREATE TABLE IF NOT EXISTS meta_message_templates (
 CREATE TABLE IF NOT EXISTS message_delivery_status (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   message_id INT NOT NULL COMMENT 'ID da mensagem no sistema',
-  provider_message_id VARCHAR(255) NOT NULL COMMENT 'ID da mensagem no provider (Meta ou UAZAPI)',
-  provider_type VARCHAR(20) NOT NULL DEFAULT 'uazapi',
+  provider_message_id VARCHAR(255) NOT NULL COMMENT 'ID da mensagem no provider (Meta Cloud API)',
+  provider_type VARCHAR(20) NOT NULL DEFAULT 'meta_official',
   status VARCHAR(20) NOT NULL DEFAULT 'sent' COMMENT 'sent, delivered, read, failed',
   error_code INT NULL,
   error_message TEXT NULL,
@@ -173,7 +172,7 @@ CREATE TABLE IF NOT EXISTS message_delivery_status (
 -- ============================================================
 
 ALTER TABLE conversations
-  ADD COLUMN provider_type VARCHAR(20) NOT NULL DEFAULT 'uazapi'
+  ADD COLUMN provider_type VARCHAR(20) NOT NULL DEFAULT 'meta_official'
   COMMENT 'Provider WhatsApp desta conversa';
 
 -- ============================================================

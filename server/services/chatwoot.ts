@@ -6,7 +6,7 @@
  * - Criar/gerenciar contatos
  * - Criar/gerenciar conversas
  * - Enviar/receber mensagens
- * - Sincronizar com WhatsApp (via Meta API ou UAZAPI)
+ * - Sincronizar com WhatsApp (via Meta Cloud API)
  * - Gerenciar agentes e equipes
  *
  * Documentação Chatwoot API: https://www.chatwoot.com/developers/api/

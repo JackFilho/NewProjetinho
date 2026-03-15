@@ -7,7 +7,7 @@
 3. [Passo a Passo do Processo](#3-passo-a-passo-do-processo)
 4. [Configuração Técnica do Sistema](#4-configuração-técnica-do-sistema)
 5. [Integração com Chatwoot](#5-integração-com-chatwoot)
-6. [Coexistência UAZAPI + Meta API](#6-coexistência-uazapi--meta-api)
+6. [Webhook e Endpoints](#6-webhook-e-endpoints)
 7. [Templates de Mensagem](#7-templates-de-mensagem)
 8. [Precificação e Modelo de Negócio](#8-precificação-e-modelo-de-negócio)
 9. [Compliance e Políticas](#9-compliance-e-políticas)
@@ -21,7 +21,7 @@
 Um **Tech Provider** (anteriormente chamado de BSP - Business Solution Provider) é uma empresa autorizada pela Meta para fornecer acesso à **WhatsApp Business Platform** (Cloud API) para outras empresas.
 
 ### Benefícios
-- **API Oficial**: Acesso direto à API Cloud da Meta (sem intermediários como UAZAPI)
+- **API Oficial**: Acesso direto à API Cloud da Meta
 - **Escalabilidade**: Envio de milhares de mensagens por segundo
 - **Confiabilidade**: SLA da Meta, sem risco de banimento por uso não-oficial
 - **Templates**: Capacidade de enviar mensagens proativas (fora da janela de 24h)
@@ -196,9 +196,8 @@ Para cada empresa/cliente que usar a API oficial:
 server/services/
 ├── meta-whatsapp.ts          # Serviço da API Cloud da Meta
 ├── meta-webhook-handler.ts   # Handler de webhooks da Meta
-├── whatsapp-provider.ts      # Camada de abstração (coexistência)
-├── chatwoot.ts               # Integração com Chatwoot
-└── uazapi.ts                 # Serviço UAZAPI (legado, mantido)
+├── whatsapp-provider.ts      # Provider e interface unificada
+└── chatwoot.ts               # Integração com Chatwoot
 ```
 
 ### 4.5 Fluxo de Mensagens
@@ -311,37 +310,27 @@ docker compose up -d
 
 ---
 
-## 6. Coexistência UAZAPI + Meta API
+## 6. Arquitetura da API Oficial Meta
 
-O sistema suporta **ambos os providers simultaneamente**. Cada empresa pode escolher qual usar.
+O sistema utiliza **exclusivamente** a API oficial da Meta (WhatsApp Cloud API).
 
 ### 6.1 Como funciona
 
-- Campo `provider_type` na tabela `whatsapp_instances` define o provider
-- A camada `whatsapp-provider.ts` abstrai as diferenças
-- Webhooks entram por URLs diferentes:
-  - UAZAPI: `POST /api/webhook/whatsapp/:instanceName`
-  - Meta: `POST /api/webhook/meta-whatsapp`
+- Campo `provider_type` na tabela `whatsapp_instances` é sempre `meta_official`
+- A camada `whatsapp-provider.ts` abstrai o acesso à API
+- Webhooks: `POST /api/webhook/meta-whatsapp`
 
-### 6.2 Migração gradual
+### 6.2 Vantagens da API Oficial
 
-Recomendamos migrar clientes gradualmente:
-
-1. **Fase 1**: Novos clientes usam Meta API
-2. **Fase 2**: Clientes existentes migram quando renovarem
-3. **Fase 3**: Desativar UAZAPI quando todos migrarem
-
-### 6.3 Diferenças operacionais
-
-| Funcionalidade | UAZAPI | Meta API |
-|---------------|--------|----------|
-| QR Code login | Sim | Não (usa phone number registration) |
-| Mensagens proativas | Limitadas | Via templates aprovados |
-| Janela de 24h | Não aplicável | Obrigatória |
-| Custo por mensagem | Zero (UAZAPI cobra fixo) | Meta cobra por conversa |
-| Risco de ban | Alto | Muito baixo |
-| Velocidade | Limitada | Alta (tier-based) |
-| Suporte | Comunidade | Meta (documentação oficial) |
+| Funcionalidade | Meta API |
+|---------------|----------|
+| Autenticação | Via Business Manager (sem QR Code) |
+| Mensagens proativas | Via templates aprovados |
+| Janela de 24h | Obrigatória para mensagens livres |
+| Custo por mensagem | Meta cobra por conversa |
+| Risco de ban | Muito baixo |
+| Velocidade | Alta (tier-based) |
+| Suporte | Meta (documentação oficial) |
 
 ---
 
@@ -469,8 +458,8 @@ Geralmente 2-6 semanas após submissão completa da documentação.
 ### Preciso de um número de telefone dedicado?
 Cada cliente precisa do seu próprio número. O número é registrado na plataforma Meta e não pode ser usado no WhatsApp normal simultaneamente.
 
-### Posso manter o UAZAPI enquanto migro?
-Sim! O sistema foi projetado para coexistência. O campo `provider_type` em cada instância permite usar ambos.
+### Preciso migrar de outra API?
+O sistema foi projetado para usar exclusivamente a API oficial da Meta. Caso esteja migrando de outra solução, basta configurar as credenciais Meta nas instâncias WhatsApp.
 
 ### Quanto custa ser Tech Provider?
 Não há custo fixo para ser Tech Provider. Você paga apenas pelas conversas dos seus clientes (custo Meta) + custos de infraestrutura.

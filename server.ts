@@ -28,7 +28,10 @@ import stripeService from './services/stripe.js';
 
 // Import utilities
 import { normalizePhone, formatBrazilianPhone } from './utils/phone.js';
-// UAZAPI - using inline .replace(/\/+$/, '') for URL cleanup
+// Meta WhatsApp Cloud API - URL cleanup no longer needed
+
+// Import WhatsApp provider
+import { createWhatsAppProvider } from './services/whatsapp-provider.js';
 
 // Import bcrypt for password hashing
 import bcrypt from 'bcrypt';
@@ -391,7 +394,7 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
       const connectionData = webhookData.data;
       let newStatus = 'disconnected'; // default status
       
-      // Map UAZAPI connection states to our status
+      // Map connection states to our status
       if (connectionData?.state === 'open') {
         newStatus = 'connected';
       } else if (connectionData?.state === 'connecting') {
@@ -432,7 +435,7 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
     if (isQrCodeEvent) {
       console.log('📱 QR code updated for instance:', instanceName);
       
-      // Extract QR code from UAZAPI
+      // QR codes not used with Meta API
       let qrCodeData = null;
       
       // Check all possible locations for QR code
@@ -459,7 +462,7 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
           
           let qrCodeString = '';
           
-          // Handle different data formats from UAZAPI
+          // Handle different data formats
           if (typeof qrCodeData === 'string') {
             qrCodeString = qrCodeData;
           } else if (typeof qrCodeData === 'object' && qrCodeData !== null) {
@@ -682,31 +685,23 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
               const fallbackResponse = "Desculpe, não consegui entender o áudio que você enviou. Pode escrever sua mensagem por texto, por favor? 📝";
               
               try {
-                // Send fallback response using UAZAPI with corrected URL
-                const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
-                const fallbackSendResponse = await fetch(`${correctedApiUrl}/send/text`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'token': globalSettings.uazapiAdminToken!
-                  },
-                  body: JSON.stringify({
-                    number: phoneNumber,
-                    textMessage: {
-                      text: fallbackResponse
-                    }
-                  })
+                // Send fallback response via Meta WhatsApp API
+                const fallbackProvider = createWhatsAppProvider({
+                  metaPhoneNumberId: whatsappInstance.metaPhoneNumberId!,
+                  metaWabaId: whatsappInstance.metaWabaId!,
+                  metaAccessToken: whatsappInstance.metaAccessToken!,
                 });
-                
-                if (fallbackSendResponse.ok) {
+                const fallbackSendResult = await fallbackProvider.sendText(phoneNumber, fallbackResponse);
+
+                if (fallbackSendResult.success) {
                   console.log('✅ Fallback response sent for failed audio transcription');
-                  return res.status(200).json({ 
-                    received: true, 
-                    processed: true, 
-                    reason: 'Audio transcription failed, fallback response sent' 
+                  return res.status(200).json({
+                    received: true,
+                    processed: true,
+                    reason: 'Audio transcription failed, fallback response sent'
                   });
                 } else {
-                  console.error('❌ Failed to send fallback response via UAZAPI');
+                  console.error('❌ Failed to send fallback response via Meta API');
                   return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
                 }
               } catch (sendError) {
@@ -723,7 +718,7 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
           return res.status(200).json({ received: true, processed: false, reason: 'Audio processing error' });
         }
       }
-      
+
       console.log('💬 Message text:', messageText);
       console.log('🔍 DEBUG - Checking if message is SIM/OK:', {
         message: messageText,
@@ -761,18 +756,18 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
           return res.status(400).json({ error: 'OpenAI not configured' });
         }
 
-        if (!globalSettings.uazapiUrl || !globalSettings.uazapiAdminToken) {
-          console.log('❌ UAZAPI not configured');
-          return res.status(400).json({ error: 'UAZAPI not configured' });
+        if (!whatsappInstance?.metaPhoneNumberId || !whatsappInstance?.metaAccessToken) {
+          console.log('❌ Meta WhatsApp API not configured for this instance');
+          return res.status(400).json({ error: 'Meta WhatsApp API not configured' });
         }
 
         try {
           // Find or create conversation - prioritize most recent conversation for this phone number
           console.log('💬 Managing conversation for:', phoneNumber);
-          
+
           // First, try to find existing conversation for this exact instance
           let conversation = await storage.getConversation(company.id, whatsappInstance.id, phoneNumber);
-          
+
           // If no conversation for this instance, look for any recent conversation for this phone number
           if (!conversation) {
             console.log('🔍 Nenhuma conversa para esta instância, verificando conversas recentes para o número');
@@ -780,10 +775,10 @@ app.post('/api/webhook/whatsapp/:instanceName', async (req, res) => {
             const phoneConversations = allConversations
               .filter(conv => conv.phoneNumber === phoneNumber)
               .sort((a, b) => new Date(b.lastMessageAt || 0).getTime() - new Date(a.lastMessageAt || 0).getTime());
-            
+
             // Special case: if user is sending a simple confirmation, find conversation with AI confirmation
             const isSimpleConfirmation = /^(sim|ok|confirmo|tudo correto|tudo certo|sim tudo correto|sim tudo certo|sim tudo)$/i.test(messageText.toLowerCase().trim());
-            
+
             if (isSimpleConfirmation && phoneConversations.length > 0) {
               // Look for conversation with recent AI confirmation message
               for (const conv of phoneConversations) {
@@ -1083,26 +1078,20 @@ INSTRUÇÕES OBRIGATÓRIAS:
             console.log('🧹 Cleaned AI response for appointment confirmation');
           }
 
-          // Send response back via UAZAPI using global settings
-          console.log('🚀 Sending AI response via UAZAPI...');
+          // Send response via Meta WhatsApp API
+          console.log('🚀 Sending AI response via Meta WhatsApp API...');
           console.log('🤖 AI Generated Response:', aiResponse);
-          
-          const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
-          const sendResponse = await fetch(`${correctedApiUrl}/send/text`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'token': globalSettings.uazapiAdminToken!
-            },
-            body: JSON.stringify({
-              number: phoneNumber,
-              text: aiResponse
-            })
-          });
 
-          if (sendResponse.ok) {
+          const provider = createWhatsAppProvider({
+            metaPhoneNumberId: whatsappInstance.metaPhoneNumberId!,
+            metaWabaId: whatsappInstance.metaWabaId!,
+            metaAccessToken: whatsappInstance.metaAccessToken!,
+          });
+          const sendResult = await provider.sendText(phoneNumber, aiResponse);
+
+          if (sendResult.success) {
             console.log(`✅ AI response sent to ${phoneNumber}: ${aiResponse}`);
-            
+
             // Save AI response to database
             console.log('💾 Saving AI response to database');
             await storage.createMessage({
@@ -1114,7 +1103,7 @@ INSTRUÇÕES OBRIGATÓRIAS:
               timestamp: new Date(),
             });
             console.log('✅ AI response saved to conversation history');
-            
+
             // Check for appointment confirmation in AI response
             const confirmationKeywords = [
               'agendamento está confirmado',
@@ -1127,8 +1116,8 @@ INSTRUÇÕES OBRIGATÓRIAS:
               'perfeito',
               'confirmado'
             ];
-            
-            const hasConfirmation = confirmationKeywords.some(keyword => 
+
+            const hasConfirmation = confirmationKeywords.some(keyword =>
               aiResponse.toLowerCase().includes(keyword.toLowerCase())
             );
             
@@ -1250,14 +1239,11 @@ INSTRUÇÕES OBRIGATÓRIAS:
             // Só deve criar agendamento quando o usuário explicitamente confirmar com SIM/OK
             
           } else {
-            const errorText = await sendResponse.text();
-            console.error('❌ Failed to send message via UAZAPI:', {
-              status: sendResponse.status,
-              error: sendResponse.statusText,
-              response: JSON.parse(errorText)
+            console.error('❌ Failed to send message via Meta API:', {
+              error: sendResult.error
             });
             console.log('ℹ️  Note: This is normal for test numbers. Real WhatsApp numbers will work.');
-            
+
             // Still save the AI response even if sending failed (for debugging)
             await storage.createMessage({
               conversationId: conversation.id,
@@ -1271,7 +1257,7 @@ INSTRUÇÕES OBRIGATÓRIAS:
 
         } catch (aiError: any) {
           console.error('Error generating AI response:', aiError);
-          
+
           // Send fallback response when AI is not available
           let fallbackMessage = `Olá! 👋
 
@@ -1288,25 +1274,19 @@ Obrigado pela preferência! 🙏`;
           if (aiError.status === 429 || aiError.code === 'insufficient_quota') {
             console.error('🚨 OpenAI API quota exceeded - need to add billing credits');
           }
-          
-          // Send fallback response
-          try {
-            const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
-            const sendResponse = await fetch(`${correctedApiUrl}/send/text`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'token': globalSettings.uazapiAdminToken
-              },
-              body: JSON.stringify({
-                number: phoneNumber,
-                text: fallbackMessage
-              })
-            });
 
-            if (sendResponse.ok) {
+          // Send fallback response via Meta WhatsApp API
+          try {
+            const fallbackProvider = createWhatsAppProvider({
+              metaPhoneNumberId: whatsappInstance.metaPhoneNumberId!,
+              metaWabaId: whatsappInstance.metaWabaId!,
+              metaAccessToken: whatsappInstance.metaAccessToken!,
+            });
+            const fallbackResult = await fallbackProvider.sendText(phoneNumber, fallbackMessage);
+
+            if (fallbackResult.success) {
               console.log('✅ Fallback message sent successfully');
-              
+
               // Save the fallback message to conversation
               await storage.createMessage({
                 conversationId: conversation.id,
@@ -3197,10 +3177,10 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       }
     }
 
-    // Fallback final: usar contactName (pushName) da UAZAPI
+    // Fallback final: usar contactName (pushName) do webhook
     if (!extractedName && contactName) {
       extractedName = contactName;
-      console.log(`📝 Usando contactName (pushName) da UAZAPI: "${extractedName}"`);
+      console.log(`📝 Usando contactName (pushName) do webhook: "${extractedName}"`);
     }
 
     // Check for appointment conflicts before creating
@@ -4032,7 +4012,7 @@ const broadcastEvent = (eventData: any) => {
         const connectionData = webhookData.data;
         let newStatus = 'disconnected'; // default status
       
-        // Map UAZAPI connection states to our status
+        // Map connection states to our status
         if (connectionData?.state === 'open') {
           newStatus = 'connected';
         } else if (connectionData?.state === 'connecting') {
@@ -4073,7 +4053,7 @@ const broadcastEvent = (eventData: any) => {
       if (isQrCodeEvent) {
         console.log('📱 QR code updated for instance:', instanceName);
       
-        // Extract QR code from UAZAPI
+        // QR codes not used with Meta API
         let qrCodeData = null;
       
         // Check all possible locations for QR code
@@ -4100,7 +4080,7 @@ const broadcastEvent = (eventData: any) => {
           
             let qrCodeString = '';
           
-            // Handle different data formats from UAZAPI
+            // Handle different data formats
             if (typeof qrCodeData === 'string') {
               qrCodeString = qrCodeData;
             } else if (typeof qrCodeData === 'object' && qrCodeData !== null) {
@@ -4247,31 +4227,23 @@ const broadcastEvent = (eventData: any) => {
                 const fallbackResponse = "Desculpe, não consegui entender o áudio que você enviou. Pode escrever sua mensagem por texto, por favor? 📝";
               
                 try {
-                  // Send fallback response using UAZAPI with corrected URL
-                  const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
-                  const fallbackSendResponse = await fetch(`${correctedApiUrl}/send/text`, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'token': globalSettings.uazapiAdminToken!
-                    },
-                    body: JSON.stringify({
-                      number: phoneNumber,
-                      textMessage: {
-                        text: fallbackResponse
-                      }
-                    })
+                  // Send fallback response via Meta WhatsApp API
+                  const fallbackProvider = createWhatsAppProvider({
+                    metaPhoneNumberId: whatsappInstance.metaPhoneNumberId!,
+                    metaWabaId: whatsappInstance.metaWabaId!,
+                    metaAccessToken: whatsappInstance.metaAccessToken!,
                   });
-              
-                  if (fallbackSendResponse.ok) {
+                  const fallbackSendResult = await fallbackProvider.sendText(phoneNumber, fallbackResponse);
+
+                  if (fallbackSendResult.success) {
                     console.log('✅ Fallback response sent for failed audio transcription');
-                    return res.status(200).json({ 
-                      received: true, 
-                      processed: true, 
-                      reason: 'Audio transcription failed, fallback response sent' 
+                    return res.status(200).json({
+                      received: true,
+                      processed: true,
+                      reason: 'Audio transcription failed, fallback response sent'
                     });
                   } else {
-                    console.error('❌ Failed to send fallback response via UAZAPI');
+                    console.error('❌ Failed to send fallback response via Meta API');
                     return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
                   }
                 } catch (sendError) {
@@ -4326,9 +4298,9 @@ const broadcastEvent = (eventData: any) => {
             return res.status(400).json({ error: 'OpenAI not configured' });
           }
 
-          if (!globalSettings.uazapiUrl || !globalSettings.uazapiAdminToken) {
-            console.log('❌ UAZAPI not configured');
-            return res.status(400).json({ error: 'UAZAPI not configured' });
+          if (!whatsappInstance?.metaPhoneNumberId || !whatsappInstance?.metaAccessToken) {
+            console.log('❌ Meta WhatsApp API not configured for this instance');
+            return res.status(400).json({ error: 'Meta WhatsApp API not configured' });
           }
 
           try {
@@ -4639,24 +4611,18 @@ INSTRUÇÕES OBRIGATÓRIAS:
               console.log('🧹 Cleaned AI response for appointment confirmation');
             }
 
-            // Send response back via UAZAPI using global settings
-            console.log('🚀 Sending AI response via UAZAPI...');
+            // Send response via Meta WhatsApp API
+            console.log('🚀 Sending AI response via Meta WhatsApp API...');
             console.log('🤖 AI Generated Response:', aiResponse);
-          
-            const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
-            const sendResponse = await fetch(`${correctedApiUrl}/send/text`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'token': globalSettings.uazapiAdminToken!
-              },
-              body: JSON.stringify({
-                number: phoneNumber,
-                text: aiResponse
-              })
-            });
 
-            if (sendResponse.ok) {
+            const provider = createWhatsAppProvider({
+              metaPhoneNumberId: whatsappInstance.metaPhoneNumberId!,
+              metaWabaId: whatsappInstance.metaWabaId!,
+              metaAccessToken: whatsappInstance.metaAccessToken!,
+            });
+            const sendResult = await provider.sendText(phoneNumber, aiResponse);
+
+            if (sendResult.success) {
               console.log(`✅ AI response sent to ${phoneNumber}: ${aiResponse}`);
             
               // Save AI response to database
@@ -4787,14 +4753,11 @@ INSTRUÇÕES OBRIGATÓRIAS:
               }
             
             } else {
-              const errorText = await sendResponse.text();
-              console.error('❌ Failed to send message via UAZAPI:', {
-                status: sendResponse.status,
-                error: sendResponse.statusText,
-                response: JSON.parse(errorText)
+              console.error('❌ Failed to send message via Meta API:', {
+                error: sendResult.error
               });
               console.log('ℹ️  Note: This is normal for test numbers. Real WhatsApp numbers will work.');
-            
+
               // Still save the AI response even if sending failed (for debugging)
               await storage.createMessage({
                 conversationId: conversation.id,
@@ -4808,7 +4771,7 @@ INSTRUÇÕES OBRIGATÓRIAS:
 
           } catch (aiError: any) {
             console.error('Error generating AI response:', aiError);
-          
+
             // Send fallback response when AI is not available
             let fallbackMessage = `Olá! 👋
 
@@ -4825,25 +4788,19 @@ Obrigado pela preferência! 🙏`;
             if (aiError.status === 429 || aiError.code === 'insufficient_quota') {
               console.error('🚨 OpenAI API quota exceeded - need to add billing credits');
             }
-          
-            // Send fallback response
-            try {
-              const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
-              const sendResponse = await fetch(`${correctedApiUrl}/send/text`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'token': globalSettings.uazapiAdminToken
-                },
-                body: JSON.stringify({
-                  number: phoneNumber,
-                  text: fallbackMessage
-                })
-              });
 
-              if (sendResponse.ok) {
+            // Send fallback response via Meta WhatsApp API
+            try {
+              const fallbackProvider = createWhatsAppProvider({
+                metaPhoneNumberId: whatsappInstance.metaPhoneNumberId!,
+                metaWabaId: whatsappInstance.metaWabaId!,
+                metaAccessToken: whatsappInstance.metaAccessToken!,
+              });
+              const fallbackResult = await fallbackProvider.sendText(phoneNumber, fallbackMessage);
+
+              if (fallbackResult.success) {
                 console.log('✅ Fallback message sent successfully');
-              
+
                 // Save the fallback message to conversation
                 await storage.createMessage({
                   conversationId: conversation.id,
@@ -6596,10 +6553,10 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       }
     }
 
-    // Fallback final: usar contactName (pushName) da UAZAPI
+    // Fallback final: usar contactName (pushName) do webhook
     if (!extractedName && contactName) {
       extractedName = contactName;
-      console.log(`📝 Usando contactName (pushName) da UAZAPI: "${extractedName}"`);
+      console.log(`📝 Usando contactName (pushName) do webhook: "${extractedName}"`);
     }
 
     // Check for appointment conflicts before creating
@@ -7431,7 +7388,7 @@ const broadcastEvent = (eventData: any) => {
         const connectionData = webhookData.data;
         let newStatus = 'disconnected'; // default status
       
-        // Map UAZAPI connection states to our status
+        // Map connection states to our status
         if (connectionData?.state === 'open') {
           newStatus = 'connected';
         } else if (connectionData?.state === 'connecting') {
@@ -7472,7 +7429,7 @@ const broadcastEvent = (eventData: any) => {
       if (isQrCodeEvent) {
         console.log('📱 QR code updated for instance:', instanceName);
       
-        // Extract QR code from UAZAPI
+        // QR codes not used with Meta API
         let qrCodeData = null;
       
         // Check all possible locations for QR code
@@ -7499,7 +7456,7 @@ const broadcastEvent = (eventData: any) => {
           
             let qrCodeString = '';
           
-            // Handle different data formats from UAZAPI
+            // Handle different data formats
             if (typeof qrCodeData === 'string') {
               qrCodeString = qrCodeData;
             } else if (typeof qrCodeData === 'object' && qrCodeData !== null) {
@@ -7646,31 +7603,23 @@ const broadcastEvent = (eventData: any) => {
                 const fallbackResponse = "Desculpe, não consegui entender o áudio que você enviou. Pode escrever sua mensagem por texto, por favor? 📝";
               
                 try {
-                  // Send fallback response using UAZAPI with corrected URL
-                  const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
-                  const fallbackSendResponse = await fetch(`${correctedApiUrl}/send/text`, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'token': globalSettings.uazapiAdminToken!
-                    },
-                    body: JSON.stringify({
-                      number: phoneNumber,
-                      textMessage: {
-                        text: fallbackResponse
-                      }
-                    })
+                  // Send fallback response via Meta WhatsApp API
+                  const fallbackProvider = createWhatsAppProvider({
+                    metaPhoneNumberId: whatsappInstance.metaPhoneNumberId!,
+                    metaWabaId: whatsappInstance.metaWabaId!,
+                    metaAccessToken: whatsappInstance.metaAccessToken!,
                   });
-              
-                  if (fallbackSendResponse.ok) {
+                  const fallbackSendResult = await fallbackProvider.sendText(phoneNumber, fallbackResponse);
+
+                  if (fallbackSendResult.success) {
                     console.log('✅ Fallback response sent for failed audio transcription');
-                    return res.status(200).json({ 
-                      received: true, 
-                      processed: true, 
-                      reason: 'Audio transcription failed, fallback response sent' 
+                    return res.status(200).json({
+                      received: true,
+                      processed: true,
+                      reason: 'Audio transcription failed, fallback response sent'
                     });
                   } else {
-                    console.error('❌ Failed to send fallback response via UAZAPI');
+                    console.error('❌ Failed to send fallback response via Meta API');
                     return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
                   }
                 } catch (sendError) {
@@ -7725,9 +7674,9 @@ const broadcastEvent = (eventData: any) => {
             return res.status(400).json({ error: 'OpenAI not configured' });
           }
 
-          if (!globalSettings.uazapiUrl || !globalSettings.uazapiAdminToken) {
-            console.log('❌ UAZAPI not configured');
-            return res.status(400).json({ error: 'UAZAPI not configured' });
+          if (!whatsappInstance?.metaPhoneNumberId || !whatsappInstance?.metaAccessToken) {
+            console.log('❌ Meta WhatsApp API not configured for this instance');
+            return res.status(400).json({ error: 'Meta WhatsApp API not configured' });
           }
 
           try {
@@ -8038,24 +7987,18 @@ INSTRUÇÕES OBRIGATÓRIAS:
               console.log('🧹 Cleaned AI response for appointment confirmation');
             }
 
-            // Send response back via UAZAPI using global settings
-            console.log('🚀 Sending AI response via UAZAPI...');
+            // Send response via Meta WhatsApp API
+            console.log('🚀 Sending AI response via Meta WhatsApp API...');
             console.log('🤖 AI Generated Response:', aiResponse);
-          
-            const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
-            const sendResponse = await fetch(`${correctedApiUrl}/send/text`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'token': globalSettings.uazapiAdminToken!
-              },
-              body: JSON.stringify({
-                number: phoneNumber,
-                text: aiResponse
-              })
-            });
 
-            if (sendResponse.ok) {
+            const provider = createWhatsAppProvider({
+              metaPhoneNumberId: whatsappInstance.metaPhoneNumberId!,
+              metaWabaId: whatsappInstance.metaWabaId!,
+              metaAccessToken: whatsappInstance.metaAccessToken!,
+            });
+            const sendResult = await provider.sendText(phoneNumber, aiResponse);
+
+            if (sendResult.success) {
               console.log(`✅ AI response sent to ${phoneNumber}: ${aiResponse}`);
             
               // Save AI response to database
@@ -8186,14 +8129,11 @@ INSTRUÇÕES OBRIGATÓRIAS:
             }
             
           } else {
-            const errorText = await sendResponse.text();
-            console.error('❌ Failed to send message via UAZAPI:', {
-              status: sendResponse.status,
-              error: sendResponse.statusText,
-              response: JSON.parse(errorText)
+            console.error('❌ Failed to send message via Meta API:', {
+              error: sendResult.error
             });
             console.log('ℹ️  Note: This is normal for test numbers. Real WhatsApp numbers will work.');
-            
+
             // Still save the AI response even if sending failed (for debugging)
             await storage.createMessage({
               conversationId: conversation.id,
@@ -8207,7 +8147,7 @@ INSTRUÇÕES OBRIGATÓRIAS:
 
         } catch (aiError: any) {
           console.error('Error generating AI response:', aiError);
-          
+
           // Send fallback response when AI is not available
           let fallbackMessage = `Olá! 👋
 
@@ -8224,25 +8164,19 @@ Obrigado pela preferência! 🙏`;
             if (aiError.status === 429 || aiError.code === 'insufficient_quota') {
               console.error('🚨 OpenAI API quota exceeded - need to add billing credits');
             }
-          
-            // Send fallback response
-            try {
-              const correctedApiUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
-              const sendResponse = await fetch(`${correctedApiUrl}/send/text`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'token': globalSettings.uazapiAdminToken
-                },
-                body: JSON.stringify({
-                  number: phoneNumber,
-                  text: fallbackMessage
-                })
-              });
 
-              if (sendResponse.ok) {
+            // Send fallback response via Meta WhatsApp API
+            try {
+              const fallbackProvider = createWhatsAppProvider({
+                metaPhoneNumberId: whatsappInstance.metaPhoneNumberId!,
+                metaWabaId: whatsappInstance.metaWabaId!,
+                metaAccessToken: whatsappInstance.metaAccessToken!,
+              });
+              const fallbackResult = await fallbackProvider.sendText(phoneNumber, fallbackMessage);
+
+              if (fallbackResult.success) {
                 console.log('✅ Fallback message sent successfully');
-              
+
                 // Save the fallback message to conversation
                 await storage.createMessage({
                   conversationId: conversation.id,

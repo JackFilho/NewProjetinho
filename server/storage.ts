@@ -2524,31 +2524,30 @@ export class DatabaseStorage implements IStorage {
 
       // Send WhatsApp message
       try {
-        // Get global UAZAPI settings
-        const globalSettings = await this.getGlobalSettings();
-        const baseUrl = globalSettings?.uazapiUrl || process.env.UAZAPI_URL;
-        const adminToken = globalSettings?.uazapiAdminToken || process.env.UAZAPI_ADMIN_TOKEN;
-        const instanceToken = whatsappInstance.instanceToken;
+        // Get Meta API credentials from instance
+        const inst = whatsappInstance as any;
+        const metaPhoneNumberId = inst.metaPhoneNumberId || inst.meta_phone_number_id;
+        const metaWabaId = inst.metaWabaId || inst.meta_waba_id;
+        const metaAccessToken = inst.metaAccessToken || inst.meta_access_token;
 
-        if (!baseUrl || !adminToken || !instanceToken) {
-          console.error("Missing UAZAPI configuration");
-          console.log('Available settings:', {
-            baseUrl: baseUrl ? '[CONFIGURED]' : '[NOT SET]',
-            adminToken: adminToken ? '[CONFIGURED]' : '[NOT SET]',
-            instanceToken: instanceToken ? '[CONFIGURED]' : '[NOT SET]'
-          });
+        if (!metaPhoneNumberId || !metaWabaId || !metaAccessToken) {
+          console.error("Missing Meta API configuration for instance");
           return;
         }
 
-        const { createUazapiService } = await import('./services/uazapi');
-        const uazapi = createUazapiService(baseUrl, adminToken);
+        const { createMetaWhatsAppService } = await import('./services/meta-whatsapp');
+        const metaService = createMetaWhatsAppService({
+          phoneNumberId: metaPhoneNumberId,
+          wabaId: metaWabaId,
+          accessToken: metaAccessToken,
+        });
 
         let responseOk = true;
         try {
-          await uazapi.sendText(instanceToken, { number: formattedPhone, text: message });
+          await metaService.sendText({ to: formattedPhone, text: message });
         } catch (error) {
           responseOk = false;
-          console.error('❌ Falha ao enviar mensagem UAZAPI:', error);
+          console.error('❌ Falha ao enviar mensagem Meta:', error);
         }
         // Save reminder to history
         await db.insert(reminderHistory).values({
@@ -3230,27 +3229,26 @@ Obrigado pela preferência! 🙏`;
         return { success: false, message: "Número de telefone inválido ou não informado" };
       }
 
-      // Get UAZAPI settings
-      const uazapiUrl = settings?.uazapiUrl || process.env.UAZAPI_URL;
-      const adminToken = settings?.uazapiAdminToken || process.env.UAZAPI_ADMIN_TOKEN;
-      const instanceToken = whatsappInstance.instanceToken;
+      // Get Meta API credentials from instance
+      const inst = whatsappInstance as any;
+      const metaPhoneNumberId = inst.metaPhoneNumberId || inst.meta_phone_number_id;
+      const metaWabaId = inst.metaWabaId || inst.meta_waba_id;
+      const metaAccessToken = inst.metaAccessToken || inst.meta_access_token;
 
-      if (!uazapiUrl || !adminToken || !instanceToken) {
-        return { success: false, message: "Configuração do UAZAPI não encontrada nas configurações globais" };
+      if (!metaPhoneNumberId || !metaWabaId || !metaAccessToken) {
+        return { success: false, message: "Configuração Meta API não encontrada na instância WhatsApp" };
       }
 
-      console.log('=== SENDING REVIEW INVITATION DEBUG ===');
-      console.log('UAZAPI URL:', uazapiUrl ? '[CONFIGURED]' : 'not configured');
-      console.log('Instance Name:', whatsappInstance.instanceName);
-      console.log('Formatted Phone:', formattedPhone);
-      console.log('Instance Token configured:', !!instanceToken);
-
-      console.log('📡 Sending WhatsApp message via UAZAPI...');
+      console.log('📡 Sending review invitation via Meta Cloud API...');
 
       try {
-        const { createUazapiService } = await import('./services/uazapi');
-        const uazapi = createUazapiService(uazapiUrl, adminToken);
-        await uazapi.sendText(instanceToken, { number: formattedPhone, text: message });
+        const { createMetaWhatsAppService } = await import('./services/meta-whatsapp');
+        const metaService = createMetaWhatsAppService({
+          phoneNumberId: metaPhoneNumberId,
+          wabaId: metaWabaId,
+          accessToken: metaAccessToken,
+        });
+        await metaService.sendText({ to: formattedPhone, text: message });
         console.log('✅ Review invitation sent successfully!');
         return { success: true, message: "Convite de avaliação enviado com sucesso!" };
       } catch (sendError: any) {
@@ -4344,27 +4342,16 @@ Object.assign(storage, {
         };
       }
 
-      // Get global settings for UAZAPI
-      console.log(`🌐 Fetching global settings for UAZAPI`);
-      const [settings] = await db.select().from(globalSettings).limit(1);
+      // Get Meta API credentials from instance
+      const inst = whatsappInstance as any;
+      const metaPhoneNumberId = inst.metaPhoneNumberId || inst.meta_phone_number_id;
+      const metaWabaId = inst.metaWabaId || inst.meta_waba_id;
+      const metaAccessToken = inst.metaAccessToken || inst.meta_access_token;
 
-      console.log(`⚙️ Global settings found:`, {
-        hasUrl: !!settings?.uazapiUrl,
-        hasKey: !!settings?.uazapiAdminToken
-      });
-
-      if (!settings?.uazapiUrl || !settings?.uazapiAdminToken) {
+      if (!metaPhoneNumberId || !metaWabaId || !metaAccessToken) {
         return {
           success: false,
-          message: "Configurações globais do UAZAPI não encontradas"
-        };
-      }
-
-      const instanceToken = whatsappInstance.instanceToken;
-      if (!instanceToken) {
-        return {
-          success: false,
-          message: "Token da instância WhatsApp não encontrado"
+          message: "Configuração Meta API não encontrada na instância WhatsApp"
         };
       }
 
@@ -4372,7 +4359,6 @@ Object.assign(storage, {
       const defaultTestPhone = "5511999999999";
       let testPhone = customTestPhone || defaultTestPhone;
 
-      // Clean and format the phone number if custom phone provided
       if (customTestPhone) {
         testPhone = customTestPhone.replace(/\D/g, '');
         if (testPhone && testPhone.length >= 10 && !testPhone.startsWith('55')) {
@@ -4384,14 +4370,18 @@ Object.assign(storage, {
         `🧪 Teste de lembrete para ${customTestPhone} - sistema funcionando corretamente!` :
         "🧪 Teste de lembrete - sistema funcionando corretamente!";
 
-      console.log(`🌐 Making API call to UAZAPI`);
+      console.log(`🌐 Sending test via Meta Cloud API`);
       console.log(`📱 Instance: ${whatsappInstance.instanceName}`);
       console.log(`📞 Test phone: ${testPhone}`);
 
       try {
-        const { createUazapiService } = await import('./services/uazapi');
-        const uazapi = createUazapiService(settings.uazapiUrl!, settings.uazapiAdminToken!);
-        await uazapi.sendText(instanceToken, { number: testPhone, text: testMessage });
+        const { createMetaWhatsAppService } = await import('./services/meta-whatsapp');
+        const metaService = createMetaWhatsAppService({
+          phoneNumberId: metaPhoneNumberId,
+          wabaId: metaWabaId,
+          accessToken: metaAccessToken,
+        });
+        await metaService.sendText({ to: testPhone, text: testMessage });
 
         console.log(`✅ Test successful!`);
         return {
@@ -4404,10 +4394,10 @@ Object.assign(storage, {
           }
         };
       } catch (sendError: any) {
-        console.error(`❌ UAZAPI Error:`, sendError);
+        console.error(`❌ Meta API Error:`, sendError);
         return {
           success: false,
-          message: `Erro UAZAPI: ${sendError.message || 'Resposta inválida da API'}`,
+          message: `Erro Meta API: ${sendError.message || 'Resposta inválida da API'}`,
           details: {
             instanceName: whatsappInstance.instanceName,
             error: sendError.message

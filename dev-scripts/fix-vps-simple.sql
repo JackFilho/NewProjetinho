@@ -28,8 +28,8 @@ ALTER TABLE global_settings ADD COLUMN IF NOT EXISTS openai_model VARCHAR(100) D
 ALTER TABLE global_settings ADD COLUMN IF NOT EXISTS openai_temperature VARCHAR(10) DEFAULT NULL;
 ALTER TABLE global_settings ADD COLUMN IF NOT EXISTS openai_max_tokens VARCHAR(10) DEFAULT NULL;
 ALTER TABLE global_settings ADD COLUMN IF NOT EXISTS default_ai_prompt TEXT DEFAULT NULL;
-ALTER TABLE global_settings ADD COLUMN IF NOT EXISTS uazapi_url VARCHAR(500) DEFAULT NULL;
-ALTER TABLE global_settings ADD COLUMN IF NOT EXISTS uazapi_admin_token VARCHAR(500) DEFAULT NULL;
+ALTER TABLE global_settings ADD COLUMN IF NOT EXISTS meta_app_id VARCHAR(500) DEFAULT NULL;
+ALTER TABLE global_settings ADD COLUMN IF NOT EXISTS meta_app_secret VARCHAR(500) DEFAULT NULL;
 
 -- Garantir que existe um registro padrão (apenas valores essenciais)
 INSERT INTO global_settings (id, logo_url, primary_color) VALUES (1, '', '#2563eb') 

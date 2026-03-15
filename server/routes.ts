@@ -43,82 +43,68 @@ import fs from "fs";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import rateLimit from "express-rate-limit";
-import { UazapiService, createUazapiService } from "./services/uazapi";
+import { createMetaWhatsAppService, MetaWhatsAppService } from "./services/meta-whatsapp";
+import { createWhatsAppProvider, IWhatsAppProvider } from "./services/whatsapp-provider";
 
-// Helper para obter serviço UAZAPI configurado
-async function getUazapiService(): Promise<UazapiService> {
-  const settings = await storage.getGlobalSettings();
-  const baseUrl = settings?.uazapiUrl || process.env.UAZAPI_URL || '';
-  const adminToken = settings?.uazapiAdminToken || process.env.UAZAPI_ADMIN_TOKEN || '';
-  return createUazapiService(baseUrl, adminToken);
+// Helper para obter o provider Meta de uma instância pelo nome
+async function getMetaProvider(instanceName: string): Promise<IWhatsAppProvider | null> {
+  const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
+  if (!instance?.metaAccessToken || !instance?.metaPhoneNumberId || !instance?.metaWabaId) {
+    console.error('❌ Configuração Meta incompleta para instância:', instanceName);
+    return null;
+  }
+  return createWhatsAppProvider({
+    metaPhoneNumberId: instance.metaPhoneNumberId,
+    metaWabaId: instance.metaWabaId,
+    metaAccessToken: instance.metaAccessToken,
+    metaAppId: instance.metaAppId || undefined,
+    metaAppSecret: instance.metaAppSecret || undefined,
+    metaWebhookVerifyToken: instance.metaWebhookVerifyToken || undefined,
+  });
 }
 
-// Helper para obter o token da instância ativa de uma empresa
+// Helper para obter a instância ativa de uma empresa
 async function getInstanceToken(companyId: number): Promise<{ token: string; instanceName: string } | null> {
   const instances = await storage.getWhatsappInstancesByCompany(companyId);
   const activeInstance = instances.find((i: any) => i.status === 'connected') || instances[0];
-  if (!activeInstance?.instanceToken) return null;
-  return { token: activeInstance.instanceToken, instanceName: activeInstance.instanceName };
+  if (!activeInstance?.metaAccessToken) return null;
+  return { token: activeInstance.metaAccessToken, instanceName: activeInstance.instanceName };
 }
-
-// Helpers de compatibilidade para envio via UAZAPI (substituem fetch direto + ensureUAZAPIApiEndpoint)
-// Estes helpers buscam o token da instância pelo nome e usam o serviço UAZAPI
 
 // Remove sufixos de JID do WhatsApp para obter apenas o número puro
 function cleanWhatsAppNumber(phone: string): string {
-  return phone.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').replace(/@g\.us$/, '').replace(/@lid$/, '');
+  return phone.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '').replace(/@g\.us$/, '').replace(/@lid$/, '').replace(/[^\d]/g, '');
 }
 
-async function uazapiSendText(instanceName: string, phoneNumber: string, text: string): Promise<{ ok: boolean; status: number }> {
+// Helpers de envio via Meta Cloud API (compatíveis com a assinatura anterior)
+async function metaSendText(instanceName: string, phoneNumber: string, text: string): Promise<{ ok: boolean; status: number }> {
   try {
-    const uazapi = await getUazapiService();
-    const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
-    if (!instance?.instanceToken) {
-      console.error('❌ Token UAZAPI não encontrado para instância:', instanceName);
-      return { ok: false, status: 404 };
-    }
+    const provider = await getMetaProvider(instanceName);
+    if (!provider) return { ok: false, status: 404 };
     const cleanNumber = cleanWhatsAppNumber(phoneNumber);
-    await uazapi.sendText(instance.instanceToken, { number: cleanNumber, text });
-    return { ok: true, status: 200 };
+    const result = await provider.sendText(cleanNumber, text);
+    return { ok: result.success, status: result.success ? 200 : 500 };
   } catch (error) {
-    console.error('❌ Erro ao enviar mensagem UAZAPI:', error);
+    console.error('❌ Erro ao enviar mensagem Meta:', error);
     return { ok: false, status: 500 };
   }
 }
 
-async function uazapiSendMedia(instanceName: string, phoneNumber: string, mediaType: string, fileData: string, caption?: string, docName?: string): Promise<{ ok: boolean; status: number }> {
+async function metaSendMedia(instanceName: string, phoneNumber: string, mediaType: string, fileData: string, caption?: string, _docName?: string): Promise<{ ok: boolean; status: number }> {
   try {
-    const uazapi = await getUazapiService();
-    const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
-    if (!instance?.instanceToken) {
-      console.error('❌ Token UAZAPI não encontrado para instância:', instanceName);
-      return { ok: false, status: 404 };
-    }
+    const provider = await getMetaProvider(instanceName);
+    if (!provider) return { ok: false, status: 404 };
     const cleanNumber = cleanWhatsAppNumber(phoneNumber);
-    await uazapi.sendMedia(instance.instanceToken, { number: cleanNumber, type: mediaType as any, file: fileData, text: caption, docName: docName });
-    return { ok: true, status: 200 };
+    const result = await provider.sendMedia(cleanNumber, mediaType as any, fileData, caption);
+    return { ok: result.success, status: result.success ? 200 : 500 };
   } catch (error) {
-    console.error('❌ Erro ao enviar mídia UAZAPI:', error);
+    console.error('❌ Erro ao enviar mídia Meta:', error);
     return { ok: false, status: 500 };
   }
 }
 
-async function uazapiSendTyping(instanceName: string, phoneNumber: string, durationMs: number = 2000): Promise<void> {
-  try {
-    const uazapi = await getUazapiService();
-    const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
-    if (!instance?.instanceToken) return;
-    const cleanNumber = cleanWhatsAppNumber(phoneNumber);
-    await uazapi.sendPresence(instance.instanceToken, { number: cleanNumber, presence: 'composing', delay: durationMs });
-  } catch (error) {
-    console.warn('⚠️ Erro ao enviar presença UAZAPI:', error);
-  }
-}
-
-// Função de compatibilidade para normalização de URL (no-op para UAZAPI)
-function ensureUAZAPIApiEndpoint(baseUrl: string): string {
-  if (!baseUrl) return baseUrl;
-  return baseUrl.replace(/\/+$/, '');
+async function metaSendTyping(instanceName: string, phoneNumber: string, durationMs: number = 2000): Promise<void> {
+  // Meta Cloud API não tem endpoint de typing indicator — no-op
 }
 
 // Rate limiters para proteção contra brute force
@@ -194,7 +180,7 @@ const conversationFollowUpSent = new Set<string>();
 const conversationCleanupTimers = new Map<string, NodeJS.Timeout>();
 
 // 🤖 CACHE DE RESPOSTAS DA AI: Detecta quando o Chatwoot ecoa a resposta da AI como mensagem de "agente humano"
-// Quando a AI envia uma resposta via UAZAPI, ela é sincronizada ao Chatwoot e aparece como mensagem de um agente (tipo 'user').
+// Quando a AI envia uma resposta via Meta API, ela é sincronizada ao Chatwoot e aparece como mensagem de um agente (tipo 'user').
 // Sem este cache, o webhook do Chatwoot ativaria o human takeover para cada resposta da AI.
 // Key: conversationId, Value: { contents (array de primeiros 200 chars de cada msg), timestamp }
 // Suporta múltiplas mensagens por conversa (ex: fluxo PIX envia QR + código + instruções)
@@ -405,7 +391,7 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000); // 5 minutos
 
-// ensureUAZAPIApiEndpoint removido - UAZAPI não precisa de normalização de URL
+// ensureMeta APIApiEndpoint removido - Meta API não precisa de normalização de URL
 
 /**
  * Formata uma data para o formato YYYY-MM-DD sem conversão para UTC
@@ -613,7 +599,7 @@ async function generateWebhookUrl(req: any, instanceName: string): Promise<strin
   return `${req.protocol}://${host}/api/webhook/whatsapp/${encodeURIComponent(instanceName)}`;
 }
 
-// sendTypingPresence removido - agora usa uazapiService.sendPresence()
+// sendTypingPresence removido - agora usa metaService.sendPresence()
 
 /**
  * Envia webhook para N8N quando ocorre um erro no agendamento
@@ -3800,19 +3786,19 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
         const activeInstance = instances.find(i => i.status === 'connected');
 
         if (activeInstance) {
-          // Get global settings for UAZAPI
+          // Get global settings for Meta API
           const globalSettings = await storage.getGlobalSettings();
 
-          if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
+          if (globalSettings?.metaAppId) {
             let formattedPhone = phoneNumber.replace(/\D/g, '');
             if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
               formattedPhone = '55' + formattedPhone;
             }
 
-            await uazapiSendTyping(activeInstance.instanceName, formattedPhone, 2000);
+            await metaSendTyping(activeInstance.instanceName, formattedPhone, 2000);
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            const response = await uazapiSendText(activeInstance.instanceName, formattedPhone, errorMessage);
+            const response = await metaSendText(activeInstance.instanceName, formattedPhone, errorMessage);
 
             if (response.ok) {
               console.log('✅ Mensagem de erro enviada com sucesso');
@@ -3828,7 +3814,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
               console.error('❌ Falha ao enviar mensagem de erro');
             }
           } else {
-            console.error('❌ Configurações globais da UAZAPI não encontradas');
+            console.error('❌ Configurações globais da Meta API não encontradas');
           }
         } else {
           console.error('❌ Nenhuma instância do WhatsApp conectada encontrada para esta empresa');
@@ -3941,10 +3927,10 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
       }
     }
 
-    // Fallback final: usar contactName (pushName) da UAZAPI
+    // Fallback final: usar contactName (pushName) da Meta API
     if (!extractedName && contactName) {
       extractedName = contactName;
-      console.log(`📝 Usando contactName (pushName) da UAZAPI: "${extractedName}"`);
+      console.log(`📝 Usando contactName (pushName) da Meta API: "${extractedName}"`);
     }
 
     // Format date for conflict check without timezone conversion
@@ -5378,10 +5364,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const settings = await storage.getGlobalSettings();
       if (settings) {
         // Remove sensitive keys from response - return only boolean flags
-        const { uazapiAdminToken, openaiApiKey, ...safeSettings } = settings as any;
+        const { metaAppSecret, openaiApiKey, ...safeSettings } = settings as any;
         res.json({
           ...safeSettings,
-          hasUazapiAdminToken: !!uazapiAdminToken,
+          hasMetaAppSecret: !!metaAppSecret,
           hasOpenaiApiKey: !!openaiApiKey,
         });
       } else {
@@ -5402,10 +5388,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       clearMetaTagsCache();
 
       // Remove sensitive keys from response
-      const { uazapiAdminToken, openaiApiKey, ...safeSettings } = settings as any;
+      const { metaAppSecret, openaiApiKey, ...safeSettings } = settings as any;
       res.json({
         ...safeSettings,
-        hasUazapiAdminToken: !!uazapiAdminToken,
+        hasMetaAppSecret: !!metaAppSecret,
         hasOpenaiApiKey: !!openaiApiKey,
       });
     } catch (error) {
@@ -7328,7 +7314,7 @@ if (ignoredNumbers !== undefined) {
       // message_type: "outgoing" = agent/bot sent, "incoming" = customer sent
       // sender.type: "user" = human agent in Chatwoot, "agent_bot" = bot, null/undefined = API/synced message
       // IMPORTANT: Only activate human takeover for REAL human agents (sender.type === 'user')
-      // Messages sent by our AI via UAZAPI sync back to Chatwoot as "outgoing" but without a proper sender,
+      // Messages sent by our AI via Meta API sync back to Chatwoot as "outgoing" but without a proper sender,
       // so we must NOT trigger takeover for those.
       const senderType = payload.sender?.type;
       const senderId = payload.sender?.id;
@@ -7385,7 +7371,7 @@ if (ignoredNumbers !== undefined) {
       console.log('✅ [CHATWOOT WEBHOOK] Found conversation:', matchingConversation.id);
 
       // 🤖 DETECÇÃO DE ECO DA AI: Verificar se esta mensagem é a resposta da AI sendo ecoada pelo Chatwoot
-      // Quando a AI envia uma resposta via UAZAPI, o Chatwoot sincroniza e dispara message_created
+      // Quando a AI envia uma resposta via Meta API, o Chatwoot sincroniza e dispara message_created
       // com sender.type='user', fazendo parecer que um agente humano enviou a mensagem.
       // Comparamos o conteúdo com o cache de respostas recentes da AI para detectar esse eco.
       const incomingContent = (payload.content || '').substring(0, 200);
@@ -7418,7 +7404,7 @@ if (ignoredNumbers !== undefined) {
       });
 
       // Cancel any pending follow-up and confirmation timers for this conversation
-      // Search by conversationId since phone format may differ between Chatwoot and UAZAPI
+      // Search by conversationId since phone format may differ between Chatwoot and Meta API
       for (const [key, entry] of conversationFollowUpTimers) {
         if (entry.conversationId === matchingConversation.id) {
           clearTimeout(entry.timer);
@@ -7466,7 +7452,7 @@ if (ignoredNumbers !== undefined) {
       const { instanceName } = req.params;
       const webhookData = req.body;
 
-      // UAZAPI uses "EventType" (PascalCase), normalize to a single variable
+      // Meta API uses "EventType" (PascalCase), normalize to a single variable
       const eventType = webhookData.EventType || webhookData.event || '';
 
       console.log('🔔 WhatsApp webhook received');
@@ -7475,18 +7461,18 @@ if (ignoredNumbers !== undefined) {
       console.log('📋 Payload keys:', Object.keys(webhookData).join(', '));
 
       // Handle CONNECTION events to update instance status
-      // UAZAPI sends EventType: "connection", legacy used "connection.update" or "CONNECTION_UPDATE"
+      // Meta API sends EventType: "connection", legacy used "connection.update" or "CONNECTION_UPDATE"
       const isConnectionEvent = eventType === 'connection' || eventType === 'connection.update' || eventType === 'CONNECTION_UPDATE';
       
       if (isConnectionEvent) {
         console.log('🔄 Processing connection update event');
 
-        // UAZAPI sends connection state at root level or in data property
+        // Meta API sends connection state at root level or in data property
         const connectionData = webhookData.data || webhookData;
         let newStatus = 'disconnected'; // default status
 
         // Map connection states to our status
-        // UAZAPI uses: 'connected', 'connecting', 'disconnected' (or boolean connected field)
+        // Meta API uses: 'connected', 'connecting', 'disconnected' (or boolean connected field)
         const state = connectionData?.state || connectionData?.status;
         if (state === 'open' || state === 'connected' || connectionData?.connected === true) {
           newStatus = 'connected';
@@ -7528,7 +7514,7 @@ if (ignoredNumbers !== undefined) {
       if (isQrCodeEvent) {
         console.log('📱 QR code updated for instance:', instanceName);
         
-        // Extract QR code from UAZAPI
+        // Extract QR code from Meta API
         let qrCodeData = null;
         
         // Check all possible locations for QR code
@@ -7555,7 +7541,7 @@ if (ignoredNumbers !== undefined) {
             
             let qrCodeString = '';
             
-            // Handle different data formats from UAZAPI
+            // Handle different data formats from Meta API
             if (typeof qrCodeData === 'string') {
               qrCodeString = qrCodeData;
             } else if (typeof qrCodeData === 'object' && qrCodeData !== null) {
@@ -7603,9 +7589,9 @@ if (ignoredNumbers !== undefined) {
         return res.json({ received: true, processed: true, type: 'qrcode' });
       }
 
-      // Check if it's a message event (handle UAZAPI and legacy formats)
-      // UAZAPI sends EventType: "messages" with message and chat objects at root level
-      const isUazapiMessage = (eventType === 'messages' || eventType === 'message') && (webhookData.message || webhookData.chat);
+      // Check if it's a message event (handle Meta API and legacy formats)
+      // Meta API sends EventType: "messages" with message and chat objects at root level
+      const isMetaMessage = (eventType === 'messages' || eventType === 'message') && (webhookData.message || webhookData.chat);
       // Legacy formats (Evolution API)
       const isLegacyMessageEvent = eventType === 'messages.upsert' || eventType === 'MESSAGES_UPSERT';
       const isMessageEventArray = isLegacyMessageEvent && webhookData.data?.messages?.length > 0;
@@ -7613,11 +7599,11 @@ if (ignoredNumbers !== undefined) {
       const isDirectMessage = !!webhookData.key && !!webhookData.message && !eventType;
       const isWrappedMessage = webhookData.data?.key && webhookData.data?.message;
       const isAudioMessageDirect = !!webhookData.key && webhookData.messageType === 'audioMessage' && !!webhookData.audio;
-      const isMessageEvent = isUazapiMessage || isMessageEventArray || isMessageEventDirect || isDirectMessage || isWrappedMessage || isAudioMessageDirect;
+      const isMessageEvent = isMetaMessage || isMessageEventArray || isMessageEventDirect || isDirectMessage || isWrappedMessage || isAudioMessageDirect;
 
       if (process.env.DEBUG_WHATSAPP_WEBHOOK === 'true') {
         console.log('🔍 Debug - eventType:', eventType);
-        console.log('🔍 Debug - isUazapiMessage:', isUazapiMessage);
+        console.log('🔍 Debug - isMetaMessage:', isMetaMessage);
         console.log('🔍 Debug - isLegacyMessageEvent:', isLegacyMessageEvent);
         console.log('🔍 Debug - Has message obj:', !!webhookData.message);
         console.log('🔍 Debug - Has chat obj:', !!webhookData.chat);
@@ -7631,7 +7617,7 @@ if (ignoredNumbers !== undefined) {
         return res.status(200).json({ received: true, processed: false, reason: `Event: ${eventType}` });
       }
 
-      // Skip messages sent by API (UAZAPI wasSentByApi flag) to avoid processing our own outbound messages
+      // Skip messages sent by API (Meta API wasSentByApi flag) to avoid processing our own outbound messages
       const wasSentByApi = webhookData.wasSentByApi === true || webhookData.data?.wasSentByApi === true
         || webhookData.message?.wasSentByApi === true;
       if (wasSentByApi) {
@@ -7640,7 +7626,7 @@ if (ignoredNumbers !== undefined) {
       }
 
       // Skip reaction messages - reactions are not real messages and should not trigger AI responses
-      // UAZAPI sends reactions with type/messageType containing "reaction"
+      // Meta API sends reactions with type/messageType containing "reaction"
       const uazMsgObj = webhookData.message || webhookData.data?.message || {};
       const uazMsgType = (uazMsgObj.type || '').toLowerCase();
       const uazMsgMessageType = (uazMsgObj.messageType || '').toLowerCase();
@@ -7657,7 +7643,7 @@ if (ignoredNumbers !== undefined) {
       // the remoteJid is "status@broadcast" and should not trigger AI responses
       const statusRemoteJid = uazMsgObj?.key?.remoteJid || webhookData?.data?.key?.remoteJid || '';
       const chatSource = (webhookData.chatSource || '').toLowerCase();
-      // UAZAPI raw message content may contain contextInfo referencing status@broadcast
+      // Meta API raw message content may contain contextInfo referencing status@broadcast
       const rawContent = uazMsgObj?.content || {};
       const rawContentStr = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
       const hasStatusBroadcastInContent = rawContentStr.includes('status@broadcast');
@@ -7677,34 +7663,34 @@ if (ignoredNumbers !== undefined) {
         return res.status(200).json({ received: true, processed: false, reason: 'Status message ignored' });
       }
 
-      // Handle multiple formats: UAZAPI format, array format, direct format, wrapped format
+      // Handle multiple formats: Meta API format, array format, direct format, wrapped format
       let message;
-      if (isUazapiMessage) {
-        // UAZAPI format: EventType="messages", data at root level with message and chat objects
+      if (isMetaMessage) {
+        // Meta API format: EventType="messages", data at root level with message and chat objects
         // Real payload structure:
         //   message: { chatid, sender, sender_pn, text, fromMe, senderName, messageType, type, id, content, ... }
         //   chat: { id (INTERNAL ID, not phone!), wa_chatid, phone, name, wa_contactName, ... }
-        // IMPORTANT: chat.id is an internal UAZAPI ID (e.g. "r1628f4c709b14c"), NOT the phone number!
+        // IMPORTANT: chat.id is an internal Meta API ID (e.g. "r1628f4c709b14c"), NOT the phone number!
         const uazMsg = webhookData.message || {};
         const uazChat = webhookData.chat || {};
 
-        // Extract real phone/chat ID - DO NOT use chat.id (it's an internal UAZAPI ID, not a phone number)
+        // Extract real phone/chat ID - DO NOT use chat.id (it's an internal Meta API ID, not a phone number)
         // Priority: message.chatid > message.sender > message.sender_pn > chat.wa_chatid
         const chatId = uazMsg.chatid || uazMsg.sender || uazMsg.sender_pn || uazMsg.from || uazChat.wa_chatid || '';
 
         // Extract message text
         const msgText = uazMsg.text || uazMsg.body || uazMsg.conversation || uazMsg.caption || (uazMsg.content?.text) || '';
 
-        // Extract message type (UAZAPI uses type="text" and messageType="ExtendedTextMessage")
+        // Extract message type (Meta API uses type="text" and messageType="ExtendedTextMessage")
         const msgType = uazMsg.type || uazMsg.messageType || (msgText ? 'conversation' : 'unknown');
 
         // Determine if message was sent by the instance (fromMe)
-        // Check multiple sources: UAZAPI pode enviar fromMe no message, no chat, ou no root
+        // Check multiple sources: Meta API pode enviar fromMe no message, no chat, ou no root
         const fromMe = uazMsg.fromMe === true || uazMsg.fromMe === 'true'
           || webhookData.fromMe === true || webhookData.fromMe === 'true'
           || uazChat.fromMe === true || uazChat.fromMe === 'true';
 
-        // Extract message ID (UAZAPI uses messageid field)
+        // Extract message ID (Meta API uses messageid field)
         const msgId = uazMsg.messageid || uazMsg.id || uazMsg.messageId || uazMsg.key?.id || '';
 
         // Extract sender display name
@@ -7721,14 +7707,14 @@ if (ignoredNumbers !== undefined) {
           },
           messageType: msgType,
           pushName: pushName,
-          // Keep raw UAZAPI data for audio/media handling
-          _uazapiRaw: uazMsg,
+          // Keep raw Meta API data for audio/media handling
+          _metaRaw: uazMsg,
         };
 
-        // Detect audio messages from UAZAPI
-        // UAZAPI messageType values: 'audio', 'ptt', 'myaudio', 'ptv' (voice video note)
+        // Detect audio messages from Meta API
+        // Meta API messageType values: 'audio', 'ptt', 'myaudio', 'ptv' (voice video note)
         // Also handle legacy/raw WhatsApp types: 'audioMessage', 'pttMessage'
-        // Check type, messageType, AND mediaType fields since UAZAPI may send type='media' with mediaType='audio'
+        // Check type, messageType, AND mediaType fields since Meta API may send type='media' with mediaType='audio'
         const audioTypes = ['audio', 'ptt', 'myaudio', 'ptv', 'audiomessage', 'pttmessage'];
         const uazType = (uazMsg.type || '').toLowerCase();
         const uazMessageType = (uazMsg.messageType || '').toLowerCase();
@@ -7743,15 +7729,15 @@ if (ignoredNumbers !== undefined) {
         if (isAudioType) {
           message.message.audioMessage = uazMsg;
           message.messageType = 'audioMessage';
-          console.log('🎵 [UAZAPI] Audio message detected, type:', msgType, 'uazType:', uazType, 'uazMessageType:', uazMessageType, 'mediaType:', uazMediaType, 'mimetype:', uazMimetype);
+          console.log('🎵 [Meta API] Audio message detected, type:', msgType, 'uazType:', uazType, 'uazMessageType:', uazMessageType, 'mediaType:', uazMediaType, 'mimetype:', uazMimetype);
         } else {
-          console.log('🔍 [UAZAPI] Not audio. type:', uazType, 'messageType:', uazMessageType, 'mediaType:', uazMediaType, 'mimetype:', uazMimetype, 'msgType:', msgType, 'fileURL:', uazMsg.fileURL?.substring(0, 80) || 'none');
+          console.log('🔍 [Meta API] Not audio. type:', uazType, 'messageType:', uazMessageType, 'mediaType:', uazMediaType, 'mimetype:', uazMimetype, 'msgType:', msgType, 'fileURL:', uazMsg.fileURL?.substring(0, 80) || 'none');
         }
 
-        console.log('📦 [UAZAPI] Normalized message');
-        console.log('📞 [UAZAPI] Phone (chatid):', chatId);
-        console.log('💬 [UAZAPI] Text:', msgText.substring(0, 100));
-        console.log('👤 [UAZAPI] fromMe:', fromMe, '| pushName:', pushName, '| Type:', msgType);
+        console.log('📦 [Meta API] Normalized message');
+        console.log('📞 [Meta API] Phone (chatid):', chatId);
+        console.log('💬 [Meta API] Text:', msgText.substring(0, 100));
+        console.log('👤 [Meta API] fromMe:', fromMe, '| pushName:', pushName, '| Type:', msgType);
       } else if (isMessageEventArray) {
         message = webhookData.data.messages[0];
       } else if (isDirectMessage || isAudioMessageDirect) {
@@ -7786,17 +7772,17 @@ if (ignoredNumbers !== undefined) {
 
       // Handle both text and audio messages
       const hasTextContent = message?.message?.conversation || message?.message?.extendedTextMessage?.text;
-      const uazRawType = (message?._uazapiRaw?.type || '').toLowerCase();
-      const uazRawMessageType = (message?._uazapiRaw?.messageType || '').toLowerCase();
-      const uazRawMediaType = (message?._uazapiRaw?.mediaType || '').toLowerCase();
-      const uazRawMimetype = (message?._uazapiRaw?.mimetype || '').toLowerCase();
+      const uazRawType = (message?._metaRaw?.type || '').toLowerCase();
+      const uazRawMessageType = (message?._metaRaw?.messageType || '').toLowerCase();
+      const uazRawMediaType = (message?._metaRaw?.mediaType || '').toLowerCase();
+      const uazRawMimetype = (message?._metaRaw?.mimetype || '').toLowerCase();
       const uazAudioTypes = ['audio', 'ptt', 'myaudio', 'ptv', 'audiomessage', 'pttmessage'];
       const hasAudioContent = message?.message?.audioMessage || message?.messageType === 'audioMessage'
         || uazAudioTypes.includes(uazRawType)
         || uazAudioTypes.includes(uazRawMessageType)
         || uazAudioTypes.includes(uazRawMediaType)
         || uazRawMimetype.startsWith('audio/')
-        || (message?._uazapiRaw?.fileURL && /\.(ogg|opus|mp3|m4a|oga|wav|aac)/i.test(message._uazapiRaw.fileURL));
+        || (message?._metaRaw?.fileURL && /\.(ogg|opus|mp3|m4a|oga|wav|aac)/i.test(message._metaRaw.fileURL));
       // Accept both client messages (fromMe=false) and human messages (fromMe=true)
       const isTextMessage = hasTextContent;
       const isAudioMessage = hasAudioContent;
@@ -7825,13 +7811,13 @@ if (ignoredNumbers !== undefined) {
           console.log('📞 remoteJidAlt:', remoteJidAlt);
 
           // Skip group messages: @g.us = WhatsApp group chat
-          // Also check UAZAPI fields: message.chatid, chat.wa_chatid may contain group JIDs
+          // Also check Meta API fields: message.chatid, chat.wa_chatid may contain group JIDs
           const uazChatId = webhookData?.message?.chatid || webhookData?.chat?.wa_chatid || '';
           const isGroupMessage = remoteJid.includes('@g.us') || uazChatId.includes('@g.us');
           if (isGroupMessage) {
             console.log('🚫 [IGNORED] Group message detected (@g.us) - skipping');
             console.log('📞 remoteJid:', remoteJid);
-            console.log('📞 UAZAPI chatid:', uazChatId);
+            console.log('📞 Meta API chatid:', uazChatId);
             return res.status(200).json({ received: true, processed: false, reason: 'Group message ignored' });
           }
 
@@ -7848,24 +7834,24 @@ if (ignoredNumbers !== undefined) {
             rawPhoneNumber = remoteJidAlt.replace('@s.whatsapp.net', '').replace('@c.us', '');
             console.log('✅ Using real number from remoteJidAlt:', remoteJidAlt);
           }
-          // Fallback: search in UAZAPI chat/message fields and participant fields
+          // Fallback: search in Meta API chat/message fields and participant fields
           else {
-            console.log('⚠️ Real number not found in remoteJid/remoteJidAlt, searching in UAZAPI and participant fields...');
+            console.log('⚠️ Real number not found in remoteJid/remoteJidAlt, searching in Meta API and participant fields...');
 
-            // UAZAPI fallback: try chat.id, message.sender, message.from, and root-level fields
-            const uazapiChat = webhookData?.chat?.id || '';
-            const uazapiMsgSender = webhookData?.message?.sender || webhookData?.message?.from || webhookData?.message?.chatid || '';
-            const uazapiRootSender = webhookData?.sender || webhookData?.chatid || webhookData?.data?.sender || webhookData?.data?.chatid || '';
-            const uazapiSource = uazapiChat || uazapiMsgSender || uazapiRootSender;
-            if (uazapiSource) {
-              const uazapiPhone = uazapiSource.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@g.us', '');
-              if (uazapiPhone && /^\d{10,}$/.test(uazapiPhone)) {
-                rawPhoneNumber = uazapiPhone;
-                console.log('✅ Using phone number from UAZAPI chat/message:', uazapiPhone);
+            // Meta API fallback: try chat.id, message.sender, message.from, and root-level fields
+            const metaChat = webhookData?.chat?.id || '';
+            const metaMsgSender = webhookData?.message?.sender || webhookData?.message?.from || webhookData?.message?.chatid || '';
+            const metaRootSender = webhookData?.sender || webhookData?.chatid || webhookData?.data?.sender || webhookData?.data?.chatid || '';
+            const metaSource = metaChat || metaMsgSender || metaRootSender;
+            if (metaSource) {
+              const metaPhone = metaSource.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@g.us', '');
+              if (metaPhone && /^\d{10,}$/.test(metaPhone)) {
+                rawPhoneNumber = metaPhone;
+                console.log('✅ Using phone number from Meta API chat/message:', metaPhone);
               }
             }
 
-            // If UAZAPI didn't provide a number, try legacy participant fields
+            // If Meta API didn't provide a number, try legacy participant fields
             if (!rawPhoneNumber) {
               const possibleSources = [
                 message?.key?.participant,
@@ -7989,11 +7975,11 @@ if (ignoredNumbers !== undefined) {
           // ========================================
 
           // Check if message is from human (fromMe = true)
-          // Verificar fromMe em múltiplas fontes para robustez com UAZAPI
+          // Verificar fromMe em múltiplas fontes para robustez com Meta API
           const isFromHuman = message?.key?.fromMe === true;
 
           console.log(`🔍 [FROM-ME] message.key.fromMe=${message?.key?.fromMe} (${typeof message?.key?.fromMe}) | isFromHuman=${isFromHuman} | isAudio=${isAudioMessage}`);
-          // Log raw UAZAPI fromMe sources para debug
+          // Log raw Meta API fromMe sources para debug
           if (webhookData.message) {
             console.log(`🔍 [FROM-ME] raw: webhookData.message.fromMe=${webhookData.message.fromMe}, webhookData.fromMe=${webhookData.fromMe}, webhookData.chat?.fromMe=${webhookData.chat?.fromMe}`);
           }
@@ -8381,8 +8367,8 @@ if (ignoredNumbers !== undefined) {
                 // Send confirmation message to client IMMEDIATELY
                 try {
                   const globalSettings = await storage.getGlobalSettings();
-                  if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
-                    // Format phone number for UAZAPI - needs country code 55
+                  if (globalSettings?.metaAppId) {
+                    // Format phone number for Meta API - needs country code 55
                     let formattedClientPhone = phoneNumber.replace(/\D/g, '');
                     if (!formattedClientPhone.startsWith('55') && formattedClientPhone.length >= 10) {
                       formattedClientPhone = '55' + formattedClientPhone;
@@ -8393,12 +8379,12 @@ if (ignoredNumbers !== undefined) {
                     console.log('📤 [HUMAN-REQUEST] Sending confirmation to client:', formattedClientPhone);
 
                     // Send "typing" presence and wait 2 seconds
-                    await uazapiSendTyping(instanceName, formattedClientPhone, 2000);
+                    await metaSendTyping(instanceName, formattedClientPhone, 2000);
                     console.log('⏳ [HUMAN-REQUEST] Aguardando 2 segundos (mostrando digitando...)');
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     console.log('✅ [HUMAN-REQUEST] Delay concluído, enviando confirmação agora');
 
-                    const clientResponse = await uazapiSendText(instanceName, formattedClientPhone, clientConfirmationMessage);
+                    const clientResponse = await metaSendText(instanceName, formattedClientPhone, clientConfirmationMessage);
 
                     if (clientResponse.ok) {
                       console.log('✅ [HUMAN-REQUEST] Immediate confirmation sent to client');
@@ -8436,7 +8422,7 @@ if (ignoredNumbers !== undefined) {
                         .replace('{clientPhone}', phoneNumber)
                         .replace('{time}', now.toLocaleString('pt-BR'));
 
-                      const notificationResponse = await uazapiSendText(instanceName, company.humanRequestContact, notificationMessage);
+                      const notificationResponse = await metaSendText(instanceName, company.humanRequestContact, notificationMessage);
 
                       if (notificationResponse.ok) {
                         console.log('✅ [HUMAN-REQUEST] Notification sent successfully');
@@ -8536,7 +8522,7 @@ if (ignoredNumbers !== undefined) {
                 timestamp: new Date(),
               });
 
-              // Format phone number for UAZAPI
+              // Format phone number for Meta API
               let pdfPhoneForApi = phoneNumber.replace(/\D/g, '');
               if (!pdfPhoneForApi.startsWith('55') && pdfPhoneForApi.length >= 10) {
                 pdfPhoneForApi = '55' + pdfPhoneForApi;
@@ -8545,7 +8531,7 @@ if (ignoredNumbers !== undefined) {
               // Send PDFs directly
               try {
                 const globalSettings = await storage.getGlobalSettings();
-                if (globalSettings?.uazapiUrl) {
+                if (globalSettings?.metaAppId) {
                   for (const pdfUrl of coursePdfsToSend) {
                     try {
                       // Extract file path from URL
@@ -8589,8 +8575,8 @@ if (ignoredNumbers !== undefined) {
                         ? `📄 *Informações do Curso*\n\n${company.coursesDescription}`
                         : '📄 Informações do Curso';
 
-                      // Send document via UAZAPI
-                      const mediaResponse = await uazapiSendMedia(instanceName, pdfPhoneForApi, 'document', base64Data, caption, customFileName);
+                      // Send document via Meta API
+                      const mediaResponse = await metaSendMedia(instanceName, pdfPhoneForApi, 'document', base64Data, caption, customFileName);
 
                       if (mediaResponse.ok) {
                         console.log('✅ [COURSE-PDF] PDF sent successfully:', customFileName);
@@ -8626,7 +8612,7 @@ if (ignoredNumbers !== undefined) {
                       .replace('{message}', messageText?.substring(0, 200) || '')
                       .replace('{time}', now.toLocaleString('pt-BR'));
 
-                    await uazapiSendText(instanceName, company.courseNotificationContact, notificationMessage);
+                    await metaSendText(instanceName, company.courseNotificationContact, notificationMessage);
                     console.log('✅ [COURSE-NOTIFICATION] Notification sent');
                   }
 
@@ -8694,9 +8680,9 @@ if (ignoredNumbers !== undefined) {
           if (isAudioMessage) {
             console.log('🎵 Processing audio message...');
             console.log('📊 Message structure keys:', Object.keys(message || {}).join(', '));
-            const uazRaw = message._uazapiRaw || message.message?.audioMessage || {};
-            console.log('📊 UAZAPI raw message keys:', Object.keys(uazRaw).join(', '));
-            console.log('📊 UAZAPI raw messageType:', uazRaw.messageType, '| fileURL:', uazRaw.fileURL?.substring(0, 80) || 'none');
+            const uazRaw = message._metaRaw || message.message?.audioMessage || {};
+            console.log('📊 Meta API raw message keys:', Object.keys(uazRaw).join(', '));
+            console.log('📊 Meta API raw messageType:', uazRaw.messageType, '| fileURL:', uazRaw.fileURL?.substring(0, 80) || 'none');
             try {
               let transcriptionText: string | null = null;
               let audioBase64: string | null = null;
@@ -8707,13 +8693,13 @@ if (ignoredNumbers !== undefined) {
               console.log('🔑 [AUDIO] Using message ID for download:', msgId);
 
               // ============================================
-              // Method 1: UAZAPI /message/download with built-in transcription
-              // This is the most reliable method - UAZAPI downloads and transcribes in one call
+              // Method 1: Meta API /message/download with built-in transcription
+              // This is the most reliable method - Meta API downloads and transcribes in one call
               // ============================================
-              if (!transcriptionText && globalSettings?.uazapiUrl && instanceData?.token && msgId) {
+              if (!transcriptionText && globalSettings?.metaAppId && instanceData?.token && msgId) {
                 try {
-                  console.log('🔄 Method 1: UAZAPI /message/download with transcription...');
-                  const baseUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
+                  console.log('🔄 Method 1: Meta API /message/download with transcription...');
+                  const baseUrl = globalSettings.metaAppId.replace(/\/+$/, '');
                   const downloadResponse = await fetch(`${baseUrl}/message/download`, {
                     method: 'POST',
                     headers: {
@@ -8732,16 +8718,16 @@ if (ignoredNumbers !== undefined) {
 
                   if (downloadResponse.ok) {
                     const downloadData = await downloadResponse.json();
-                    console.log('📥 UAZAPI download response keys:', Object.keys(downloadData).join(', '));
+                    console.log('📥 Meta API download response keys:', Object.keys(downloadData).join(', '));
 
-                    // UAZAPI returns transcription in 'transcription' field
+                    // Meta API returns transcription in 'transcription' field
                     if (downloadData.transcription) {
                       transcriptionText = downloadData.transcription;
-                      console.log('✅ Method 1 succeeded - UAZAPI transcribed audio directly');
+                      console.log('✅ Method 1 succeeded - Meta API transcribed audio directly');
                       console.log('📝 Transcription:', transcriptionText);
                     }
 
-                    // Also grab base64Data (field name per UAZAPI OpenAPI spec) as fallback
+                    // Also grab base64Data (field name per Meta API OpenAPI spec) as fallback
                     if (!transcriptionText) {
                       audioBase64 = downloadData.base64Data || downloadData.base64 || downloadData.file?.base64 || null;
                       if (audioBase64) {
@@ -8758,7 +8744,7 @@ if (ignoredNumbers !== undefined) {
               }
 
               // ============================================
-              // Method 2: Try base64 from webhook payload (some UAZAPI configs send it)
+              // Method 2: Try base64 from webhook payload (some Meta API configs send it)
               // ============================================
               if (!transcriptionText && !audioBase64) {
                 audioBase64 = message.base64
@@ -8772,7 +8758,7 @@ if (ignoredNumbers !== undefined) {
               }
 
               // ============================================
-              // Method 3: Download from fileURL (UAZAPI includes this in webhook message)
+              // Method 3: Download from fileURL (Meta API includes this in webhook message)
               // ============================================
               if (!transcriptionText && !audioBase64) {
                 const audioFileUrl = uazRaw.fileURL || uazRaw.url || uazRaw.mediaUrl || message.message?.audioMessage?.url;
@@ -8828,11 +8814,11 @@ if (ignoredNumbers !== undefined) {
                     formattedPhoneForFallback = '55' + formattedPhoneForFallback;
                   }
 
-                  await uazapiSendTyping(instanceName, formattedPhoneForFallback, 2000);
+                  await metaSendTyping(instanceName, formattedPhoneForFallback, 2000);
                   await new Promise(resolve => setTimeout(resolve, 2000));
-                  const fallbackUAZAPIResponse = await uazapiSendText(instanceName, formattedPhoneForFallback, fallbackResponse);
+                  const fallbackMeta APIResponse = await metaSendText(instanceName, formattedPhoneForFallback, fallbackResponse);
 
-                  if (fallbackUAZAPIResponse.ok) {
+                  if (fallbackMeta APIResponse.ok) {
                     console.log('✅ Fallback response sent for failed audio transcription');
                     // Registrar no cache para detectar eco no Chatwoot
                     if (conversation) {
@@ -8845,7 +8831,7 @@ if (ignoredNumbers !== undefined) {
                       reason: 'Audio transcription failed, fallback response sent'
                     });
                   } else {
-                    console.error('❌ Failed to send fallback response via UAZAPI');
+                    console.error('❌ Failed to send fallback response via Meta API');
                     earlyWebhookLocks.delete(earlyLockKey);
                     return res.status(200).json({ received: true, processed: false, reason: 'Audio transcription and fallback failed' });
                   }
@@ -8957,12 +8943,12 @@ if (ignoredNumbers !== undefined) {
               return res.status(400).json({ error: 'OpenAI not configured for this company' });
             }
 
-            // Get global settings for UAZAPI
+            // Get global settings for Meta API
             const globalSettings = await storage.getGlobalSettings();
-            if (!globalSettings.uazapiUrl || !globalSettings.uazapiAdminToken) {
-              console.log('❌ UAZAPI not configured');
+            if (!globalSettings.metaAppId || !globalSettings.metaAppSecret) {
+              console.log('❌ Meta API not configured');
               earlyWebhookLocks.delete(earlyLockKey);
-              return res.status(400).json({ error: 'UAZAPI not configured' });
+              return res.status(400).json({ error: 'Meta API not configured' });
             }
 
             try {
@@ -10011,18 +9997,18 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                   timestamp: new Date(),
                 });
 
-                // Formatar telefone para UAZAPI
+                // Formatar telefone para Meta API
                 let formattedPhoneIntercept = phoneNumber.replace(/\D/g, '');
                 if (!formattedPhoneIntercept.startsWith('55') && formattedPhoneIntercept.length >= 10) {
                   formattedPhoneIntercept = '55' + formattedPhoneIntercept;
                 }
 
                 // Enviar presença "digitando" e aguardar
-                await uazapiSendTyping(instanceName, formattedPhoneIntercept, 2000);
+                await metaSendTyping(instanceName, formattedPhoneIntercept, 2000);
                 await new Promise(resolve => setTimeout(resolve, 2000));
 
                 try {
-                  const sendResponse = await uazapiSendText(instanceName, formattedPhoneIntercept, interceptedResponse);
+                  const sendResponse = await metaSendText(instanceName, formattedPhoneIntercept, interceptedResponse);
 
                   if (sendResponse.ok) {
                     console.log(`✅ [INTERCEPTAÇÃO] Resposta enviada para ${phoneNumber}`);
@@ -10196,18 +10182,18 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                   timestamp: new Date(),
                 });
 
-                // Formatar telefone para UAZAPI
+                // Formatar telefone para Meta API
                 let formattedPhoneReschedule = phoneNumber.replace(/\D/g, '');
                 if (!formattedPhoneReschedule.startsWith('55') && formattedPhoneReschedule.length >= 10) {
                   formattedPhoneReschedule = '55' + formattedPhoneReschedule;
                 }
 
-                // Enviar via UAZAPI
-                await uazapiSendTyping(instanceName, formattedPhoneReschedule, 2000);
+                // Enviar via Meta API
+                await metaSendTyping(instanceName, formattedPhoneReschedule, 2000);
                 await new Promise(resolve => setTimeout(resolve, 2000));
 
                 try {
-                  const sendResponseReschedule = await uazapiSendText(instanceName, formattedPhoneReschedule, rescheduleInterceptResponse);
+                  const sendResponseReschedule = await metaSendText(instanceName, formattedPhoneReschedule, rescheduleInterceptResponse);
 
                   if (sendResponseReschedule.ok) {
                     console.log(`✅ [REAGENDAMENTO INTERCEPTADO] Resposta enviada para ${phoneNumber}`);
@@ -10388,16 +10374,16 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                       if (activeInstance) {
                         const globalSettings = await storage.getGlobalSettings();
 
-                        if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
+                        if (globalSettings?.metaAppId) {
                           let formattedPhone = phoneNumber.replace(/\D/g, '');
                           if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
                             formattedPhone = '55' + formattedPhone;
                           }
 
-                          await uazapiSendTyping(activeInstance.instanceName, formattedPhone, 2000);
+                          await metaSendTyping(activeInstance.instanceName, formattedPhone, 2000);
                           await new Promise(resolve => setTimeout(resolve, 2000));
 
-                          const response = await uazapiSendText(activeInstance.instanceName, formattedPhone, errorMessage);
+                          const response = await metaSendText(activeInstance.instanceName, formattedPhone, errorMessage);
 
                           if (response.ok) {
                             console.log('✅ Mensagem de erro enviada com sucesso (PRÉ-VALIDAÇÃO)');
@@ -10540,9 +10526,9 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                         console.log(`📤 [CONFLITO] Usando instância já obtida: ${whatsappInstance.instanceName}`);
 
                         const globalSettings = await storage.getGlobalSettings();
-                        console.log(`📤 [CONFLITO] UAZAPI URL: ${globalSettings?.uazapiUrl || 'NÃO CONFIGURADA'}`);
+                        console.log(`📤 [CONFLITO] Meta API URL: ${globalSettings?.metaAppId || 'NÃO CONFIGURADA'}`);
 
-                        if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
+                        if (globalSettings?.metaAppId) {
                           let formattedPhone = phoneNumber.replace(/\D/g, '');
                           if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
                             formattedPhone = '55' + formattedPhone;
@@ -10550,11 +10536,11 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                           console.log(`📤 [CONFLITO] Telefone formatado: ${formattedPhone}`);
 
                           console.log('📤 [CONFLITO] Enviando typing presence...');
-                          await uazapiSendTyping(whatsappInstance.instanceName, formattedPhone, 2000);
+                          await metaSendTyping(whatsappInstance.instanceName, formattedPhone, 2000);
                           await new Promise(resolve => setTimeout(resolve, 2000));
 
-                          console.log('📤 [CONFLITO] Enviando mensagem via UAZAPI...');
-                          const conflictResponse = await uazapiSendText(whatsappInstance.instanceName, formattedPhone, conflictMessage);
+                          console.log('📤 [CONFLITO] Enviando mensagem via Meta API...');
+                          const conflictResponse = await metaSendText(whatsappInstance.instanceName, formattedPhone, conflictMessage);
 
                           console.log(`📤 [CONFLITO] Resposta da API (${conflictResponse.status})`);
 
@@ -10573,7 +10559,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
                             console.error(`❌ [CONFLITO] Falha ao enviar mensagem: Status ${conflictResponse.status}`);
                           }
                         } else {
-                          console.error('❌ [CONFLITO] UAZAPI não configurada');
+                          console.error('❌ [CONFLITO] Meta API não configurada');
                         }
                       } catch (error) {
                         console.error('❌ Erro ao enviar mensagem de conflito:', error);
@@ -11633,9 +11619,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
               // FIM DA VALIDAÇÃO DE CONFLITO
               // ========================================
 
-              // Send response back via UAZAPI using global settings
+              // Send response back via Meta API using global settings
               console.log('==================================================');
-              console.log('🚀 ENVIANDO RESPOSTA VIA UAZAPI');
+              console.log('🚀 ENVIANDO RESPOSTA VIA Meta API');
               console.log('==================================================');
               console.log('📝 Resposta Final (primeiros 500 caracteres):', aiResponse.substring(0, 500));
               console.log('🔍 Tipo de resposta:');
@@ -11734,9 +11720,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                         const paymentQuestionMsg = `💳 *Forma de Pagamento*\n\nPara confirmar seu agendamento, como você prefere pagar?\n\n1️⃣ *PIX* - Pagamento instantâneo\n2️⃣ *Cartão de Crédito* - Parcele em até 12x\n\n💰 Valor: R$ ${Number(serviceAsaas.price).toFixed(2)}\n\n_Digite 1 para PIX ou 2 para Cartão_`;
 
-                        await uazapiSendTyping(instanceName, phoneForPayment, 1500);
+                        await metaSendTyping(instanceName, phoneForPayment, 1500);
 
-                        await uazapiSendText(instanceName, phoneForPayment, paymentQuestionMsg);
+                        await metaSendText(instanceName, phoneForPayment, paymentQuestionMsg);
                         // Registrar no cache para detectar eco no Chatwoot
                         cacheAIResponse(conversation.id, paymentQuestionMsg);
 
@@ -11786,22 +11772,22 @@ Por favor, escolha um dos horários disponíveis acima.`;
               }
 
               if (!shouldSkipAIResponse) {
-                // Format phone number for UAZAPI - needs country code 55
+                // Format phone number for Meta API - needs country code 55
                 let formattedPhoneForApi = phoneNumber.replace(/\D/g, '');
                 if (!formattedPhoneForApi.startsWith('55') && formattedPhoneForApi.length >= 10) {
                   formattedPhoneForApi = '55' + formattedPhoneForApi;
                 }
-                console.log('📞 Formatted phone for UAZAPI:', formattedPhoneForApi);
+                console.log('📞 Formatted phone for Meta API:', formattedPhoneForApi);
 
                 // Send "typing" presence and wait 2 seconds
-                await uazapiSendTyping(instanceName, formattedPhoneForApi, 2000);
+                await metaSendTyping(instanceName, formattedPhoneForApi, 2000);
                 console.log('⏳ Aguardando 2 segundos (mostrando digitando...)');
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 console.log('✅ Delay concluído, enviando mensagem agora');
 
-                const uazapiResponse = await uazapiSendText(instanceName, formattedPhoneForApi, aiResponse);
+                const metaResponse = await metaSendText(instanceName, formattedPhoneForApi, aiResponse);
 
-              if (uazapiResponse.ok) {
+              if (metaResponse.ok) {
                 console.log(`✅ AI response sent to ${phoneNumber}: ${aiResponse}`);
                 
                 // Save AI response to database
@@ -11852,8 +11838,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                       // Buscar configurações atualizadas (podem ter mudado em 10 minutos)
                       const currentGlobalSettings = await storage.getGlobalSettings();
-                      if (!currentGlobalSettings?.uazapiUrl || !currentGlobalSettings?.uazapiAdminToken) {
-                        console.error('❌ UAZAPI não configurada para lembrete');
+                      if (!currentGlobalSettings?.metaAppId || !currentGlobalSettings?.metaAppSecret) {
+                        console.error('❌ Meta API não configurada para lembrete');
                         pendingConfirmationTimers.delete(confirmTimerKeySched);
                         return;
                       }
@@ -11867,11 +11853,11 @@ Por favor, escolha um dos horários disponíveis acima.`;
                       }
 
                       // Enviar presença "digitando"
-                      await uazapiSendTyping(reminderInstanceName, reminderPhone, 2000);
+                      await metaSendTyping(reminderInstanceName, reminderPhone, 2000);
                       await new Promise(resolve => setTimeout(resolve, 2000));
 
                       // Enviar lembrete via WhatsApp
-                      const reminderResponse = await uazapiSendText(reminderInstanceName, reminderPhone, reminderMessage);
+                      const reminderResponse = await metaSendText(reminderInstanceName, reminderPhone, reminderMessage);
 
                       if (reminderResponse.ok) {
                         console.log(`✅ Lembrete de confirmação enviado para ${reminderPhoneNumber}`);
@@ -11960,8 +11946,8 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                         // Buscar configurações atualizadas
                         const currentGlobalSettings = await storage.getGlobalSettings();
-                        if (!currentGlobalSettings?.uazapiUrl || !currentGlobalSettings?.uazapiAdminToken) {
-                          console.error('❌ UAZAPI não configurada para follow-up');
+                        if (!currentGlobalSettings?.metaAppId || !currentGlobalSettings?.metaAppSecret) {
+                          console.error('❌ Meta API não configurada para follow-up');
                           conversationFollowUpTimers.delete(followUpKeySched);
                           return;
                         }
@@ -12018,11 +12004,11 @@ Por favor, escolha um dos horários disponíveis acima.`;
                         }
 
                         // Enviar presença "digitando"
-                        await uazapiSendTyping(followUpInstanceName, followUpPhone, 2000);
+                        await metaSendTyping(followUpInstanceName, followUpPhone, 2000);
                         await new Promise(resolve => setTimeout(resolve, 2000));
 
                         // Enviar follow-up via WhatsApp
-                        const followUpResponse = await uazapiSendText(followUpInstanceName, followUpPhone, followUpMessage);
+                        const followUpResponse = await metaSendText(followUpInstanceName, followUpPhone, followUpMessage);
 
                         if (followUpResponse.ok) {
                           console.log(`✅ Follow-up de conversa enviado para ${followUpPhoneNumber}: ${followUpMessage}`);
@@ -12140,17 +12126,17 @@ Por favor, escolha um dos horários disponíveis acima.`;
                       }
 
                       // Log do payload (sem mostrar base64 completo)
-                      console.log('📤 Payload para UAZAPI:', {
+                      console.log('📤 Payload para Meta API:', {
                         number: formattedPhoneForApi,
                         mediatype: mediaType,
                         caption: mediaCaption,
                         media: `${base64Data.substring(0, 50)}... (${base64Data.length} chars total)`
                       });
 
-                      // Enviar arquivo usando UAZAPI helper
-                      const mediaResponse = await uazapiSendMedia(instanceName, formattedPhoneForApi, mediaType, base64Data, mediaCaption);
+                      // Enviar arquivo usando Meta API helper
+                      const mediaResponse = await metaSendMedia(instanceName, formattedPhoneForApi, mediaType, base64Data, mediaCaption);
 
-                      console.log('📥 Resposta da UAZAPI:', {
+                      console.log('📥 Resposta da Meta API:', {
                         status: mediaResponse.status,
                         ok: mediaResponse.ok,
                       });
@@ -12214,7 +12200,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                     try {
                       const globalSettings = await storage.getGlobalSettings();
-                      if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
+                      if (globalSettings?.metaAppId) {
                         // Prepare notification message
                         let notificationMessage = humanData.humanRequestMessage ||
                           'Olá! Um cliente está solicitando atendimento humano.\n\n👤 Cliente: {clientName}\n📞 Telefone: {clientPhone}\n⏰ Horário: {time}\n\nPor favor, entre em contato o mais rápido possível.';
@@ -12227,7 +12213,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           .replace('{time}', now.toLocaleString('pt-BR'));
 
                         // Send message to configured contact
-                        const notificationResponse = await uazapiSendText(humanData.instanceName, humanData.humanRequestContact, notificationMessage);
+                        const notificationResponse = await metaSendText(humanData.instanceName, humanData.humanRequestContact, notificationMessage);
 
                         if (notificationResponse.ok) {
                           console.log('✅ [HUMAN-REQUEST] Notification sent successfully');
@@ -12256,7 +12242,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                     try {
                       const globalSettings = await storage.getGlobalSettings();
-                      if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
+                      if (globalSettings?.metaAppId) {
                         // Adjust default message based on whether AI will pause
                         const defaultMessage = courseData.shouldPauseAI
                           ? '🎓 *Interesse em Curso Detectado!*\n\n👤 Cliente: {clientName}\n📞 Telefone: {clientPhone}\n💬 Mensagem: {message}\n⏰ Horário: {time}\n\n⏸️ O agente IA foi pausado por ' + courseData.timeoutMinutes + ' minutos.'
@@ -12271,7 +12257,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           .replace('{message}', courseData.messageText?.substring(0, 200) || '')
                           .replace('{time}', now.toLocaleString('pt-BR'));
 
-                        await uazapiSendText(courseData.instanceName, courseData.courseNotificationContact, notificationMessage);
+                        await metaSendText(courseData.instanceName, courseData.courseNotificationContact, notificationMessage);
                         console.log('✅ [COURSE-NOTIFICATION] Notification sent');
                       }
                     } catch (error) {
@@ -12734,24 +12720,24 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             if (pixPaymentWithCpf && pixPaymentWithCpf.pixQrCode) {
                               console.log('✅ PIX com CPF criado com sucesso!');
 
-                              await uazapiSendTyping(instanceName, formattedPhoneForCpf, 2000);
+                              await metaSendTyping(instanceName, formattedPhoneForCpf, 2000);
 
                               // Enviar QR Code
                               const pixCaptionCpf = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${pendingPixData.servicePrice.toFixed(2)}\n⏰ Válido por 10 minutos`;
-                              await uazapiSendMedia(instanceName, formattedPhoneForCpf, 'image', pixPaymentWithCpf.pixQrCode.encodedImage, pixCaptionCpf);
+                              await metaSendMedia(instanceName, formattedPhoneForCpf, 'image', pixPaymentWithCpf.pixQrCode.encodedImage, pixCaptionCpf);
 
                               // Enviar código PIX sozinho para facilitar cópia
                               await new Promise(resolve => setTimeout(resolve, 1000));
                               const pixCodeOnlyCpf = pixPaymentWithCpf.pixQrCode.payload;
 
-                              await uazapiSendText(instanceName, formattedPhoneForCpf, pixCodeOnlyCpf);
+                              await metaSendText(instanceName, formattedPhoneForCpf, pixCodeOnlyCpf);
                               cacheAIResponse(conversation.id, pixCodeOnlyCpf);
 
                               // Enviar orientações em mensagem separada
                               await new Promise(resolve => setTimeout(resolve, 500));
                               const pixInstructionsCpf = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
-                              await uazapiSendText(instanceName, formattedPhoneForCpf, pixInstructionsCpf);
+                              await metaSendText(instanceName, formattedPhoneForCpf, pixInstructionsCpf);
                               cacheAIResponse(conversation.id, pixInstructionsCpf);
 
                               // Salvar mensagens no banco
@@ -12794,7 +12780,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             } else {
                               console.log('❌ Falha ao criar cobrança PIX com CPF');
                               const errorMsg = '❌ Não foi possível gerar o QR Code PIX. Por favor, tente novamente ou escolha outra forma de pagamento.';
-                              await uazapiSendText(instanceName, formattedPhoneForCpf, errorMsg);
+                              await metaSendText(instanceName, formattedPhoneForCpf, errorMsg);
                             }
 
                             return res.status(200).json({ received: true, processed: true, cpfProcessed: true });
@@ -12922,24 +12908,24 @@ Por favor, escolha um dos horários disponíveis acima.`;
                               if (pixPayment && pixPayment.pixQrCode) {
                                 console.log('✅ PIX criado com sucesso!');
 
-                                await uazapiSendTyping(instanceName, formattedPhoneForPaymentMsg, 2000);
+                                await metaSendTyping(instanceName, formattedPhoneForPaymentMsg, 2000);
 
                                 // Enviar QR Code como imagem
                                 const pixCaption = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n⏰ Válido por 10 minutos`;
-                                await uazapiSendMedia(instanceName, formattedPhoneForPaymentMsg, 'image', pixPayment.pixQrCode.encodedImage, pixCaption);
+                                await metaSendMedia(instanceName, formattedPhoneForPaymentMsg, 'image', pixPayment.pixQrCode.encodedImage, pixCaption);
 
                                 // Enviar código PIX sozinho para facilitar cópia
                                 await new Promise(resolve => setTimeout(resolve, 1000));
                                 const pixCodeOnly = pixPayment.pixQrCode.payload;
 
-                                await uazapiSendText(instanceName, formattedPhoneForPaymentMsg, pixCodeOnly);
+                                await metaSendText(instanceName, formattedPhoneForPaymentMsg, pixCodeOnly);
                                 cacheAIResponse(conversation.id, pixCodeOnly);
 
                                 // Enviar orientações em mensagem separada
                                 await new Promise(resolve => setTimeout(resolve, 500));
                                 const pixInstructions = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
-                                await uazapiSendText(instanceName, formattedPhoneForPaymentMsg, pixInstructions);
+                                await metaSendText(instanceName, formattedPhoneForPaymentMsg, pixInstructions);
                                 cacheAIResponse(conversation.id, pixInstructions);
 
                                 await storage.createMessage({
@@ -12995,11 +12981,11 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 // Agendamento será criado pelo webhook após confirmação do pagamento
 
                                 // Enviar link de pagamento
-                                await uazapiSendTyping(instanceName, formattedPhoneForPaymentMsg, 2000);
+                                await metaSendTyping(instanceName, formattedPhoneForPaymentMsg, 2000);
 
                                 const cardMessage = `💳 *Pagamento com Cartão de Crédito*\n\nClique no link abaixo para pagar de forma segura:\n\n🔗 ${cardPayment.invoiceUrl}\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n✅ Parcele em até 12x\n🔒 Ambiente 100% seguro\n\n_Após o pagamento, seu agendamento será confirmado automaticamente!_`;
 
-                                await uazapiSendText(instanceName, formattedPhoneForPaymentMsg, cardMessage);
+                                await metaSendText(instanceName, formattedPhoneForPaymentMsg, cardMessage);
 
                                 // Salvar mensagem no banco
                                 await storage.createMessage({
@@ -13133,9 +13119,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                         const paymentQuestion = `💳 *Forma de Pagamento*\n\nPara confirmar seu agendamento, como você prefere pagar?\n\n1️⃣ *PIX* - Pagamento instantâneo\n2️⃣ *Cartão de Crédito* - Parcele em até 12x\n\n💰 Valor: R$ ${Number(serviceWithPrice.price).toFixed(2)}\n\n_Digite 1 para PIX ou 2 para Cartão_`;
 
-                        await uazapiSendTyping(whatsappInstance.instanceName, formattedPhone, 1500);
+                        await metaSendTyping(whatsappInstance.instanceName, formattedPhone, 1500);
 
-                        await uazapiSendText(whatsappInstance.instanceName, formattedPhone, paymentQuestion);
+                        await metaSendText(whatsappInstance.instanceName, formattedPhone, paymentQuestion);
 
                         await storage.createMessage({
                           conversationId: conversation.id,
@@ -13191,7 +13177,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           formattedPhoneForError = '55' + formattedPhoneForError;
                         }
 
-                        await uazapiSendText(activeInstance.instanceName, formattedPhoneForError, errorMessage);
+                        await metaSendText(activeInstance.instanceName, formattedPhoneForError, errorMessage);
 
                         await storage.createMessage({
                           conversationId: conversation.id,
@@ -13234,9 +13220,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 // Só deve criar agendamento quando o usuário explicitamente confirmar com SIM/OK
                 
               } else {
-                console.error('❌ Failed to send message via UAZAPI:', {
-                  status: uazapiResponse.status,
-                  ok: uazapiResponse.ok,
+                console.error('❌ Failed to send message via Meta API:', {
+                  status: metaResponse.status,
+                  ok: metaResponse.ok,
                 });
                 console.log('ℹ️  Note: This is normal for test numbers. Real WhatsApp numbers will work.');
                 
@@ -13420,23 +13406,23 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           if (pixPaymentResult && pixPaymentResult.pixQrCode) {
                             console.log('✅ PIX criado com sucesso!');
 
-                            await uazapiSendTyping(instanceName, formattedPhoneForPaymentProcess, 2000);
+                            await metaSendTyping(instanceName, formattedPhoneForPaymentProcess, 2000);
 
                             const pixCaptionProcess = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n⏰ Válido por 10 minutos`;
-                            await uazapiSendMedia(instanceName, formattedPhoneForPaymentProcess, 'image', pixPaymentResult.pixQrCode.encodedImage, pixCaptionProcess);
+                            await metaSendMedia(instanceName, formattedPhoneForPaymentProcess, 'image', pixPaymentResult.pixQrCode.encodedImage, pixCaptionProcess);
 
                             // Enviar código PIX sozinho para facilitar cópia
                             await new Promise(resolve => setTimeout(resolve, 1000));
                             const pixCodeOnly2 = pixPaymentResult.pixQrCode.payload;
 
-                            await uazapiSendText(instanceName, formattedPhoneForPaymentProcess, pixCodeOnly2);
+                            await metaSendText(instanceName, formattedPhoneForPaymentProcess, pixCodeOnly2);
                             cacheAIResponse(conversation.id, pixCodeOnly2);
 
                             // Enviar orientações em mensagem separada
                             await new Promise(resolve => setTimeout(resolve, 500));
                             const pixInstructions2 = `👆 *Copie o código acima* e cole no seu app de banco para pagar via PIX.\n\n✅ Após o pagamento, seu agendamento será confirmado automaticamente!`;
 
-                            await uazapiSendText(instanceName, formattedPhoneForPaymentProcess, pixInstructions2);
+                            await metaSendText(instanceName, formattedPhoneForPaymentProcess, pixInstructions2);
                             cacheAIResponse(conversation.id, pixInstructions2);
 
                             await storage.createMessage({
@@ -13491,11 +13477,11 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             console.log('📋 Payment ID:', cardPaymentResult.id);
 
                             // Send payment link
-                            await uazapiSendTyping(instanceName, formattedPhoneForPaymentProcess, 2000);
+                            await metaSendTyping(instanceName, formattedPhoneForPaymentProcess, 2000);
 
                             const cardMessageResult = `💳 *Pagamento com Cartão de Crédito*\n\nClique no link abaixo para pagar de forma segura:\n\n🔗 ${cardPaymentResult.invoiceUrl}\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n✅ Parcele em até 12x\n🔒 Ambiente 100% seguro\n\n_Após o pagamento, seu agendamento será confirmado automaticamente!_`;
 
-                            await uazapiSendText(instanceName, formattedPhoneForPaymentProcess, cardMessageResult);
+                            await metaSendText(instanceName, formattedPhoneForPaymentProcess, cardMessageResult);
 
                             // Save message to database
                             await storage.createMessage({
@@ -13570,18 +13556,18 @@ Obrigado pela preferência! 🙏`;
               
               // Send fallback response
               try {
-                // Format phone number for UAZAPI - needs country code 55
+                // Format phone number for Meta API - needs country code 55
                 let formattedPhoneForError = phoneNumber.replace(/\D/g, '');
                 if (!formattedPhoneForError.startsWith('55') && formattedPhoneForError.length >= 10) {
                   formattedPhoneForError = '55' + formattedPhoneForError;
                 }
 
                 // Send "typing" presence and wait 2 seconds
-                await uazapiSendTyping(instanceName, formattedPhoneForError, 2000);
+                await metaSendTyping(instanceName, formattedPhoneForError, 2000);
                 await new Promise(resolve => setTimeout(resolve, 2000));
-                const uazapiResponse = await uazapiSendText(instanceName, formattedPhoneForError, fallbackMessage);
+                const metaResponse = await metaSendText(instanceName, formattedPhoneForError, fallbackMessage);
 
-                if (uazapiResponse.ok) {
+                if (metaResponse.ok) {
                   console.log('✅ Fallback message sent successfully');
                   // Registrar no cache para detectar eco no Chatwoot
                   cacheAIResponse(conversation.id, fallbackMessage);
@@ -17437,19 +17423,19 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
         const activeInstance = instances.find(i => i.status === 'connected');
 
         if (activeInstance) {
-          // Get global settings for UAZAPI
+          // Get global settings for Meta API
           const globalSettings = await storage.getGlobalSettings();
 
-          if (globalSettings?.uazapiUrl && globalSettings?.uazapiAdminToken) {
+          if (globalSettings?.metaAppId) {
             let formattedPhone = phoneNumber.replace(/\D/g, '');
             if (!formattedPhone.startsWith('55') && formattedPhone.length >= 10) {
               formattedPhone = '55' + formattedPhone;
             }
 
-            await uazapiSendTyping(activeInstance.instanceName, formattedPhone, 2000);
+            await metaSendTyping(activeInstance.instanceName, formattedPhone, 2000);
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            const response = await uazapiSendText(activeInstance.instanceName, formattedPhone, errorMessage);
+            const response = await metaSendText(activeInstance.instanceName, formattedPhone, errorMessage);
 
             if (response.ok) {
               console.log('✅ Mensagem de erro enviada com sucesso');
@@ -17465,7 +17451,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
               console.error('❌ Falha ao enviar mensagem de erro');
             }
           } else {
-            console.error('❌ Configurações globais da UAZAPI não encontradas');
+            console.error('❌ Configurações globais da Meta API não encontradas');
           }
         } else {
           console.error('❌ Nenhuma instância do WhatsApp conectada encontrada para esta empresa');
@@ -17578,10 +17564,10 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
       }
     }
 
-    // Fallback final: usar contactName (pushName) da UAZAPI
+    // Fallback final: usar contactName (pushName) da Meta API
     if (!extractedName && contactName) {
       extractedName = contactName;
-      console.log(`📝 Usando contactName (pushName) da UAZAPI: "${extractedName}"`);
+      console.log(`📝 Usando contactName (pushName) da Meta API: "${extractedName}"`);
     }
 
     // Format date for conflict check without timezone conversion
@@ -18621,41 +18607,42 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     }
   });
 
-  // UAZAPI diagnostic endpoint
-  app.get('/api/admin/uazapi/test', isAuthenticated, async (req, res) => {
+  // Meta WhatsApp Cloud API diagnostic endpoint
+  app.get('/api/admin/meta/test', isAuthenticated, async (req, res) => {
     try {
       const settings = await storage.getGlobalSettings();
 
-      if (!settings?.uazapiUrl || !settings?.uazapiAdminToken) {
+      if (!settings?.metaAppId || !settings?.metaAppSecret) {
         return res.json({
           success: false,
-          message: "UAZAPI não configurada",
+          message: "Meta API não configurada",
           details: {
-            hasUrl: !!settings?.uazapiUrl,
-            hasKey: !!settings?.uazapiAdminToken
+            hasAppId: !!settings?.metaAppId,
+            hasAppSecret: !!settings?.metaAppSecret,
+            hasWebhookToken: !!settings?.metaWebhookVerifyToken,
           }
         });
       }
 
-      console.log('Testing UAZAPI connection...');
-
-      const uazapi = await getUazapiService();
-      const instances = await uazapi.listAllInstances();
+      // List all WhatsApp instances configured with Meta API
+      const allInstances = await db.select().from(whatsappInstances).execute();
+      const metaInstances = allInstances.filter((i: any) => i.metaPhoneNumberId);
 
       res.json({
         success: true,
-        message: "Conexão com UAZAPI estabelecida",
+        message: "Meta API configurada",
         details: {
-          status: 200,
-          instances: instances.length
+          metaAppId: settings.metaAppId,
+          totalInstances: allInstances.length,
+          metaInstances: metaInstances.length,
         }
       });
 
     } catch (error: any) {
-      console.error("Error testing UAZAPI:", error);
+      console.error("Error testing Meta API:", error);
       res.json({
         success: false,
-        message: "Erro ao testar UAZAPI",
+        message: "Erro ao testar Meta API",
         details: {
           error: error.message
         }
@@ -18933,50 +18920,62 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       }
 
       const { instanceName, phoneNumber } = req.body;
+      // Meta Cloud API: o número precisa ser registrado via Meta Business Manager
+      // Aqui criamos o registro no banco com as credenciais Meta
+      const { metaPhoneNumberId, metaWabaId, metaAccessToken } = req.body;
 
-      // Create instance in UAZAPI via service
-      const uazapi = await getUazapiService();
-      console.log(`📤 Creating UAZAPI instance: ${instanceName}`);
+      if (!metaPhoneNumberId || !metaWabaId || !metaAccessToken) {
+        return res.status(400).json({
+          message: "Para a API oficial da Meta, informe: metaPhoneNumberId, metaWabaId e metaAccessToken"
+        });
+      }
 
-      const result = await uazapi.createInstance(instanceName);
-      console.log(`✅ UAZAPI instance created successfully:`, result);
+      console.log(`📤 Registrando instância Meta: ${instanceName}`);
 
-      // Generate webhook URL (uses system_url for public accessibility)
+      // Verificar conexão com a Meta API
+      const metaService = createMetaWhatsAppService({
+        phoneNumberId: metaPhoneNumberId,
+        wabaId: metaWabaId,
+        accessToken: metaAccessToken,
+      });
+
+      // Buscar informações do número na Meta
+      let phoneNumbers: any[] = [];
+      try {
+        phoneNumbers = await metaService.listPhoneNumbers();
+        console.log(`✅ Conexão com Meta API verificada. Números:`, phoneNumbers.length);
+      } catch (metaError: any) {
+        return res.status(400).json({
+          message: "Erro ao conectar com a Meta API. Verifique suas credenciais.",
+          details: metaError.message,
+        });
+      }
+
+      // Generate webhook URL
       const webhookUrl = await generateWebhookUrl(req, instanceName);
-      console.log(`🔗 Generated webhook URL: ${webhookUrl}`);
 
-      // Create instance in database - store the returned instanceToken
-      const instanceData = {
+      // Encontrar informações do número
+      const phoneInfo = phoneNumbers.find((p: any) => p.id === metaPhoneNumberId) || {};
+
+      const instanceData: any = {
         companyId,
         instanceName,
-        phoneNumber,
-        status: 'connecting',
-        instanceToken: result.token || null,
+        status: 'connected',
         webhook: webhookUrl,
-        qrCode: null
+        metaPhoneNumberId,
+        metaWabaId,
+        metaAccessToken,
+        displayPhoneNumber: phoneInfo.display_phone_number || phoneNumber || '',
+        qualityRating: phoneInfo.quality_rating || 'GREEN',
+        messagingLimit: phoneInfo.throughput?.level || 'STANDARD',
       };
 
       const dbInstance = await storage.createWhatsappInstance(instanceData);
-      console.log(`✅ Database instance created with ID: ${dbInstance.id}`);
-
-      // Configure webhook if we got a token
-      if (result.token) {
-        try {
-          await uazapi.configureWebhook(result.token, {
-            url: webhookUrl,
-            events: ['messages', 'connection'],
-            excludeMessages: ['wasSentByApi']
-          });
-          console.log(`✅ Webhook configured for instance: ${instanceName}`);
-        } catch (webhookError) {
-          console.warn(`⚠️ Failed to configure webhook (will retry later):`, webhookError);
-        }
-      }
+      console.log(`✅ Instância Meta criada no banco com ID: ${dbInstance.id}`);
 
       res.status(201).json({
-        message: "Instância do WhatsApp criada com sucesso",
+        message: "Instância do WhatsApp (Meta API) criada com sucesso",
         instance: dbInstance,
-        uazapiResponse: result
       });
 
     } catch (error: any) {
@@ -18988,230 +18987,103 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     }
   });
 
-  // Get QR Code for WhatsApp instance
+  // Meta Cloud API: QR code não é usado — retorna status da instância
   app.get('/api/company/whatsapp/instances/:instanceName/qrcode', async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
-      if (!companyId) {
-        return res.status(401).json({ message: "Não autenticado" });
-      }
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
 
       const instanceName = req.params.instanceName;
-
-      // Verify instance belongs to company
       const instance = await storage.getWhatsappInstanceByName(instanceName, companyId);
-      if (!instance) {
-        return res.status(404).json({ message: "Instância não encontrada" });
-      }
+      if (!instance) return res.status(404).json({ message: "Instância não encontrada" });
 
-      if (!instance.instanceToken) {
-        return res.status(400).json({ message: "Token da instância não encontrado. Recrie a instância." });
-      }
-
-      console.log(`📱 Getting QR code for instance: ${instanceName}`);
-
-      const uazapi = await getUazapiService();
-      const result = await uazapi.connect(instance.instanceToken);
-      console.log(`✅ QR code retrieved for instance: ${instanceName}`);
-
+      // Na API oficial da Meta, não há QR code — o número é registrado via Meta Business Manager
       res.json({
-        qrcode: result.qrcode || result.instance?.qrcode,
-        pairingCode: result.paircode || result.instance?.paircode,
-        status: result.instance?.status || result.status || 'connecting'
+        status: instance.status || 'connected',
+        message: "A API oficial da Meta não utiliza QR code. O número é registrado diretamente via Meta Business Manager.",
+        displayPhoneNumber: (instance as any).displayPhoneNumber || '',
       });
-
     } catch (error: any) {
-      console.error("Error getting QR code:", error);
-      res.status(500).json({
-        message: "Erro ao buscar QR code",
-        details: error.message
-      });
+      res.status(500).json({ message: "Erro ao verificar instância", details: error.message });
     }
   });
 
-  // Get Pairing Code for WhatsApp instance (alternativa ao QR Code)
+  // Meta Cloud API: Pairing code não é usado
   app.post('/api/company/whatsapp/instances/:instanceName/pairingcode', async (req: any, res) => {
-    try {
-      const companyId = req.session.companyId;
-      if (!companyId) {
-        return res.status(401).json({ message: "Não autenticado" });
-      }
-
-      const instanceName = req.params.instanceName;
-      const { phoneNumber } = req.body;
-
-      if (!phoneNumber) {
-        return res.status(400).json({ message: "Número de telefone é obrigatório" });
-      }
-
-      // Limpar o número - remover caracteres especiais e espaços
-      const cleanNumber = phoneNumber.replace(/\D/g, '');
-
-      if (cleanNumber.length < 10 || cleanNumber.length > 15) {
-        return res.status(400).json({ message: "Número de telefone inválido. Use o formato com DDI e DDD (ex: 5511999999999)" });
-      }
-
-      // Verify instance belongs to company
-      const instance = await storage.getWhatsappInstanceByName(instanceName, companyId);
-      if (!instance) {
-        return res.status(404).json({ message: "Instância não encontrada" });
-      }
-
-      if (!instance.instanceToken) {
-        return res.status(400).json({ message: "Token da instância não encontrado. Recrie a instância." });
-      }
-
-      console.log(`📱 Getting Pairing Code for instance: ${instanceName}, phone: ${cleanNumber}`);
-
-      const uazapi = await getUazapiService();
-
-      // Step 1: Desconectar a instância para garantir que está pronta para pairing
-      console.log(`📱 Step 1: Disconnecting instance ${instanceName} to prepare for pairing code`);
-      try {
-        await uazapi.disconnect(instance.instanceToken);
-        console.log(`✅ Disconnect request sent`);
-        // Aguardar um pouco para a instância processar o disconnect
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (disconnectError) {
-        console.log(`⚠️ Disconnect failed (may already be disconnected):`, disconnectError);
-      }
-
-      // Step 2: Obter pairing code com o número via service
-      console.log(`📱 Step 2: Connecting with phone number for pairing code`);
-      const responseData = await uazapi.connect(instance.instanceToken, cleanNumber);
-      console.log(`📱 UAZAPI pairing response:`, responseData);
-
-      // Extrair o pairing code da resposta
-      const code = responseData.paircode ||
-                   responseData.instance?.paircode ||
-                   (responseData as any).pairingCode ||
-                   (responseData as any).code;
-
-      if (code && typeof code === 'string' && code.length >= 6 && code.length <= 10) {
-        console.log(`✅ Pairing code retrieved: ${code}`);
-        return res.json({ code, status: 'pending' });
-      }
-
-      // Se não encontrou pairing code, verificar se retornou qrcode
-      if (responseData.qrcode || responseData.instance?.qrcode) {
-        console.log(`⚠️ UAZAPI returned QR code instead of pairing code`);
-        return res.status(400).json({
-          message: "A UAZAPI retornou QR code em vez de código de pareamento. Verifique se o número está correto e se a instância está desconectada.",
-          hint: "Tente desconectar a instância primeiro e depois gerar o código novamente."
-        });
-      }
-
-      console.log(`⚠️ Pairing code not found in response:`, responseData);
-      return res.json({
-        code: null,
-        message: "Código de pareamento não encontrado na resposta. Verifique se a instância está desconectada.",
-        rawResponse: responseData
-      });
-
-    } catch (error: any) {
-      console.error("Error getting pairing code:", error);
-      res.status(500).json({
-        message: "Erro ao gerar código de pareamento",
-        details: error.message
-      });
-    }
+    res.status(400).json({
+      message: "A API oficial da Meta não utiliza código de pareamento. Configure o número via Meta Business Manager e informe o Phone Number ID ao criar a instância."
+    });
   });
 
-  // Refresh instance status from UAZAPI
+  // Refresh instance status from Meta Cloud API
   app.get('/api/company/whatsapp/instances/:instanceName/refresh-status', async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
-      if (!companyId) {
-        return res.status(401).json({ message: "Não autenticado" });
-      }
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
 
       const instanceName = req.params.instanceName;
-
-      // Verify instance belongs to company
       const instance = await storage.getWhatsappInstanceByName(instanceName, companyId);
-      if (!instance) {
-        return res.status(404).json({ message: "Instância não encontrada" });
-      }
+      if (!instance) return res.status(404).json({ message: "Instância não encontrada" });
 
-      if (!instance.instanceToken) {
-        return res.status(400).json({ message: "Token da instância não encontrado. Recrie a instância." });
+      const inst = instance as any;
+      if (!inst.metaAccessToken || !inst.metaPhoneNumberId || !inst.metaWabaId) {
+        return res.status(400).json({ message: "Credenciais Meta não configuradas. Recrie a instância." });
       }
 
       console.log(`🔄 Refreshing status for instance: ${instanceName}`);
 
-      const uazapi = await getUazapiService();
-      const statusData = await uazapi.getStatus(instance.instanceToken);
-      console.log(`✅ Status retrieved for instance: ${instanceName}`, statusData);
+      const metaService = createMetaWhatsAppService({
+        phoneNumberId: inst.metaPhoneNumberId,
+        wabaId: inst.metaWabaId,
+        accessToken: inst.metaAccessToken,
+      });
 
-      // Map status from UAZAPI response
-      const status = statusData.instance?.status || statusData.status || 'unknown';
+      // Verificar status buscando informações do número
+      const phoneNumbers = await metaService.listPhoneNumbers();
+      const phoneInfo = phoneNumbers.find((p: any) => p.id === inst.metaPhoneNumberId);
 
-      // Update status in database
+      const status = phoneInfo ? 'connected' : 'disconnected';
+      const qualityRating = phoneInfo?.quality_rating || 'unknown';
+
       await storage.updateWhatsappInstance(instance.id, { status });
 
       res.json({
         status,
-        connectionState: statusData
+        qualityRating,
+        displayPhoneNumber: phoneInfo?.display_phone_number || '',
+        verifiedName: phoneInfo?.verified_name || '',
       });
-
     } catch (error: any) {
       console.error("Error refreshing instance status:", error);
-      res.status(500).json({
-        message: "Erro ao atualizar status",
-        details: error.message
-      });
+      res.status(500).json({ message: "Erro ao atualizar status", details: error.message });
     }
   });
 
-  // Configure webhook for WhatsApp instance
+  // Webhook config — na Meta API oficial, webhooks são configurados no App Dashboard
   app.post('/api/company/whatsapp/instances/:id/configure-webhook', async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
-      if (!companyId) {
-        return res.status(401).json({ message: "Não autenticado" });
-      }
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
 
       const instanceId = parseInt(req.params.id);
       const instance = await storage.getWhatsappInstance(instanceId);
-
       if (!instance || instance.companyId !== companyId) {
         return res.status(404).json({ message: "Instância não encontrada" });
       }
 
-      if (!instance.instanceToken) {
-        return res.status(400).json({ message: "Token da instância não encontrado. Recrie a instância." });
-      }
-
-      console.log(`🔧 Configuring webhook for instance: ${instance.instanceName}`);
-
-      // Generate webhook URL (uses system_url for public accessibility)
+      // Na Meta API oficial, webhooks são configurados no App Dashboard da Meta
+      // Aqui apenas atualizamos o registro no banco
       const webhookUrl = await generateWebhookUrl(req, instance.instanceName);
-      console.log(`📡 Webhook URL: ${webhookUrl}`);
-
-      const uazapi = await getUazapiService();
-      const webhookData = await uazapi.configureWebhook(instance.instanceToken, {
-        url: webhookUrl,
-        events: ['messages', 'connection'],
-        excludeMessages: ['wasSentByApi']
-      });
-
-      console.log(`✅ Webhook configured successfully for instance: ${instance.instanceName}`);
-
-      // Update instance with webhook URL
       await storage.updateWhatsappInstance(instanceId, { webhook: webhookUrl });
 
       res.json({
-        message: "Webhook configurado com sucesso",
+        message: "Webhook registrado. Na API oficial da Meta, configure o webhook no App Dashboard em developers.facebook.com",
         webhookUrl,
-        uazapiResponse: webhookData
+        note: "O webhook da Meta é global (configurado no App). Este endpoint apenas registra a URL no banco para referência.",
       });
-
     } catch (error: any) {
       console.error("Error configuring webhook:", error);
-      res.status(500).json({
-        message: "Erro ao configurar webhook",
-        details: error.message
-      });
+      res.status(500).json({ message: "Erro ao configurar webhook", details: error.message });
     }
   });
 
@@ -19282,17 +19154,8 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
 
       console.log(`🗑️ Deleting WhatsApp instance: ${instance.instanceName}`);
 
-      // Delete from UAZAPI first (if we have a token)
-      if (instance.instanceToken) {
-        try {
-          const uazapi = await getUazapiService();
-          await uazapi.deleteInstance(instance.instanceToken);
-          console.log(`✅ Instance deleted from UAZAPI`);
-        } catch (uazapiError) {
-          console.error("⚠️ Error deleting from UAZAPI:", uazapiError);
-          // Continue with database deletion even if UAZAPI fails
-        }
-      }
+      // Na Meta API oficial, o número não é "deletado" — apenas removemos do banco
+      // O número continua registrado no Meta Business Manager
 
       // Delete from database
       await storage.deleteWhatsappInstance(instanceId);
@@ -19305,8 +19168,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     }
   });
 
-  // Configure WhatsApp instance settings
-  // UAZAPI não tem /settings/set genérico — configura webhook e delay settings
+  // Configure WhatsApp instance settings (Meta Cloud API)
   app.post('/api/company/whatsapp/instances/:instanceName/configure', async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
@@ -19315,70 +19177,52 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       }
 
       const { instanceName } = req.params;
-
       console.log(`⚙️ Configuring WhatsApp instance: ${instanceName}`);
-
-      // Get global settings for UAZAPI
-      const globalSettings = await storage.getGlobalSettings();
-      if (!globalSettings?.uazapiUrl || !globalSettings?.uazapiAdminToken) {
-        return res.status(400).json({ message: "Configurações da UAZAPI não encontradas" });
-      }
 
       // Verify instance belongs to company
       const instances = await storage.getWhatsappInstancesByCompany(companyId);
-      const instance = instances.find(i => i.instanceName === instanceName);
+      const instance = instances.find(i => i.instanceName === instanceName) as any;
 
       if (!instance) {
         return res.status(404).json({ message: "Instância não encontrada" });
       }
 
-      if (!instance.instanceToken) {
-        return res.status(400).json({ message: "Token da instância não encontrado. Recrie a instância." });
+      if (!instance.metaAccessToken || !instance.metaPhoneNumberId || !instance.metaWabaId) {
+        return res.status(400).json({ message: "Credenciais Meta não configuradas. Recrie a instância com as credenciais da API oficial." });
       }
 
-      const uazapi = await getUazapiService();
       const results: any = {};
 
-      // 1. Configure webhook (most important)
+      // 1. Register webhook URL in database
       try {
         const webhookUrl = await generateWebhookUrl(req, instanceName);
-        await uazapi.configureWebhook(instance.instanceToken, {
-          url: webhookUrl,
-          events: ['messages', 'connection'],
-          excludeMessages: ['wasSentByApi']
-        });
-        results.webhook = { success: true, url: webhookUrl };
-        console.log(`✅ Webhook configured: ${webhookUrl}`);
-
-        // Update webhook URL in database
         await storage.updateWhatsappInstance(instance.id, { webhook: webhookUrl });
+        results.webhook = { success: true, url: webhookUrl };
+        console.log(`✅ Webhook URL registered: ${webhookUrl}`);
       } catch (webhookError: any) {
-        console.error(`❌ Webhook configure error:`, webhookError);
         results.webhook = { success: false, error: webhookError.message };
       }
 
-      // 2. Configure delay settings (optional)
+      // 2. Verify Meta API connection
       try {
-        const baseUrl = globalSettings.uazapiUrl.replace(/\/+$/, '');
-        const delayRes = await fetch(`${baseUrl}/instance/updateDelaySettings`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'token': instance.instanceToken },
-          body: JSON.stringify({ msg_delay_min: 1, msg_delay_max: 3 })
+        const metaService = createMetaWhatsAppService({
+          phoneNumberId: instance.metaPhoneNumberId,
+          wabaId: instance.metaWabaId,
+          accessToken: instance.metaAccessToken,
         });
-        if (delayRes.ok) {
-          results.delay = { success: true };
-          console.log(`✅ Delay settings configured`);
+        const phoneNumbers = await metaService.listPhoneNumbers();
+        const phoneInfo = phoneNumbers.find((p: any) => p.id === instance.metaPhoneNumberId);
+        results.status = {
+          connected: !!phoneInfo,
+          qualityRating: phoneInfo?.quality_rating || 'unknown',
+          displayPhoneNumber: phoneInfo?.display_phone_number || '',
+        };
+        if (phoneInfo) {
+          await storage.updateWhatsappInstance(instance.id, { status: 'connected' });
         }
-      } catch (delayError) {
-        console.warn(`⚠️ Delay settings failed (non-critical):`, delayError);
-      }
-
-      // 3. Get instance status
-      try {
-        const status = await uazapi.getStatus(instance.instanceToken);
-        results.status = status;
-      } catch (statusError) {
-        console.warn(`⚠️ Could not get status:`, statusError);
+      } catch (statusError: any) {
+        console.warn(`⚠️ Could not verify Meta API status:`, statusError);
+        results.status = { connected: false, error: statusError.message };
       }
 
       const allSuccess = results.webhook?.success !== false;
@@ -19939,12 +19783,12 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         });
       }
       
-      // Get global settings for UAZAPI
+      // Get global settings for Meta API
       const settings = await storage.getGlobalSettings();
-      if (!settings?.uazapiUrl || !settings?.uazapiAdminToken) {
+      if (!settings?.metaAppId || !settings?.metaAppSecret) {
         return res.status(400).json({
           success: false,
-          message: "Configurações da UAZAPI não encontradas"
+          message: "Configurações da Meta API não encontradas"
         });
       }
       
@@ -19956,19 +19800,19 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
 
       const testMessage = `🎂 TESTE - ${activeMessage.messageTemplate.replace('{NOME}', 'Cliente Teste').replace('{EMPRESA}', 'Empresa Teste')}`;
 
-      // Send via UAZAPI
+      // Send via Meta API
       // Send "typing" presence and wait 2 seconds
-      await uazapiSendTyping(whatsappInstance.instanceName, cleanPhone, 2000);
+      await metaSendTyping(whatsappInstance.instanceName, cleanPhone, 2000);
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      const response = await uazapiSendText(whatsappInstance.instanceName, cleanPhone, testMessage);
+      const response = await metaSendText(whatsappInstance.instanceName, cleanPhone, testMessage);
 
       if (!response.ok) {
         console.log(`❌ API Error - Status: ${response.status}`);
 
         return res.json({
           success: false,
-          message: `Erro da UAZAPI: Status ${response.status}`
+          message: `Erro da Meta API: Status ${response.status}`
         });
       }
       

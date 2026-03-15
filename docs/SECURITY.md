@@ -10,7 +10,7 @@
 | MYSQL_PASSWORD | A cada 90 dias | Alta |
 | OPENAI_API_KEY | A cada 180 dias ou se comprometida | Media |
 | ASAAS_API_KEY | A cada 180 dias ou se comprometida | Media |
-| UAZAPI_ADMIN_TOKEN | A cada 180 dias | Media |
+| META_APP_SECRET | A cada 180 dias | Media |
 
 ### Procedimento de Rotação
 

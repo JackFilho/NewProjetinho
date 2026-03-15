@@ -207,10 +207,13 @@ async function processCampaign(campaign: any) {
       return;
     }
 
-    // Get global UAZAPI settings
-    const settings = await storage.getGlobalSettings();
-    if (!settings?.uazapiUrl || !settings?.uazapiAdminToken) {
-      console.error("❌ UAZAPI not configured");
+    // Get Meta API credentials from instance
+    const metaPhoneNumberId = whatsappInstance.meta_phone_number_id;
+    const metaWabaId = whatsappInstance.meta_waba_id;
+    const metaAccessToken = whatsappInstance.meta_access_token;
+
+    if (!metaPhoneNumberId || !metaWabaId || !metaAccessToken) {
+      console.error("❌ Meta API credentials not configured for instance:", whatsappInstance.instance_name);
       await pool.execute(
         'UPDATE message_campaigns SET status = ? WHERE id = ?',
         ['failed', campaign.id]
@@ -218,18 +221,12 @@ async function processCampaign(campaign: any) {
       return;
     }
 
-    const instanceToken = whatsappInstance.instance_token;
-    if (!instanceToken) {
-      console.error("❌ Instance token not found for instance:", whatsappInstance.instance_name);
-      await pool.execute(
-        'UPDATE message_campaigns SET status = ? WHERE id = ?',
-        ['failed', campaign.id]
-      );
-      return;
-    }
-
-    const { createUazapiService } = await import('./services/uazapi');
-    const uazapi = createUazapiService(settings.uazapiUrl!, settings.uazapiAdminToken!);
+    const { createMetaWhatsAppService } = await import('./services/meta-whatsapp');
+    const metaService = createMetaWhatsAppService({
+      phoneNumberId: metaPhoneNumberId,
+      wabaId: metaWabaId,
+      accessToken: metaAccessToken,
+    });
 
     // Send messages to each client
     for (const client of clients) {
@@ -241,7 +238,7 @@ async function processCampaign(campaign: any) {
         }
 
         try {
-          await uazapi.sendText(instanceToken, { number: formattedPhone, text: campaign.message });
+          await metaService.sendText({ to: formattedPhone, text: campaign.message });
           sentCount++;
           console.log(`✅ Message sent to ${client.name} (${formattedPhone})`);
         } catch (sendError: any) {

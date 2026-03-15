@@ -176,8 +176,10 @@ export default function SettingsPage() {
       backgroundColor: "#f8fafc",
       textColor: "#1e293b",
       tourColor: "#b845dc",
-      uazapiUrl: "",
-      uazapiAdminToken: "",
+      metaAppId: "",
+      metaAppSecret: "",
+      metaWebhookVerifyToken: "",
+      metaBusinessId: "",
       defaultAiPrompt: "",
       smtpHost: "",
       smtpPort: "",
@@ -200,8 +202,10 @@ export default function SettingsPage() {
       backgroundColor: settings.backgroundColor,
       textColor: settings.textColor,
       tourColor: (settings as any).tourColor || "#b845dc",
-      uazapiUrl: settings.uazapiUrl || "",
-      uazapiAdminToken: settings.uazapiAdminToken || "",
+      metaAppId: settings.metaAppId || "",
+      metaAppSecret: settings.metaAppSecret || "",
+      metaWebhookVerifyToken: settings.metaWebhookVerifyToken || "",
+      metaBusinessId: settings.metaBusinessId || "",
       defaultAiPrompt: (settings as any).defaultAiPrompt || "",
       smtpHost: (settings as any).smtpHost || "",
       smtpPort: (settings as any).smtpPort || "",
@@ -321,9 +325,9 @@ export default function SettingsPage() {
                 <Palette className="w-4 h-4" />
                 Aparência
               </TabsTrigger>
-              <TabsTrigger value="uazapi" className="flex items-center gap-2">
+              <TabsTrigger value="meta-whatsapp" className="flex items-center gap-2">
                 <MessageSquare className="w-4 h-4" />
-                UAZAPI
+                Meta WhatsApp
               </TabsTrigger>
               <TabsTrigger value="smtp" className="flex items-center gap-2">
                 <Globe className="w-4 h-4" />
@@ -760,26 +764,26 @@ export default function SettingsPage() {
               </Card>
             </TabsContent>
 
-            <TabsContent value="uazapi" className="space-y-6">
+            <TabsContent value="meta-whatsapp" className="space-y-6">
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <MessageSquare className="w-5 h-5" />
-                    UAZAPI
+                    Meta WhatsApp Cloud API
                   </CardTitle>
                   <CardDescription>
-                    Configure a integração com a UAZAPI para WhatsApp.
+                    Configure a integração com a API oficial da Meta para WhatsApp (Tech Provider).
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <FormField
                     control={form.control}
-                    name="uazapiUrl"
+                    name="metaAppId"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>URL da UAZAPI</FormLabel>
+                        <FormLabel>App ID</FormLabel>
                         <FormControl>
-                          <Input placeholder="https://api.uazapi.com" {...field} />
+                          <Input placeholder="ID do App no Meta Developer Portal" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -788,16 +792,44 @@ export default function SettingsPage() {
 
                   <FormField
                     control={form.control}
-                    name="uazapiAdminToken"
+                    name="metaAppSecret"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Admin Token</FormLabel>
+                        <FormLabel>App Secret</FormLabel>
                         <FormControl>
                           <Input
                             type="password"
-                            placeholder="Digite o admin token da UAZAPI"
+                            placeholder="App Secret do Meta Developer Portal"
                             {...field}
                           />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="metaWebhookVerifyToken"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Webhook Verify Token</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Token secreto para verificação de webhooks" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="metaBusinessId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Business Manager ID</FormLabel>
+                        <FormControl>
+                          <Input placeholder="ID do Business Manager da Meta" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -828,10 +860,12 @@ export default function SettingsPage() {
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-4">
                     <h4 className="font-medium text-blue-900 mb-2">Como configurar:</h4>
                     <ul className="text-sm text-blue-800 space-y-1">
-                      <li>• <strong>URL da API:</strong> URL base da sua instância UAZAPI</li>
-                      <li>• <strong>Exemplo:</strong> https://api.uazapi.com</li>
-                      <li>• <strong>Admin Token:</strong> Token de administrador da UAZAPI para gerenciar instâncias</li>
-                      <li>• Se o teste falhar, verifique se a URL e o Admin Token estão corretos</li>
+                      <li>• Acesse <strong>developers.facebook.com</strong> e crie um App do tipo Business</li>
+                      <li>• Adicione o produto <strong>WhatsApp</strong> ao app</li>
+                      <li>• <strong>App ID e App Secret</strong> estão no dashboard do app</li>
+                      <li>• <strong>Webhook Verify Token</strong> é um token secreto que você define (usado para verificar webhooks)</li>
+                      <li>• <strong>Business Manager ID</strong> está em business.facebook.com nas configurações</li>
+                      <li>• Consulte o guia completo em <code className="bg-gray-100 px-1 rounded">docs/GUIA-META-TECHPROVIDER.md</code></li>
                     </ul>
                   </div>
 
@@ -841,7 +875,7 @@ export default function SettingsPage() {
                       variant="outline"
                       onClick={async () => {
                         try {
-                          const response = await fetch('/api/admin/uazapi/test', {
+                          const response = await fetch('/api/admin/meta/test', {
                             credentials: 'include'
                           });
                           const result = await response.json();
