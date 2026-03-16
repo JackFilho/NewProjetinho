@@ -69,7 +69,7 @@ app.use(express.json({
   limit: '50mb',
   verify: (req: any, _res, buf) => {
     // Preserve raw body for webhook signature validation (X-Hub-Signature-256)
-    if (req.url?.includes('/api/webhook/whatsapp/')) {
+    if (req.url?.includes('/api/webhook/whatsapp/') || req.url?.includes('/api/webhook/meta')) {
       req.rawBody = buf.toString('utf8');
     }
   },

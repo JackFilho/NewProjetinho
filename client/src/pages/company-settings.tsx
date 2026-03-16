@@ -20,6 +20,7 @@ import { useCompanyAuth } from "@/hooks/useCompanyAuth";
 import { FloatingHelpButton } from "@/components/floating-help-button";
 import { z } from "zod";
 import { companyProfileSchema, companyPasswordSchema, companyAiAgentSchema, companyHumanRequestSchema, companyCourseNotificationSchema, companyIgnoredNumbersSchema, whatsappInstanceSchema, webhookConfigSchema, companySettingsSchema, asaasConfigSchema } from "@/lib/validations";
+import { MetaEmbeddedSignup } from "@/components/meta-embedded-signup";
 
 // Função formatDocument local para evitar problemas de importação
 function formatDocument(value: string): string {
@@ -1892,6 +1893,13 @@ export default function CompanySettings() {
               </Form>
             </CardContent>
           </Card>
+
+          {/* Embedded Signup - Conexão oficial Meta */}
+          <MetaEmbeddedSignup
+            onComplete={() => {
+              queryClient.invalidateQueries({ queryKey: ["/api/company/whatsapp/instances"] });
+            }}
+          />
 
           <Card>
             <CardHeader>

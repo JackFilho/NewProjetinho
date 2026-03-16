@@ -263,6 +263,9 @@ export const whatsappInstances = mysqlTable("whatsapp_instances", {
   displayPhoneNumber: varchar("display_phone_number", { length: 20 }),
   qualityRating: varchar("quality_rating", { length: 20 }),
   messagingLimit: varchar("messaging_limit", { length: 20 }),
+  // Onboarding mode: 'embedded_signup' | 'manual' | null
+  onboardingMode: varchar("onboarding_mode", { length: 30 }),
+  verifiedName: varchar("verified_name", { length: 255 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });

@@ -966,6 +966,20 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
+  // Find WhatsApp instance by Meta Phone Number ID (used by unified Meta webhook)
+  async findInstanceByMetaPhoneNumberId(phoneNumberId: string): Promise<WhatsappInstance | undefined> {
+    try {
+      const [instance] = await db
+        .select()
+        .from(whatsappInstances)
+        .where(eq(whatsappInstances.metaPhoneNumberId, phoneNumberId));
+      return instance;
+    } catch (error: any) {
+      console.error("Error finding WhatsApp instance by Phone Number ID:", error);
+      return undefined;
+    }
+  }
+
   async createWhatsappInstance(instanceData: InsertWhatsappInstance): Promise<WhatsappInstance> {
     try {
       await db
