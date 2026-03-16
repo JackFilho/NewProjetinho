@@ -8920,9 +8920,9 @@ if (ignoredNumbers !== undefined) {
 
                   await metaSendTyping(instanceName, formattedPhoneForFallback, 2000);
                   await new Promise(resolve => setTimeout(resolve, 2000));
-                  const fallbackMeta APIResponse = await metaSendText(instanceName, formattedPhoneForFallback, fallbackResponse);
+                  const fallbackMetaAPIResponse = await metaSendText(instanceName, formattedPhoneForFallback, fallbackResponse);
 
-                  if (fallbackMeta APIResponse.ok) {
+                  if (fallbackMetaAPIResponse.ok) {
                     console.log('✅ Fallback response sent for failed audio transcription');
                     // Registrar no cache para detectar eco no Chatwoot
                     if (conversation) {
