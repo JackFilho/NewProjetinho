@@ -949,3 +949,33 @@ export const insertMessageDeliveryStatusSchema = createInsertSchema(messageDeliv
 export type ChatwootConversationMap = typeof chatwootConversationMap.$inferSelect;
 export type MetaMessageTemplate = typeof metaMessageTemplates.$inferSelect;
 export type MessageDeliveryStatus = typeof messageDeliveryStatus.$inferSelect;
+
+// ===== Webhook Events (auditoria e idempotência) =====
+export const webhookEvents = mysqlTable("webhook_events", {
+  id: serial("id").primaryKey(),
+  companyId: int("company_id"),
+  instanceName: varchar("instance_name", { length: 255 }).notNull(),
+  eventType: varchar("event_type", { length: 100 }).notNull(),
+  messageId: varchar("message_id", { length: 255 }),
+  payload: json("payload"),
+  processed: boolean("processed").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertWebhookEventSchema = createInsertSchema(webhookEvents).omit({ id: true, createdAt: true });
+export type WebhookEvent = typeof webhookEvents.$inferSelect;
+
+// ===== Onboarding Logs (Embedded Signup / Tech Provider) =====
+export const onboardingLogs = mysqlTable("onboarding_logs", {
+  id: serial("id").primaryKey(),
+  companyId: int("company_id").notNull(),
+  step: varchar("step", { length: 100 }).notNull(),
+  status: varchar("status", { length: 50 }).notNull().default("pending"),
+  details: json("details"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
+export const insertOnboardingLogSchema = createInsertSchema(onboardingLogs).omit({ id: true, createdAt: true, updatedAt: true });
+export type OnboardingLog = typeof onboardingLogs.$inferSelect;

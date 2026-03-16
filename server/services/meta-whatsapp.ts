@@ -239,7 +239,38 @@ export class MetaWhatsAppService {
   }
 
   /** Enviar mensagem template (necessário para iniciar conversas fora da janela de 24h) */
+  /** Validar variáveis de template antes do envio */
+  static validateTemplateVariables(components?: MetaTemplateComponent[]): string[] {
+    const errors: string[] = [];
+    if (!components) return errors;
+
+    for (const comp of components) {
+      if (!comp.parameters) continue;
+      for (let i = 0; i < comp.parameters.length; i++) {
+        const param = comp.parameters[i];
+        if (param.type === 'text') {
+          if (!param.text || param.text.trim() === '') {
+            errors.push(`Componente ${comp.type}[${i}]: parâmetro text está vazio`);
+          }
+        } else if (param.type === 'image' && !param.image?.link) {
+          errors.push(`Componente ${comp.type}[${i}]: image.link é obrigatório`);
+        } else if (param.type === 'document' && !param.document?.link) {
+          errors.push(`Componente ${comp.type}[${i}]: document.link é obrigatório`);
+        } else if (param.type === 'video' && !param.video?.link) {
+          errors.push(`Componente ${comp.type}[${i}]: video.link é obrigatório`);
+        }
+      }
+    }
+    return errors;
+  }
+
   async sendTemplate(options: MetaSendTemplateOptions): Promise<MetaMessageResponse> {
+    // Validate template variables before sending
+    const validationErrors = MetaWhatsAppService.validateTemplateVariables(options.components);
+    if (validationErrors.length > 0) {
+      throw new Error(`Template validation failed: ${validationErrors.join('; ')}`);
+    }
+
     const payload: any = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',

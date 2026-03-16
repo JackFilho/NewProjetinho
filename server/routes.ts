@@ -45,6 +45,22 @@ import nodemailer from "nodemailer";
 import rateLimit from "express-rate-limit";
 import { createMetaWhatsAppService, MetaWhatsAppService } from "./services/meta-whatsapp";
 import { createWhatsAppProvider, IWhatsAppProvider } from "./services/whatsapp-provider";
+import { webhookEvents, messageDeliveryStatus, metaMessageTemplates } from "@shared/schema";
+
+// ===== Webhook Idempotency Cache =====
+// In-memory Set with TTL to prevent duplicate message processing
+const processedWebhookMessages = new Map<string, number>();
+const WEBHOOK_DEDUP_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// Cleanup stale entries every 2 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, timestamp] of processedWebhookMessages) {
+    if (now - timestamp > WEBHOOK_DEDUP_TTL_MS) {
+      processedWebhookMessages.delete(key);
+    }
+  }
+}, 2 * 60 * 1000);
 
 // Helper para obter o provider Meta de uma instância pelo nome
 async function getMetaProvider(instanceName: string): Promise<IWhatsAppProvider | null> {
@@ -7452,6 +7468,33 @@ if (ignoredNumbers !== undefined) {
       const { instanceName } = req.params;
       const webhookData = req.body;
 
+      // ===== Webhook Signature Validation (X-Hub-Signature-256) =====
+      const signature = req.headers['x-hub-signature-256'] as string;
+      if (signature) {
+        // Look up the app secret: first from instance, then from global settings
+        let appSecret: string | undefined;
+        try {
+          const inst = await storage.getWhatsappInstanceByNameOnly(instanceName);
+          appSecret = inst?.metaAppSecret || undefined;
+          if (!appSecret) {
+            const globalSettings = await storage.getGlobalSettings();
+            appSecret = globalSettings?.metaAppSecret || undefined;
+          }
+        } catch (e) {
+          console.error('⚠️ Error fetching app secret for webhook validation:', e);
+        }
+
+        if (appSecret) {
+          const rawBody = typeof req.rawBody === 'string' ? req.rawBody : JSON.stringify(webhookData);
+          const isValid = MetaWhatsAppService.validateWebhookSignature(rawBody, signature, appSecret);
+          if (!isValid) {
+            console.error('❌ [SECURITY] Invalid webhook signature for instance:', instanceName);
+            return res.status(401).json({ error: 'Invalid signature' });
+          }
+          console.log('✅ Webhook signature validated successfully');
+        }
+      }
+
       // Meta API uses "EventType" (PascalCase), normalize to a single variable
       const eventType = webhookData.EventType || webhookData.event || '';
 
@@ -7459,6 +7502,22 @@ if (ignoredNumbers !== undefined) {
       console.log('📋 Instance:', instanceName);
       console.log('📋 EventType:', eventType);
       console.log('📋 Payload keys:', Object.keys(webhookData).join(', '));
+
+      // ===== Log webhook event for audit =====
+      try {
+        const inst = await storage.getWhatsappInstanceByNameOnly(instanceName);
+        await db.insert(webhookEvents).values({
+          companyId: inst?.companyId || null,
+          instanceName,
+          eventType: eventType || 'unknown',
+          messageId: webhookData?.message?.messageid || webhookData?.message?.id || webhookData?.data?.key?.id || null,
+          payload: webhookData,
+          processed: false,
+        });
+      } catch (logErr) {
+        // Non-blocking: don't fail webhook if logging fails
+        console.error('⚠️ Failed to log webhook event:', logErr);
+      }
 
       // Handle CONNECTION events to update instance status
       // Meta API sends EventType: "connection", legacy used "connection.update" or "CONNECTION_UPDATE"
@@ -7587,6 +7646,40 @@ if (ignoredNumbers !== undefined) {
         }
         
         return res.json({ received: true, processed: true, type: 'qrcode' });
+      }
+
+      // ===== Handle delivery status updates (sent, delivered, read, failed) =====
+      const isStatusEvent = eventType === 'message.status' || eventType === 'messages.status'
+        || eventType === 'status' || eventType === 'MESSAGE_STATUS';
+      // Also handle Meta Cloud API format where statuses come inside entry[].changes[].value.statuses[]
+      const metaStatuses = webhookData?.entry?.[0]?.changes?.[0]?.value?.statuses;
+
+      if (isStatusEvent || metaStatuses) {
+        console.log('📊 [DELIVERY STATUS] Processing delivery status event');
+        try {
+          const statusList = metaStatuses || (webhookData.data ? [webhookData.data] : [webhookData]);
+          for (const statusItem of statusList) {
+            const providerMsgId = statusItem.id || statusItem.messageId || statusItem.key?.id || '';
+            const deliveryStatus = statusItem.status || statusItem.state || 'unknown';
+            const errorCode = statusItem.errors?.[0]?.code || statusItem.errorCode || null;
+            const errorMsg = statusItem.errors?.[0]?.title || statusItem.errorMessage || null;
+
+            if (providerMsgId) {
+              await db.insert(messageDeliveryStatus).values({
+                messageId: 0, // will be linked later if needed
+                providerMessageId: providerMsgId,
+                providerType: 'meta_official',
+                status: deliveryStatus,
+                errorCode: errorCode,
+                errorMessage: errorMsg,
+              });
+              console.log(`📊 [DELIVERY STATUS] ${providerMsgId} -> ${deliveryStatus}`);
+            }
+          }
+        } catch (statusErr) {
+          console.error('⚠️ Error processing delivery status:', statusErr);
+        }
+        return res.status(200).json({ received: true, processed: true, type: 'delivery_status' });
       }
 
       // Check if it's a message event (handle Meta API and legacy formats)
@@ -7750,6 +7843,17 @@ if (ignoredNumbers !== undefined) {
       
       if (!message) {
         return res.status(200).json({ received: true, processed: false, reason: 'Message object is null' });
+      }
+
+      // ===== Idempotency: skip already-processed messages =====
+      const webhookMsgId = message?.key?.id;
+      if (webhookMsgId) {
+        const dedupKey = `${instanceName}:${webhookMsgId}`;
+        if (processedWebhookMessages.has(dedupKey)) {
+          console.log('🔁 [DEDUP] Mensagem já processada, ignorando:', webhookMsgId);
+          return res.status(200).json({ received: true, processed: false, reason: 'Duplicate message (idempotency)' });
+        }
+        processedWebhookMessages.set(dedupKey, Date.now());
       }
 
       // ========================================
@@ -13640,11 +13744,40 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
-  // GET endpoint for webhook verification
-  app.get('/api/webhook/whatsapp/:instanceName', (req, res) => {
+  // GET endpoint for webhook verification (Meta hub.verify_token challenge)
+  app.get('/api/webhook/whatsapp/:instanceName', async (req, res) => {
     const { instanceName } = req.params;
+    const mode = req.query['hub.mode'] as string;
+    const token = req.query['hub.verify_token'] as string;
+    const challenge = req.query['hub.challenge'] as string;
+
     console.log('🔔 GET request to webhook for instance:', instanceName);
     console.log('🔍 Query params:', req.query);
+
+    // If Meta sends hub.mode=subscribe, validate the verify token
+    if (mode === 'subscribe' && token && challenge) {
+      let verifyToken: string | undefined;
+      try {
+        const inst = await storage.getWhatsappInstanceByNameOnly(instanceName);
+        verifyToken = inst?.metaWebhookVerifyToken || undefined;
+        if (!verifyToken) {
+          const globalSettings = await storage.getGlobalSettings();
+          verifyToken = globalSettings?.metaWebhookVerifyToken || undefined;
+        }
+      } catch (e) {
+        console.error('⚠️ Error fetching verify token:', e);
+      }
+
+      if (verifyToken && token === verifyToken) {
+        console.log('✅ Webhook Meta verificado com sucesso para:', instanceName);
+        return res.status(200).send(challenge);
+      } else {
+        console.error('❌ Falha na verificação do webhook Meta. Token inválido para:', instanceName);
+        return res.status(403).send('Forbidden');
+      }
+    }
+
+    // Fallback: simple health check
     res.status(200).send('Webhook endpoint is active');
   });
 
@@ -19779,8 +19912,69 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     }
   });
 
+  // Sync Meta templates to local database
+  app.post('/api/company/meta-templates/sync', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const instances = await storage.getWhatsappInstancesByCompany(companyId);
+      const instance = instances[0];
+
+      if (!instance?.metaPhoneNumberId || !instance?.metaAccessToken || !instance?.metaWabaId) {
+        return res.status(400).json({ error: 'Instância WhatsApp Meta não configurada.' });
+      }
+
+      const metaService = createMetaWhatsAppService({
+        phoneNumberId: instance.metaPhoneNumberId,
+        wabaId: instance.metaWabaId,
+        accessToken: instance.metaAccessToken,
+      });
+
+      const remoteTemplates = await metaService.listTemplates();
+
+      let synced = 0;
+      for (const tpl of remoteTemplates) {
+        // Upsert: check if exists, update or insert
+        const [existing] = await db.select().from(metaMessageTemplates)
+          .where(and(
+            eq(metaMessageTemplates.companyId, companyId),
+            eq(metaMessageTemplates.templateId, tpl.id || ''),
+          )).limit(1);
+
+        if (existing) {
+          await db.update(metaMessageTemplates)
+            .set({
+              name: tpl.name,
+              status: tpl.status,
+              category: tpl.category,
+              language: tpl.language,
+              components: tpl.components,
+            })
+            .where(eq(metaMessageTemplates.id, existing.id));
+        } else {
+          await db.insert(metaMessageTemplates).values({
+            companyId,
+            wabaId: instance.metaWabaId!,
+            templateId: tpl.id || tpl.name,
+            name: tpl.name,
+            category: tpl.category,
+            language: tpl.language,
+            status: tpl.status,
+            components: tpl.components,
+          });
+        }
+        synced++;
+      }
+
+      console.log(`✅ Synced ${synced} templates for company ${companyId}`);
+      res.json({ synced, total: remoteTemplates.length });
+    } catch (error: any) {
+      console.error('Error syncing Meta templates:', error);
+      res.status(500).json({ error: 'Erro ao sincronizar templates: ' + error.message });
+    }
+  });
+
   // Create a new Meta message template
-  app.post('/api/company/meta-templates', isCompanyAuthenticated, async (req, res) => {
+  app.post('/api/company/meta-templates', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
       const { name, category, language, components } = req.body;

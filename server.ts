@@ -65,7 +65,15 @@ app.use(session({
 }));
 
 // Middleware
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({
+  limit: '50mb',
+  verify: (req: any, _res, buf) => {
+    // Preserve raw body for webhook signature validation (X-Hub-Signature-256)
+    if (req.url?.includes('/api/webhook/whatsapp/')) {
+      req.rawBody = buf.toString('utf8');
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: true }));
 
 // Serve static files from uploads directory
