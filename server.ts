@@ -33,6 +33,9 @@ import { normalizePhone, formatBrazilianPhone } from './utils/phone.js';
 // Import WhatsApp provider
 import { createWhatsAppProvider } from './services/whatsapp-provider.js';
 
+// Import Meta webhook handler
+import { createMetaWebhookRouter } from './services/meta-webhook-handler.js';
+
 // Import bcrypt for password hashing
 import bcrypt from 'bcrypt';
 
@@ -69,7 +72,7 @@ app.use(express.json({
   limit: '50mb',
   verify: (req: any, _res, buf) => {
     // Preserve raw body for webhook signature validation (X-Hub-Signature-256)
-    if (req.url?.includes('/api/webhook/whatsapp/') || req.url?.includes('/api/webhook/meta')) {
+    if (req.url?.includes('/api/webhook/whatsapp/') || req.url?.includes('/api/webhook/meta') || req.url?.includes('/webhooks/meta/')) {
       req.rawBody = buf.toString('utf8');
     }
   },
@@ -171,6 +174,38 @@ function formatDateBrazil(date: Date): string {
   const brazilDate = new Date(brazilDateStr);
   return formatDateLocal(brazilDate);
 }
+
+// ===== Meta WhatsApp Webhook (unified, production-ready) =====
+// Registrado ANTES das demais rotas para não passar pelo session/auth middleware
+const metaWebhookRouter = createMetaWebhookRouter({
+  getGlobalSettings: () => storage.getGlobalSettings(),
+  findInstanceByMetaPhoneNumberId: (phoneNumberId: string) => storage.findInstanceByMetaPhoneNumberId(phoneNumberId),
+  getCompany: (companyId: number) => storage.getCompany(companyId),
+  findOrCreateConversation: async (companyId, instanceId, phone, contactName, providerType) => {
+    let conv = await storage.getConversation(companyId, instanceId, phone);
+    if (!conv) {
+      conv = await storage.createConversation({
+        companyId,
+        whatsappInstanceId: instanceId,
+        phoneNumber: phone,
+        contactName,
+        providerType,
+        status: 'active',
+      });
+    }
+    return conv;
+  },
+  saveMessage: async (conversationId, role, content, messageId, messageType) => {
+    return storage.createMessage({
+      conversationId,
+      role,
+      content,
+      providerMessageId: messageId,
+      messageType,
+    });
+  },
+});
+app.use(metaWebhookRouter);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

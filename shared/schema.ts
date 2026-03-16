@@ -953,15 +953,25 @@ export type ChatwootConversationMap = typeof chatwootConversationMap.$inferSelec
 export type MetaMessageTemplate = typeof metaMessageTemplates.$inferSelect;
 export type MessageDeliveryStatus = typeof messageDeliveryStatus.$inferSelect;
 
-// ===== Webhook Events (auditoria e idempotência) =====
+// ===== Webhook Events (auditoria, idempotência e multi-tenant) =====
 export const webhookEvents = mysqlTable("webhook_events", {
   id: serial("id").primaryKey(),
   companyId: int("company_id"),
   instanceName: varchar("instance_name", { length: 255 }).notNull(),
+  provider: varchar("provider", { length: 50 }).notNull().default("meta_cloud_api"),
   eventType: varchar("event_type", { length: 100 }).notNull(),
   messageId: varchar("message_id", { length: 255 }),
+  // Multi-tenant routing fields
+  wabaId: varchar("waba_id", { length: 100 }),
+  phoneNumberId: varchar("phone_number_id", { length: 100 }),
+  // Payload & headers
   payload: json("payload"),
+  headersJson: json("headers_json"),
+  // Processing lifecycle
+  processingStatus: varchar("processing_status", { length: 30 }).notNull().default("pending"),
   processed: boolean("processed").default(false),
+  processedAt: timestamp("processed_at"),
+  errorMessage: text("error_message"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

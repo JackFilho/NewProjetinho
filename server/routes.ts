@@ -45,7 +45,6 @@ import nodemailer from "nodemailer";
 import rateLimit from "express-rate-limit";
 import { createMetaWhatsAppService, MetaWhatsAppService } from "./services/meta-whatsapp";
 import { createWhatsAppProvider, IWhatsAppProvider } from "./services/whatsapp-provider";
-import { normalizeMetaWebhook } from "./services/whatsapp-provider";
 import { processEmbeddedSignup } from "./services/meta-embedded-signup";
 import { webhookEvents, messageDeliveryStatus, metaMessageTemplates, onboardingLogs } from "@shared/schema";
 
@@ -19884,182 +19883,20 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
   // ==========================================
   // Meta Unified Webhook (Cloud API padrão)
   // ==========================================
-  // Este é o endpoint que a Meta chama diretamente.
-  // Diferente do /api/webhook/whatsapp/:instanceName (que é para intermediários),
-  // este recebe o payload padrão da Cloud API e roteia pela phone_number_id.
-
-  // GET - Meta Webhook Verification (hub.verify_token challenge)
-  app.get('/api/webhook/meta', async (_req, res) => {
-    const mode = _req.query['hub.mode'] as string;
-    const token = _req.query['hub.verify_token'] as string;
-    const challenge = _req.query['hub.challenge'] as string;
-
-    console.log('🔔 [Meta Webhook] Verification request - mode:', mode);
-
-    if (mode === 'subscribe' && token && challenge) {
-      try {
-        const settings = await storage.getGlobalSettings();
-        const verifyToken = settings?.metaWebhookVerifyToken || '';
-        if (token === verifyToken) {
-          console.log('✅ [Meta Webhook] Verificado com sucesso');
-          return res.status(200).send(challenge);
-        }
-      } catch (e) {
-        console.error('❌ [Meta Webhook] Erro ao buscar verify token:', e);
-      }
-      return res.status(403).send('Forbidden');
-    }
-    res.status(200).send('OK');
+  // Implementação modular em: server/services/meta-webhook-handler.ts
+  // Rotas registradas via createMetaWebhookRouter() no server.ts:
+  //   GET  /webhooks/meta/whatsapp  → Verificação (challenge)
+  //   POST /webhooks/meta/whatsapp  → Eventos (mensagens, status)
+  //   GET  /api/webhook/meta-whatsapp  → Retrocompatibilidade
+  //   POST /api/webhook/meta-whatsapp  → Retrocompatibilidade
+  //
+  // Rota legada /api/webhook/meta → redireciona para /webhooks/meta/whatsapp
+  app.get('/api/webhook/meta', (req, res) => {
+    const qs = new URLSearchParams(req.query as Record<string, string>).toString();
+    res.redirect(301, `/webhooks/meta/whatsapp${qs ? '?' + qs : ''}`);
   });
-
-  // POST - Meta Webhook Events (mensagens, status, etc.)
-  app.post('/api/webhook/meta', async (req: any, res) => {
-    // Responder 200 imediatamente (requisito da Meta - timeout de 20s)
-    res.status(200).send('EVENT_RECEIVED');
-
-    try {
-      const body = req.body;
-
-      // Validar assinatura X-Hub-Signature-256
-      const signature = req.headers['x-hub-signature-256'] as string;
-      if (signature) {
-        const settings = await storage.getGlobalSettings();
-        const appSecret = settings?.metaAppSecret;
-        if (appSecret) {
-          const rawBody = req.rawBody || JSON.stringify(body);
-          const isValid = MetaWhatsAppService.validateWebhookSignature(rawBody, signature, appSecret);
-          if (!isValid) {
-            console.error('❌ [Meta Webhook] Assinatura inválida - possível spoofing');
-            return;
-          }
-          console.log('✅ [Meta Webhook] Assinatura validada');
-        }
-      }
-
-      // Validar que é evento WhatsApp
-      if (body.object !== 'whatsapp_business_account') {
-        console.warn('⚠️ [Meta Webhook] Objeto não reconhecido:', body.object);
-        return;
-      }
-
-      // Log do evento
-      try {
-        const phoneNumberId = body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
-        const inst = phoneNumberId ? await storage.findInstanceByMetaPhoneNumberId(phoneNumberId) : null;
-        await db.insert(webhookEvents).values({
-          companyId: inst?.companyId || null,
-          instanceName: inst?.instanceName || 'meta-unified',
-          eventType: 'meta_cloud_api',
-          messageId: body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id || null,
-          payload: body,
-          processed: false,
-        });
-      } catch (logErr) {
-        console.error('⚠️ [Meta Webhook] Falha ao logar evento:', logErr);
-      }
-
-      // Processar cada entry
-      for (const entry of body.entry || []) {
-        for (const change of entry.changes || []) {
-          if (change.field !== 'messages') continue;
-          const value = change.value;
-          if (!value) continue;
-
-          const phoneNumberId = value.metadata?.phone_number_id;
-          if (!phoneNumberId) continue;
-
-          // Buscar instância pelo Phone Number ID
-          const instance = await storage.findInstanceByMetaPhoneNumberId(phoneNumberId);
-          if (!instance) {
-            console.warn('⚠️ [Meta Webhook] Instância não encontrada para phoneNumberId:', phoneNumberId);
-            continue;
-          }
-
-          // Processar status updates
-          if (value.statuses?.length > 0) {
-            for (const statusItem of value.statuses) {
-              try {
-                await db.insert(messageDeliveryStatus).values({
-                  messageId: 0,
-                  providerMessageId: statusItem.id,
-                  providerType: 'meta_official',
-                  status: statusItem.status,
-                  errorCode: statusItem.errors?.[0]?.code || null,
-                  errorMessage: statusItem.errors?.[0]?.title || null,
-                });
-                console.log(`📊 [Meta Webhook] Status: ${statusItem.id} → ${statusItem.status}`);
-              } catch (err) {
-                console.error('⚠️ [Meta Webhook] Erro ao salvar status:', err);
-              }
-            }
-          }
-
-          // Processar mensagens recebidas
-          if (value.messages?.length > 0) {
-            // Normalizar e repassar para o handler existente (reutilizar lógica do AI agent)
-            // Monta o payload no formato que o handler /api/webhook/whatsapp/:instanceName espera
-            for (const msg of value.messages) {
-              const contact = value.contacts?.[0];
-
-              // Idempotência
-              const dedupKey = `meta:${msg.id}`;
-              if (processedWebhookMessages.has(dedupKey)) {
-                console.log('🔁 [Meta Webhook] Mensagem duplicada, ignorando:', msg.id);
-                continue;
-              }
-              processedWebhookMessages.set(dedupKey, Date.now());
-
-              // Montar payload compatível com o handler existente
-              const compatPayload = {
-                EventType: 'messages',
-                message: {
-                  messageid: msg.id,
-                  chatid: msg.from,
-                  sender: msg.from,
-                  sender_pn: msg.from,
-                  text: msg.text?.body || msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || msg.button?.text || '',
-                  fromMe: false,
-                  senderName: contact?.profile?.name || '',
-                  messageType: msg.type,
-                  type: msg.type,
-                  id: msg.id,
-                  timestamp: msg.timestamp,
-                  // Mídia
-                  ...(msg.audio ? { mediaType: 'audio', mimetype: msg.audio.mime_type, fileId: msg.audio.id } : {}),
-                  ...(msg.image ? { mediaType: 'image', mimetype: msg.image.mime_type, fileId: msg.image.id, caption: msg.image.caption } : {}),
-                  ...(msg.video ? { mediaType: 'video', mimetype: msg.video.mime_type, fileId: msg.video.id, caption: msg.video.caption } : {}),
-                  ...(msg.document ? { mediaType: 'document', mimetype: msg.document.mime_type, fileId: msg.document.id, filename: msg.document.filename, caption: msg.document.caption } : {}),
-                  ...(msg.sticker ? { mediaType: 'sticker', mimetype: msg.sticker.mime_type, fileId: msg.sticker.id } : {}),
-                  ...(msg.location ? { latitude: msg.location.latitude, longitude: msg.location.longitude } : {}),
-                  ...(msg.reaction ? { reaction: msg.reaction } : {}),
-                },
-                chat: {
-                  wa_chatid: msg.from,
-                  phone: msg.from,
-                  name: contact?.profile?.name || '',
-                  wa_contactName: contact?.profile?.name || '',
-                },
-              };
-
-              // Fazer POST interno para o handler existente que já tem toda a lógica do AI agent
-              try {
-                const internalUrl = `http://localhost:${process.env.PORT || 5000}/api/webhook/whatsapp/${instance.instanceName}`;
-                await fetch(internalUrl, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(compatPayload),
-                });
-                console.log(`✅ [Meta Webhook] Mensagem ${msg.id} repassada para handler de ${instance.instanceName}`);
-              } catch (fwdErr) {
-                console.error('❌ [Meta Webhook] Erro ao repassar mensagem:', fwdErr);
-              }
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error('❌ [Meta Webhook] Erro geral:', error);
-    }
+  app.post('/api/webhook/meta', (req, res) => {
+    res.redirect(307, '/webhooks/meta/whatsapp');
   });
 
   // ==========================================
