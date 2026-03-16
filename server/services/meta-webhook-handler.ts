@@ -235,7 +235,7 @@ export function handleVerification(deps: MetaWebhookDeps) {
 
       if (result) {
         console.log('[meta-webhook] verification success');
-        res.status(200).send(result);
+        res.status(200).type('text/plain').send(result);
         return;
       }
 
@@ -274,7 +274,11 @@ export function handleEvents(deps: MetaWebhookDeps) {
           console.error('[meta-webhook] SECURITY: missing X-Hub-Signature-256 header');
           return;
         }
-        const rawBody = req.rawBody || JSON.stringify(body);
+        const rawBody = req.rawBody;
+        if (!rawBody) {
+          console.error('[meta-webhook] SECURITY: rawBody not available - check middleware order (express.json verify must run before router)');
+          return;
+        }
         const valid = MetaWhatsAppService.validateWebhookSignature(rawBody, signature, config.appSecret);
         if (!valid) {
           console.error('[meta-webhook] SECURITY: invalid signature - possible spoofing');

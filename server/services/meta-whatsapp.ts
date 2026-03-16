@@ -503,11 +503,15 @@ export class MetaWhatsAppService {
     appSecret: string
   ): boolean {
     const crypto = require('crypto');
-    const expectedSignature = crypto
+    const expectedSignature = 'sha256=' + crypto
       .createHmac('sha256', appSecret)
       .update(payload)
       .digest('hex');
-    return `sha256=${expectedSignature}` === signature;
+    // Timing-safe comparison to prevent timing attacks
+    const sigBuf = Buffer.from(signature, 'utf8');
+    const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+    if (sigBuf.length !== expectedBuf.length) return false;
+    return crypto.timingSafeEqual(sigBuf, expectedBuf);
   }
 
   /** Processar verificação de webhook (GET request da Meta) */

@@ -49,7 +49,50 @@ const __dirname = dirname(__filename);
 const app = express();
 const MemoryStore = createMemoryStore(session);
 
-// Session configuration
+// === Body parsing (MUST come before any route handler) ===
+app.use(express.json({
+  limit: '50mb',
+  verify: (req: any, _res, buf) => {
+    // Preserve raw body for webhook signature validation (X-Hub-Signature-256)
+    if (req.url?.includes('/api/webhook/whatsapp/') || req.url?.includes('/api/webhook/meta') || req.url?.includes('/webhooks/meta/')) {
+      req.rawBody = buf.toString('utf8');
+    }
+  },
+}));
+app.use(express.urlencoded({ extended: true }));
+
+// === Meta webhook router (BEFORE session — webhooks don't need sessions) ===
+const metaWebhookRouter = createMetaWebhookRouter({
+  getGlobalSettings: () => storage.getGlobalSettings(),
+  findInstanceByMetaPhoneNumberId: (phoneNumberId: string) => storage.findInstanceByMetaPhoneNumberId(phoneNumberId),
+  getCompany: (companyId: number) => storage.getCompany(companyId),
+  findOrCreateConversation: async (companyId, instanceId, phone, contactName, providerType) => {
+    let conv = await storage.getConversation(companyId, instanceId, phone);
+    if (!conv) {
+      conv = await storage.createConversation({
+        companyId,
+        whatsappInstanceId: instanceId,
+        phoneNumber: phone,
+        contactName,
+        providerType,
+        status: 'active',
+      });
+    }
+    return conv;
+  },
+  saveMessage: async (conversationId, role, content, messageId, messageType) => {
+    return storage.createMessage({
+      conversationId,
+      role,
+      content,
+      providerMessageId: messageId,
+      messageType,
+    });
+  },
+});
+app.use(metaWebhookRouter);
+
+// === Session (after webhook routes — webhooks don't need cookies/sessions) ===
 const sessionSecret = process.env.SESSION_SECRET;
 if (!sessionSecret) {
   throw new Error('SESSION_SECRET é obrigatória. Defina no arquivo .env');
@@ -66,18 +109,6 @@ app.use(session({
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
 }));
-
-// Middleware
-app.use(express.json({
-  limit: '50mb',
-  verify: (req: any, _res, buf) => {
-    // Preserve raw body for webhook signature validation (X-Hub-Signature-256)
-    if (req.url?.includes('/api/webhook/whatsapp/') || req.url?.includes('/api/webhook/meta') || req.url?.includes('/webhooks/meta/')) {
-      req.rawBody = buf.toString('utf8');
-    }
-  },
-}));
-app.use(express.urlencoded({ extended: true }));
 
 // Serve static files from uploads directory
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -174,38 +205,6 @@ function formatDateBrazil(date: Date): string {
   const brazilDate = new Date(brazilDateStr);
   return formatDateLocal(brazilDate);
 }
-
-// ===== Meta WhatsApp Webhook (unified, production-ready) =====
-// Registrado ANTES das demais rotas para não passar pelo session/auth middleware
-const metaWebhookRouter = createMetaWebhookRouter({
-  getGlobalSettings: () => storage.getGlobalSettings(),
-  findInstanceByMetaPhoneNumberId: (phoneNumberId: string) => storage.findInstanceByMetaPhoneNumberId(phoneNumberId),
-  getCompany: (companyId: number) => storage.getCompany(companyId),
-  findOrCreateConversation: async (companyId, instanceId, phone, contactName, providerType) => {
-    let conv = await storage.getConversation(companyId, instanceId, phone);
-    if (!conv) {
-      conv = await storage.createConversation({
-        companyId,
-        whatsappInstanceId: instanceId,
-        phoneNumber: phone,
-        contactName,
-        providerType,
-        status: 'active',
-      });
-    }
-    return conv;
-  },
-  saveMessage: async (conversationId, role, content, messageId, messageType) => {
-    return storage.createMessage({
-      conversationId,
-      role,
-      content,
-      providerMessageId: messageId,
-      messageType,
-    });
-  },
-});
-app.use(metaWebhookRouter);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
