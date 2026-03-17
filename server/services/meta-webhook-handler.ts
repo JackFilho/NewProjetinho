@@ -16,7 +16,7 @@
 import { Router, Request, Response } from 'express';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
-import { webhookEvents } from '@shared/schema';
+import { webhookEvents } from '../../shared/schema';
 import { MetaWhatsAppService, MetaWebhookMessage } from './meta-whatsapp';
 import { normalizeMetaWebhook, NormalizedIncomingMessage } from './whatsapp-provider';
 import { ChatwootService } from './chatwoot';
