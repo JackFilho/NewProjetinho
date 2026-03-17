@@ -4,6 +4,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { ensureConversationTables, ensureProfessionalPasswordColumn, storage } from "./storage";
+import { createMetaWebhookRouter } from "./services/meta-webhook-handler";
 import { ensureReviewTables } from "./create-reviews-tables";
 import { startCampaignScheduler } from "./campaign-scheduler";
 import { ensureSmtpColumns } from "./ensure-smtp-columns";
@@ -21,11 +22,50 @@ const app = express();
 // Trust proxy headers (needed for secure cookies behind reverse proxy)
 app.set('trust proxy', 1);
 // Increase body parser limit to support large AI prompts
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+  limit: '50mb',
+  verify: (req: any, _res, buf) => {
+    // Preserve raw body for webhook signature validation (X-Hub-Signature-256)
+    if (req.url?.includes('/webhooks/meta/') || req.url?.includes('/api/webhook/meta')) {
+      req.rawBody = buf.toString('utf8');
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+// === Meta webhook router (BEFORE session — webhooks don't need sessions) ===
+const metaWebhookRouter = createMetaWebhookRouter({
+  getGlobalSettings: () => storage.getGlobalSettings(),
+  findInstanceByMetaPhoneNumberId: (phoneNumberId: string) => storage.findInstanceByMetaPhoneNumberId(phoneNumberId),
+  getCompany: (companyId: number) => storage.getCompany(companyId),
+  findOrCreateConversation: async (companyId, instanceId, phone, contactName, providerType) => {
+    let conv = await storage.getConversation(companyId, instanceId, phone);
+    if (!conv) {
+      conv = await storage.createConversation({
+        companyId,
+        whatsappInstanceId: instanceId,
+        phoneNumber: phone,
+        contactName,
+        providerType,
+        status: 'active',
+      });
+    }
+    return conv;
+  },
+  saveMessage: async (conversationId, role, content, messageId, messageType) => {
+    return storage.createMessage({
+      conversationId,
+      role,
+      content,
+      providerMessageId: messageId,
+      messageType,
+    });
+  },
+});
+app.use(metaWebhookRouter);
 
 app.use((req, res, next) => {
   const start = Date.now();
