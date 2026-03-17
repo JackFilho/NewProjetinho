@@ -5784,8 +5784,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         req.session.adminId = adminToReturn.id;
         req.session.adminUsername = adminToReturn.username;
 
-        const { password: _, ...adminData } = adminToReturn;
-        res.json({ message: "Login realizado com sucesso", admin: adminData });
+        req.session.save((saveErr: any) => {
+          if (saveErr) {
+            console.error("Error saving session:", saveErr);
+            return res.status(500).json({ message: "Erro interno do servidor" });
+          }
+          const { password: _, ...adminData } = adminToReturn;
+          res.json({ message: "Login realizado com sucesso", admin: adminData });
+        });
       });
     } catch (error) {
       console.error("Error during admin login:", error);
@@ -6026,13 +6032,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(500).json({ message: "Erro interno do servidor" });
         }
         req.session.companyId = companyToReturn.id;
-        res.json({
-          message: "Login realizado com sucesso",
-          company: {
-            id: companyToReturn.id,
-            fantasyName: companyToReturn.fantasyName,
-            email: companyToReturn.email
+        req.session.save((saveErr: any) => {
+          if (saveErr) {
+            console.error("Error saving session:", saveErr);
+            return res.status(500).json({ message: "Erro interno do servidor" });
           }
+          res.json({
+            message: "Login realizado com sucesso",
+            company: {
+              id: companyToReturn.id,
+              fantasyName: companyToReturn.fantasyName,
+              email: companyToReturn.email
+            }
+          });
         });
       });
     } catch (error) {
@@ -6366,13 +6378,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(500).json({ message: "Erro interno do servidor" });
         }
         req.session.companyId = companyToReturn.id;
-        res.json({
-          message: "Login realizado com sucesso",
-          company: {
-            id: companyToReturn.id,
-            fantasyName: companyToReturn.fantasyName,
-            email: companyToReturn.email
+        req.session.save((saveErr: any) => {
+          if (saveErr) {
+            console.error("Error saving session:", saveErr);
+            return res.status(500).json({ message: "Erro interno do servidor" });
           }
+          res.json({
+            message: "Login realizado com sucesso",
+            company: {
+              id: companyToReturn.id,
+              fantasyName: companyToReturn.fantasyName,
+              email: companyToReturn.email
+            }
+          });
         });
       });
     } catch (error) {
@@ -20393,14 +20411,20 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         req.session.professionalName = profToReturn.name;
         req.session.professionalEmail = profToReturn.email;
 
-        res.json({
-          message: "Login realizado com sucesso",
-          professional: {
-            id: profToReturn.id,
-            name: profToReturn.name,
-            email: profToReturn.email,
-            companyId: profToReturn.companyId
+        req.session.save((saveErr: any) => {
+          if (saveErr) {
+            console.error("Error saving session:", saveErr);
+            return res.status(500).json({ message: "Erro interno do servidor" });
           }
+          res.json({
+            message: "Login realizado com sucesso",
+            professional: {
+              id: profToReturn.id,
+              name: profToReturn.name,
+              email: profToReturn.email,
+              companyId: profToReturn.companyId
+            }
+          });
         });
       });
     } catch (error) {
