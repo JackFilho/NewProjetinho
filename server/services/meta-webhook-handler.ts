@@ -221,25 +221,31 @@ export function handleVerification(deps: MetaWebhookDeps) {
     const token = req.query['hub.verify_token'] as string;
     const challenge = req.query['hub.challenge'] as string;
 
-    console.log('[meta-webhook] verification request | mode=%s', mode);
+    console.log('[meta-webhook] verification request | mode=%s url=%s', mode, req.originalUrl);
 
     if (!mode || !token || !challenge) {
-      console.warn('[meta-webhook] verification failed: missing params');
+      console.warn('[meta-webhook] verification failed: missing params | mode=%s token=%s challenge=%s', mode, !!token, !!challenge);
       res.status(400).send('Bad Request');
       return;
     }
 
     try {
       const config = await resolveMetaWebhookConfig(deps.getGlobalSettings);
+      console.log(
+        '[meta-webhook] verification compare | received_token_len=%d expected_token_len=%d match=%s',
+        token.length,
+        config.verifyToken.length,
+        token === config.verifyToken
+      );
       const result = MetaWhatsAppService.handleWebhookVerification(mode, token, challenge, config.verifyToken);
 
       if (result) {
-        console.log('[meta-webhook] verification success');
+        console.log('[meta-webhook] verification success | challenge=%s', challenge);
         res.status(200).type('text/plain').send(result);
         return;
       }
 
-      console.warn('[meta-webhook] verification failed: token mismatch');
+      console.warn('[meta-webhook] verification failed: token mismatch | received_first5=%s expected_first5=%s', token.substring(0, 5), config.verifyToken.substring(0, 5));
       res.status(403).send('Forbidden');
     } catch (error) {
       console.error('[meta-webhook] verification error:', error);
