@@ -36,36 +36,46 @@ app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-// === Meta webhook router (BEFORE session — webhooks don't need sessions) ===
-const metaWebhookRouter = createMetaWebhookRouter({
-  getGlobalSettings: () => storage.getGlobalSettings(),
-  findInstanceByMetaPhoneNumberId: (phoneNumberId: string) => storage.findInstanceByMetaPhoneNumberId(phoneNumberId),
-  getCompany: (companyId: number) => storage.getCompany(companyId),
-  findOrCreateConversation: async (companyId, instanceId, phone, contactName, providerType) => {
-    let conv = await storage.getConversation(companyId, instanceId, phone);
-    if (!conv) {
-      conv = await storage.createConversation({
-        companyId,
-        whatsappInstanceId: instanceId,
-        phoneNumber: phone,
-        contactName,
-        providerType,
-        status: 'active',
-      });
-    }
-    return conv;
-  },
-  saveMessage: async (conversationId, role, content, messageId, messageType) => {
-    return storage.createMessage({
-      conversationId,
-      role,
-      content,
-      providerMessageId: messageId,
-      messageType,
-    });
-  },
+// === Diagnostic route to test Express routing ===
+app.get('/webhooks/meta/health', (_req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
-app.use(metaWebhookRouter);
+
+// === Meta webhook router (BEFORE session — webhooks don't need sessions) ===
+try {
+  const metaWebhookRouter = createMetaWebhookRouter({
+    getGlobalSettings: () => storage.getGlobalSettings(),
+    findInstanceByMetaPhoneNumberId: (phoneNumberId: string) => storage.findInstanceByMetaPhoneNumberId(phoneNumberId),
+    getCompany: (companyId: number) => storage.getCompany(companyId),
+    findOrCreateConversation: async (companyId, instanceId, phone, contactName, providerType) => {
+      let conv = await storage.getConversation(companyId, instanceId, phone);
+      if (!conv) {
+        conv = await storage.createConversation({
+          companyId,
+          whatsappInstanceId: instanceId,
+          phoneNumber: phone,
+          contactName,
+          providerType,
+          status: 'active',
+        });
+      }
+      return conv;
+    },
+    saveMessage: async (conversationId, role, content, messageId, messageType) => {
+      return storage.createMessage({
+        conversationId,
+        role,
+        content,
+        providerMessageId: messageId,
+        messageType,
+      });
+    },
+  });
+  app.use(metaWebhookRouter);
+  console.log('[meta-webhook] Router registered successfully on /webhooks/meta/whatsapp');
+} catch (err) {
+  console.error('[meta-webhook] FAILED to register router:', err);
+}
 
 app.use((req, res, next) => {
   const start = Date.now();
