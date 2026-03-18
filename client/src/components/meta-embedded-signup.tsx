@@ -95,17 +95,6 @@ export function MetaEmbeddedSignup({ instanceId, onComplete }: EmbeddedSignupPro
     setState("signing_up");
     setError("");
 
-    const loginParams: any = {
-      config_id: configId || undefined,
-      response_type: "code",
-      override_default_response_type: true,
-      extras: {
-        setup: {},
-        featureType: "",
-        sessionInfoVersion: 2,
-      },
-    };
-
     window.FB.login(
       function (response: any) {
         if (response.authResponse?.code) {
@@ -124,8 +113,13 @@ export function MetaEmbeddedSignup({ instanceId, onComplete }: EmbeddedSignupPro
         }
       },
       {
-        scope: "business_management,whatsapp_business_management,whatsapp_business_messaging",
-        ...loginParams,
+        config_id: configId || undefined,
+        response_type: "code",
+        override_default_response_type: true,
+        extras: {
+          setup: {},
+          sessionInfoVersion: "4",
+        },
       }
     );
   }, [configId, instanceId, toast]);

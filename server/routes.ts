@@ -19930,7 +19930,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       }
       res.json({
         appId: settings.metaAppId,
-        configId: settings.metaBusinessId || '', // Config ID for Embedded Signup (optional)
+        configId: settings.metaEmbeddedSignupConfigId || '', // Config ID for Embedded Signup
       });
     } catch (error: any) {
       console.error('Error getting Embedded Signup config:', error);

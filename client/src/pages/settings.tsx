@@ -180,6 +180,7 @@ export default function SettingsPage() {
       metaAppSecret: "",
       metaWebhookVerifyToken: "",
       metaBusinessId: "",
+      metaEmbeddedSignupConfigId: "",
       defaultAiPrompt: "",
       smtpHost: "",
       smtpPort: "",
@@ -206,6 +207,7 @@ export default function SettingsPage() {
       metaAppSecret: settings.metaAppSecret || "",
       metaWebhookVerifyToken: settings.metaWebhookVerifyToken || "",
       metaBusinessId: settings.metaBusinessId || "",
+      metaEmbeddedSignupConfigId: (settings as any).metaEmbeddedSignupConfigId || "",
       defaultAiPrompt: (settings as any).defaultAiPrompt || "",
       smtpHost: (settings as any).smtpHost || "",
       smtpPort: (settings as any).smtpPort || "",
@@ -831,6 +833,23 @@ export default function SettingsPage() {
                         <FormControl>
                           <Input placeholder="ID do Business Manager da Meta" {...field} />
                         </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="metaEmbeddedSignupConfigId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Embedded Signup Config ID</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Config ID do Embedded Signup (criado no Meta Developer Portal)" {...field} />
+                        </FormControl>
+                        <FormDescription>
+                          Crie em: Meta Developer Portal → WhatsApp → Embedded Signup → Config ID
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}

@@ -202,6 +202,7 @@ export const settingsSchema = z.object({
   metaAppSecret: z.string().optional(),
   metaWebhookVerifyToken: z.string().optional(),
   metaBusinessId: z.string().optional(),
+  metaEmbeddedSignupConfigId: z.string().optional(),
   defaultBirthdayMessage: z.string().optional(),
   openaiApiKey: z.string().optional(),
   openaiModel: z.string().optional(),

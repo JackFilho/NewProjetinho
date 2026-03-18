@@ -220,6 +220,7 @@ export const globalSettings = mysqlTable("global_settings", {
   metaAppSecret: varchar("meta_app_secret", { length: 255 }),
   metaWebhookVerifyToken: varchar("meta_webhook_verify_token", { length: 255 }),
   metaBusinessId: varchar("meta_business_id", { length: 100 }),
+  metaEmbeddedSignupConfigId: varchar("meta_embedded_signup_config_id", { length: 100 }),
   // Chatwoot global defaults
   chatwootBaseUrl: varchar("chatwoot_base_url", { length: 500 }),
   chatwootApiToken: varchar("chatwoot_api_token", { length: 500 }),
