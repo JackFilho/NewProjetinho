@@ -20,6 +20,7 @@ import {
   publicRegisterSchema,
   aiAgentSchema,
   n8nWebhookSchema,
+  chatwootConfigSchema,
   createAppointmentSchema,
   createProfessionalSchema,
   updateProfessionalSchema,
@@ -6827,6 +6828,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({
         message: "Erro ao enviar teste: " + error.message
       });
+    }
+  });
+
+  // ========================================
+  // Chatwoot Integration Configuration
+  // ========================================
+  app.put('/api/company/chatwoot-config', isCompanyAuthenticated, validateBody(chatwootConfigSchema), async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { chatwootEnabled, chatwootBaseUrl, chatwootApiToken, chatwootAccountId, chatwootInboxId } = req.body;
+
+      await storage.updateCompany(companyId, {
+        chatwootEnabled: chatwootEnabled ? 1 : 0,
+        chatwootBaseUrl: chatwootBaseUrl || null,
+        chatwootApiToken: chatwootApiToken || null,
+        chatwootAccountId: chatwootAccountId || null,
+        chatwootInboxId: chatwootInboxId || null,
+      });
+
+      res.json({ message: "Configuração Chatwoot atualizada com sucesso" });
+    } catch (error) {
+      console.error("Error updating Chatwoot config:", error);
+      res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
+  // Test Chatwoot connection
+  app.post('/api/company/chatwoot-config/test', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const company = await storage.getCompanyById(companyId);
+      if (!company?.chatwootBaseUrl || !company?.chatwootApiToken || !company?.chatwootAccountId) {
+        return res.status(400).json({ message: "Configure a URL, Token e Account ID do Chatwoot primeiro" });
+      }
+
+      const chatwootService = new ChatwootService({
+        baseUrl: company.chatwootBaseUrl,
+        apiAccessToken: company.chatwootApiToken,
+        accountId: company.chatwootAccountId,
+        inboxId: company.chatwootInboxId || undefined,
+      });
+
+      // Test connection by listing inboxes
+      const inboxes = await chatwootService.listInboxes();
+      res.json({
+        message: `Conexão OK! ${inboxes.length} inbox(es) encontrado(s).`,
+        inboxes: inboxes.map((i: any) => ({ id: i.id, name: i.name, channel_type: i.channel_type })),
+      });
+    } catch (error: any) {
+      console.error("Error testing Chatwoot connection:", error);
+      res.status(500).json({ message: "Falha ao conectar: " + error.message });
     }
   });
 

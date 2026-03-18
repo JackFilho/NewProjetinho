@@ -2028,6 +2028,254 @@ export default function CompanySettings() {
             </CardContent>
           </Card>
 
+          {/* Chatwoot Integration */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5" />
+                Integração Chatwoot
+              </CardTitle>
+              <CardDescription>
+                Conecte o Chatwoot como canal de atendimento. Sua IA responderá automaticamente e agentes humanos podem assumir quando necessário.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Ativar Chatwoot</p>
+                  <p className="text-sm text-gray-500">Integra mensagens do Chatwoot com sua IA</p>
+                </div>
+                <Switch
+                  checked={!!company?.chatwootEnabled}
+                  onCheckedChange={(checked) => {
+                    fetch('/api/company/chatwoot-config', {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        chatwootEnabled: checked,
+                        chatwootBaseUrl: company?.chatwootBaseUrl,
+                        chatwootApiToken: company?.chatwootApiToken,
+                        chatwootAccountId: company?.chatwootAccountId,
+                        chatwootInboxId: company?.chatwootInboxId,
+                      })
+                    }).then(() => {
+                      queryClient.invalidateQueries({ queryKey: ['/api/company/auth/profile'] });
+                      toast({
+                        title: checked ? "Chatwoot ativado" : "Chatwoot desativado",
+                        description: checked
+                          ? "Mensagens do Chatwoot serão processadas pela IA"
+                          : "Integração com Chatwoot desativada"
+                      });
+                    }).catch(() => {
+                      toast({ title: "Erro", description: "Falha ao atualizar configuração", variant: "destructive" });
+                    });
+                  }}
+                />
+              </div>
+
+              {!!company?.chatwootEnabled && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="chatwoot-base-url">URL do Chatwoot</Label>
+                    <Input
+                      id="chatwoot-base-url"
+                      type="url"
+                      placeholder="https://app.chatwoot.com"
+                      defaultValue={company?.chatwootBaseUrl || ''}
+                      key={`cw-url-${company?.chatwootBaseUrl || 'empty'}`}
+                      onBlur={(e) => {
+                        const newValue = e.target.value.trim();
+                        if (newValue === (company?.chatwootBaseUrl || '')) return;
+                        fetch('/api/company/chatwoot-config', {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            chatwootEnabled: true,
+                            chatwootBaseUrl: newValue,
+                            chatwootApiToken: company?.chatwootApiToken,
+                            chatwootAccountId: company?.chatwootAccountId,
+                            chatwootInboxId: company?.chatwootInboxId,
+                          })
+                        }).then(async (res) => {
+                          if (res.ok) {
+                            queryClient.invalidateQueries({ queryKey: ['/api/company/auth/profile'] });
+                            toast({ title: "URL salva!", description: "URL do Chatwoot atualizada" });
+                          } else {
+                            const data = await res.json();
+                            toast({ title: "Erro", description: data.message || "URL inválida", variant: "destructive" });
+                          }
+                        }).catch(() => {
+                          toast({ title: "Erro", description: "Falha ao salvar URL", variant: "destructive" });
+                        });
+                      }}
+                    />
+                    <p className="text-xs text-gray-500">URL base da sua instalação Chatwoot</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="chatwoot-api-token">API Access Token</Label>
+                    <Input
+                      id="chatwoot-api-token"
+                      type="password"
+                      placeholder="Seu token de API do Chatwoot"
+                      defaultValue={company?.chatwootApiToken || ''}
+                      key={`cw-token-${company?.chatwootApiToken ? 'set' : 'empty'}`}
+                      onBlur={(e) => {
+                        const newValue = e.target.value.trim();
+                        if (newValue === (company?.chatwootApiToken || '')) return;
+                        fetch('/api/company/chatwoot-config', {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            chatwootEnabled: true,
+                            chatwootBaseUrl: company?.chatwootBaseUrl,
+                            chatwootApiToken: newValue,
+                            chatwootAccountId: company?.chatwootAccountId,
+                            chatwootInboxId: company?.chatwootInboxId,
+                          })
+                        }).then(async (res) => {
+                          if (res.ok) {
+                            queryClient.invalidateQueries({ queryKey: ['/api/company/auth/profile'] });
+                            toast({ title: "Token salvo!", description: "API Token do Chatwoot atualizado" });
+                          } else {
+                            const data = await res.json();
+                            toast({ title: "Erro", description: data.message || "Token inválido", variant: "destructive" });
+                          }
+                        }).catch(() => {
+                          toast({ title: "Erro", description: "Falha ao salvar token", variant: "destructive" });
+                        });
+                      }}
+                    />
+                    <p className="text-xs text-gray-500">Settings → Account Settings → Access Token</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="chatwoot-account-id">Account ID</Label>
+                      <Input
+                        id="chatwoot-account-id"
+                        type="number"
+                        placeholder="1"
+                        defaultValue={company?.chatwootAccountId || ''}
+                        key={`cw-acc-${company?.chatwootAccountId || 'empty'}`}
+                        onBlur={(e) => {
+                          const newValue = e.target.value.trim();
+                          const numValue = newValue ? parseInt(newValue) : null;
+                          if (numValue === (company?.chatwootAccountId || null)) return;
+                          fetch('/api/company/chatwoot-config', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              chatwootEnabled: true,
+                              chatwootBaseUrl: company?.chatwootBaseUrl,
+                              chatwootApiToken: company?.chatwootApiToken,
+                              chatwootAccountId: numValue,
+                              chatwootInboxId: company?.chatwootInboxId,
+                            })
+                          }).then(async (res) => {
+                            if (res.ok) {
+                              queryClient.invalidateQueries({ queryKey: ['/api/company/auth/profile'] });
+                              toast({ title: "Salvo!", description: "Account ID atualizado" });
+                            } else {
+                              const data = await res.json();
+                              toast({ title: "Erro", description: data.message || "Valor inválido", variant: "destructive" });
+                            }
+                          }).catch(() => {
+                            toast({ title: "Erro", description: "Falha ao salvar", variant: "destructive" });
+                          });
+                        }}
+                      />
+                      <p className="text-xs text-gray-500">Número na URL: /accounts/{'{ID}'}/...</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="chatwoot-inbox-id">Inbox ID</Label>
+                      <Input
+                        id="chatwoot-inbox-id"
+                        type="number"
+                        placeholder="1"
+                        defaultValue={company?.chatwootInboxId || ''}
+                        key={`cw-inbox-${company?.chatwootInboxId || 'empty'}`}
+                        onBlur={(e) => {
+                          const newValue = e.target.value.trim();
+                          const numValue = newValue ? parseInt(newValue) : null;
+                          if (numValue === (company?.chatwootInboxId || null)) return;
+                          fetch('/api/company/chatwoot-config', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              chatwootEnabled: true,
+                              chatwootBaseUrl: company?.chatwootBaseUrl,
+                              chatwootApiToken: company?.chatwootApiToken,
+                              chatwootAccountId: company?.chatwootAccountId,
+                              chatwootInboxId: numValue,
+                            })
+                          }).then(async (res) => {
+                            if (res.ok) {
+                              queryClient.invalidateQueries({ queryKey: ['/api/company/auth/profile'] });
+                              toast({ title: "Salvo!", description: "Inbox ID atualizado" });
+                            } else {
+                              const data = await res.json();
+                              toast({ title: "Erro", description: data.message || "Valor inválido", variant: "destructive" });
+                            }
+                          }).catch(() => {
+                            toast({ title: "Erro", description: "Falha ao salvar", variant: "destructive" });
+                          });
+                        }}
+                      />
+                      <p className="text-xs text-gray-500">Settings → Inboxes → ID do canal WhatsApp</p>
+                    </div>
+                  </div>
+
+                  {company?.chatwootBaseUrl && company?.chatwootApiToken && company?.chatwootAccountId && (
+                    <div className="space-y-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          fetch('/api/company/chatwoot-config/test', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' }
+                          }).then(async (res) => {
+                            const data = await res.json();
+                            if (res.ok) {
+                              toast({
+                                title: "Conexão OK!",
+                                description: data.message,
+                              });
+                            } else {
+                              toast({
+                                title: "Falha na conexão",
+                                description: data.message || "Não foi possível conectar ao Chatwoot",
+                                variant: "destructive"
+                              });
+                            }
+                          }).catch(() => {
+                            toast({ title: "Erro", description: "Falha ao testar conexão", variant: "destructive" });
+                          });
+                        }}
+                        className="w-full"
+                      >
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        Testar Conexão
+                      </Button>
+
+                      <div className="p-3 bg-blue-50 dark:bg-blue-950 rounded-lg text-xs text-blue-800 dark:text-blue-200 space-y-1">
+                        <p className="font-medium">Configuração do Webhook no Chatwoot:</p>
+                        <p>Settings → Integrations → Webhooks → Add Webhook</p>
+                        <p className="font-mono bg-blue-100 dark:bg-blue-900 px-2 py-1 rounded">
+                          URL: {window.location.origin}/api/webhook/chatwoot
+                        </p>
+                        <p>Events: message_created, conversation_updated</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center justify-between">

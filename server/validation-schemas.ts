@@ -94,6 +94,14 @@ export const n8nWebhookSchema = z.object({
   n8nWebhookEnabled: z.preprocess(val => val === true || val === 1 || val === "true", z.boolean()).optional().default(false),
 });
 
+export const chatwootConfigSchema = z.object({
+  chatwootEnabled: z.preprocess(val => val === true || val === 1 || val === "true", z.boolean()).optional().default(false),
+  chatwootBaseUrl: z.string().url("URL inválida").max(500).optional().nullable().or(z.literal("")),
+  chatwootApiToken: z.string().max(500).optional().nullable().or(z.literal("")),
+  chatwootAccountId: z.coerce.number().int().min(1).optional().nullable(),
+  chatwootInboxId: z.coerce.number().int().min(1).optional().nullable(),
+});
+
 export const humanRequestSchema = z.object({
   humanRequestEnabled: z.union([z.boolean(), z.number()]).optional(),
   humanRequestContact: z.string().max(255).optional().nullable(),
