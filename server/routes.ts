@@ -40,7 +40,7 @@ import { sql, eq, and, desc, asc, sum, count, gte, lte } from "drizzle-orm";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import crypto from "crypto";
+import crypto from "node:crypto";
 import nodemailer from "nodemailer";
 import rateLimit from "express-rate-limit";
 import { UazapiService, createUazapiService } from "./services/uazapi";
