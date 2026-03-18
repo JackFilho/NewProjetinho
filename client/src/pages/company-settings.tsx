@@ -2058,7 +2058,8 @@ export default function CompanySettings() {
                         chatwootAccountId: company?.chatwootAccountId,
                         chatwootInboxId: company?.chatwootInboxId,
                       })
-                    }).then(() => {
+                    }).then((res) => {
+                      if (!res.ok) throw new Error('Falha ao atualizar');
                       queryClient.invalidateQueries({ queryKey: ['/api/company/auth/profile'] });
                       toast({
                         title: checked ? "Chatwoot ativado" : "Chatwoot desativado",

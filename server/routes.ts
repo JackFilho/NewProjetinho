@@ -6524,7 +6524,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Get company info
       const companyResult = await db.execute(sql`
-        SELECT id, fantasy_name, document, address, google_maps_location, courses_description, courses_images, courses_pdfs, phone, zip_code, number, neighborhood, city, state, email, password, plan_id, plan_status, is_active, ai_agent_prompt, agent_inactivity_timeout, auto_select_professional, openai_api_key, openai_model, openai_temperature, openai_max_tokens, human_request_enabled, human_request_contact, human_request_message, human_request_keywords, human_request_timeout, course_notification_enabled, course_notification_contact, course_notification_message, course_notification_keywords, course_notification_timeout, ignored_numbers, birthday_message, reset_token, reset_token_expires, tour_enabled, trial_expires_at, trial_alert_shown, subscription_status, n8n_webhook_url, n8n_webhook_enabled, asaas_api_key, asaas_environment, asaas_enabled, financial_password_enabled, logo_url, primary_color, created_at, updated_at
+        SELECT id, fantasy_name, document, address, google_maps_location, courses_description, courses_images, courses_pdfs, phone, zip_code, number, neighborhood, city, state, email, password, plan_id, plan_status, is_active, ai_agent_prompt, agent_inactivity_timeout, auto_select_professional, openai_api_key, openai_model, openai_temperature, openai_max_tokens, human_request_enabled, human_request_contact, human_request_message, human_request_keywords, human_request_timeout, course_notification_enabled, course_notification_contact, course_notification_message, course_notification_keywords, course_notification_timeout, ignored_numbers, birthday_message, reset_token, reset_token_expires, tour_enabled, trial_expires_at, trial_alert_shown, subscription_status, n8n_webhook_url, n8n_webhook_enabled, chatwoot_enabled, chatwoot_base_url, chatwoot_api_token, chatwoot_account_id, chatwoot_inbox_id, asaas_api_key, asaas_environment, asaas_enabled, financial_password_enabled, logo_url, primary_color, created_at, updated_at
         FROM companies WHERE id = ${companyId}
       `);
 
@@ -6582,6 +6582,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         subscriptionStatus: company.subscription_status,
         n8nWebhookUrl: company.n8n_webhook_url,
         n8nWebhookEnabled: company.n8n_webhook_enabled,
+        chatwootEnabled: company.chatwoot_enabled === 1,
+        chatwootBaseUrl: company.chatwoot_base_url,
+        chatwootApiToken: company.chatwoot_api_token,
+        chatwootAccountId: company.chatwoot_account_id,
+        chatwootInboxId: company.chatwoot_inbox_id,
         hasAsaasApiKey: !!company.asaas_api_key,
         asaasEnvironment: company.asaas_environment,
         asaasEnabled: company.asaas_enabled === 1,
