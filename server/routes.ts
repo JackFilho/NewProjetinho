@@ -20070,7 +20070,10 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
   app.post('/api/company/meta/manual-connect', isCompanyAuthenticated, async (req: any, res) => {
     const companyId = req.session.companyId;
     try {
-      const { waba_id, phone_number_id, display_phone_number, verified_name, access_token, business_id } = req.body;
+      const { waba_id, phone_number_id, display_phone_number: rawPhone, verified_name, access_token, business_id } = req.body;
+
+      // Remover caracteres Unicode invisíveis (LRM, RLM, ZWJ, ZWNJ, etc.) que vêm de copy/paste do Meta Dashboard
+      const display_phone_number = rawPhone?.replace(/[^\x20-\x7E+\d\s()-]/g, '').trim() || '';
 
       if (!waba_id || !phone_number_id || !display_phone_number) {
         return res.status(400).json({
