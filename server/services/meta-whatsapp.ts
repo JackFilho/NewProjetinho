@@ -7,6 +7,8 @@
  * esta integração usa a Cloud API com endpoints oficiais da Meta.
  */
 
+import crypto from 'crypto';
+
 const META_GRAPH_API_VERSION = 'v21.0';
 const META_GRAPH_API_BASE = `https://graph.facebook.com/${META_GRAPH_API_VERSION}`;
 
@@ -502,7 +504,6 @@ export class MetaWhatsAppService {
     signature: string,
     appSecret: string
   ): boolean {
-    const crypto = require('crypto');
     const expectedSignature = 'sha256=' + crypto
       .createHmac('sha256', appSecret)
       .update(payload)
