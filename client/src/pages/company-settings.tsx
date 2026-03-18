@@ -20,7 +20,8 @@ import { useCompanyAuth } from "@/hooks/useCompanyAuth";
 import { FloatingHelpButton } from "@/components/floating-help-button";
 import { z } from "zod";
 import { companyProfileSchema, companyPasswordSchema, companyAiAgentSchema, companyHumanRequestSchema, companyCourseNotificationSchema, companyIgnoredNumbersSchema, whatsappInstanceSchema, webhookConfigSchema, companySettingsSchema, asaasConfigSchema } from "@/lib/validations";
-import { MetaEmbeddedSignup } from "@/components/meta-embedded-signup";
+// import { MetaEmbeddedSignup } from "@/components/meta-embedded-signup"; // Temporariamente desabilitado até aprovação Tech Provider
+import { MetaManualConnect } from "@/components/meta-manual-connect";
 
 // Função formatDocument local para evitar problemas de importação
 function formatDocument(value: string): string {
@@ -1894,8 +1895,8 @@ export default function CompanySettings() {
             </CardContent>
           </Card>
 
-          {/* Embedded Signup - Conexão oficial Meta */}
-          <MetaEmbeddedSignup
+          {/* Conexão manual WhatsApp - temporário até aprovação Tech Provider */}
+          <MetaManualConnect
             onComplete={() => {
               queryClient.invalidateQueries({ queryKey: ["/api/company/whatsapp/instances"] });
             }}

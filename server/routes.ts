@@ -20065,6 +20065,124 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
   });
 
   // ==========================================
+  // Conexão Manual WhatsApp (temporário até Embedded Signup ser aprovado)
+  // ==========================================
+  app.post('/api/company/meta/manual-connect', isCompanyAuthenticated, async (req: any, res) => {
+    const companyId = req.session.companyId;
+    try {
+      const { waba_id, phone_number_id, display_phone_number, verified_name, access_token, business_id } = req.body;
+
+      if (!waba_id || !phone_number_id || !display_phone_number) {
+        return res.status(400).json({
+          error: 'Campos obrigatórios: waba_id, phone_number_id, display_phone_number',
+        });
+      }
+
+      // Usar access_token enviado ou buscar system token das configurações globais
+      const settings = await storage.getGlobalSettings();
+      const finalAccessToken = access_token || settings?.metaSystemUserToken || '';
+
+      if (!finalAccessToken) {
+        return res.status(400).json({
+          error: 'Access token é obrigatório. Informe no formulário ou configure o System User Token nas configurações globais.',
+        });
+      }
+
+      // Verificar se já existe instância com esse phone_number_id
+      const existing = await storage.findInstanceByMetaPhoneNumberId(phone_number_id);
+      if (existing && existing.companyId !== companyId) {
+        return res.status(409).json({
+          error: 'Este número já está conectado a outra empresa.',
+        });
+      }
+
+      // Validar token com a Meta API
+      try {
+        const { createMetaWhatsAppService } = await import('./services/meta-whatsapp');
+        const metaService = createMetaWhatsAppService({
+          phoneNumberId: phone_number_id,
+          wabaId: waba_id,
+          accessToken: finalAccessToken,
+        });
+        await metaService.listPhoneNumbers();
+      } catch (metaErr: any) {
+        return res.status(400).json({
+          error: 'Erro ao validar credenciais com a Meta API. Verifique os dados informados.',
+          details: metaErr.message,
+        });
+      }
+
+      let instance: any;
+      if (existing && existing.companyId === companyId) {
+        // Atualizar instância existente
+        await storage.updateWhatsappInstance(existing.id, {
+          metaAccessToken: finalAccessToken,
+          metaWabaId: waba_id,
+          metaPhoneNumberId: phone_number_id,
+          metaBusinessId: business_id || '',
+          displayPhoneNumber: display_phone_number,
+          verifiedName: verified_name || '',
+          onboardingMode: 'manual',
+          status: 'connected',
+          providerType: 'meta_official',
+        });
+        instance = await storage.getWhatsappInstance(existing.id);
+      } else {
+        // Criar nova instância
+        const instanceName = `meta-manual-${companyId}-${Date.now()}`;
+        const webhookUrl = await generateWebhookUrl(req, instanceName);
+
+        instance = await storage.createWhatsappInstance({
+          companyId,
+          instanceName,
+          metaAccessToken: finalAccessToken,
+          metaWabaId: waba_id,
+          metaPhoneNumberId: phone_number_id,
+          metaBusinessId: business_id || '',
+          metaAppId: settings?.metaAppId || '',
+          displayPhoneNumber: display_phone_number,
+          verifiedName: verified_name || '',
+          onboardingMode: 'manual',
+          status: 'connected',
+          providerType: 'meta_official',
+          webhook: webhookUrl,
+        });
+      }
+
+      // Log onboarding
+      await db.insert(onboardingLogs).values({
+        companyId,
+        step: 'manual_connect',
+        status: 'completed',
+        details: {
+          instanceId: instance.id,
+          wabaId: waba_id,
+          phoneNumberId: phone_number_id,
+          displayPhoneNumber: display_phone_number,
+        },
+      });
+
+      console.log(`✅ [Manual Connect] Empresa ${companyId}: WABA ${waba_id}, Phone ${display_phone_number}`);
+
+      res.json({
+        success: true,
+        instance: {
+          id: instance.id,
+          instanceName: instance.instanceName,
+          displayPhoneNumber: display_phone_number,
+          verifiedName: verified_name || '',
+          wabaId: waba_id,
+          status: 'connected',
+          webhookStatus: 'pending',
+        },
+      });
+    } catch (error: any) {
+      console.error('❌ Manual Connect error:', error);
+      res.status(500).json({ error: `Erro ao conectar: ${error.message}` });
+    }
+  });
+
+  // ==========================================
   // Meta WhatsApp Templates API
   // ==========================================
 
