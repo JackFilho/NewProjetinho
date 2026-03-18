@@ -45,6 +45,7 @@ import nodemailer from "nodemailer";
 import rateLimit from "express-rate-limit";
 import { createMetaWhatsAppService, MetaWhatsAppService } from "./services/meta-whatsapp";
 import { createWhatsAppProvider, IWhatsAppProvider } from "./services/whatsapp-provider";
+import { ChatwootService } from "./services/chatwoot";
 import { processEmbeddedSignup } from "./services/meta-embedded-signup";
 import { webhookEvents, messageDeliveryStatus, metaMessageTemplates, onboardingLogs } from "@shared/schema";
 
@@ -217,6 +218,13 @@ function cacheAIResponse(conversationId: number, content: string) {
     recentAISentMessages.set(conversationId, { contents: [trimmed], timestamp: Date.now() });
   }
 }
+
+// 🔄 CHATWOOT INBOUND AI: Debounce e lock para mensagens vindas do Chatwoot
+// Usa chatwootConversationId como chave (único por conversa no Chatwoot)
+const chatwootProcessingLocks = new Map<string, boolean>();
+const chatwootLastMessageTime = new Map<string, number>();
+// Cache de mensagens pendentes agrupadas por conversa Chatwoot
+const chatwootPendingMessages = new Map<string, string[]>();
 
 /**
  * Verifica se o cliente tem agendamento futuro ativo (consulta direta ao banco).
@@ -7339,6 +7347,482 @@ if (ignoredNumbers !== undefined) {
 
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         return res.status(200).json({ received: true, processed: true, label: hasHumanLabel ? 'humano_added' : 'humano_removed' });
+      }
+
+      // ────────────────────────────────────────────────
+      // HANDLER: Incoming customer message → AI processing
+      // Quando o canal WhatsApp está conectado pelo próprio Chatwoot,
+      // mensagens de clientes chegam aqui como message_created com message_type=incoming.
+      // O backend processa com IA e responde via Chatwoot API.
+      // ────────────────────────────────────────────────
+      const cwMessageType = payload.message_type;
+      const cwSenderType = payload.sender?.type;
+
+      // Incoming = mensagem do cliente (não de agente, não de bot)
+      const isIncomingCustomerMessage = (cwMessageType === 'incoming' || cwMessageType === 0)
+        && cwSenderType !== 'user';
+
+      if (isIncomingCustomerMessage) {
+        const messageContent = (payload.content || '').trim();
+        if (!messageContent) {
+          return res.status(200).json({ received: true, ignored: true, reason: 'Empty incoming message' });
+        }
+
+        // Extrair dados do Chatwoot
+        const chatwootAccountId = payload.account?.id;
+        const chatwootConversationId = payload.conversation?.id;
+        const chatwootInboxId = payload.inbox?.id || payload.conversation?.inbox_id;
+
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('📨 [CHATWOOT INBOUND] Customer message received');
+        console.log('📨 [CHATWOOT INBOUND] Account:', chatwootAccountId, '| Inbox:', chatwootInboxId, '| Conversation:', chatwootConversationId);
+        console.log('📨 [CHATWOOT INBOUND] Content:', messageContent.substring(0, 100));
+
+        if (!chatwootAccountId || !chatwootConversationId) {
+          console.warn('⚠️ [CHATWOOT INBOUND] Missing accountId or conversationId');
+          return res.status(200).json({ received: true, error: 'Missing accountId or conversationId' });
+        }
+
+        // 1. Encontrar a empresa pelo chatwootAccountId + chatwootInboxId
+        let company: any = null;
+        try {
+          const allCompanies = await db.select().from(companies).where(
+            and(
+              eq(companies.chatwootEnabled, 1),
+              eq(companies.chatwootAccountId, chatwootAccountId)
+            )
+          );
+          // Se tiver inboxId, filtrar por inbox; senão, pegar a primeira
+          if (chatwootInboxId && allCompanies.length > 1) {
+            company = allCompanies.find((c: any) => c.chatwootInboxId === chatwootInboxId) || allCompanies[0];
+          } else {
+            company = allCompanies[0];
+          }
+        } catch (err) {
+          console.error('❌ [CHATWOOT INBOUND] Error finding company:', err);
+        }
+
+        if (!company) {
+          console.warn('⚠️ [CHATWOOT INBOUND] No company found for Chatwoot account', chatwootAccountId);
+          return res.status(200).json({ received: true, ignored: true, reason: 'Company not found for Chatwoot account' });
+        }
+
+        console.log('🏢 [CHATWOOT INBOUND] Company:', company.fantasyName, '(ID:', company.id, ')');
+
+        // Verificar se a empresa tem IA configurada
+        if (!company.openaiApiKey || !company.aiAgentPrompt) {
+          console.warn('⚠️ [CHATWOOT INBOUND] Company has no AI configured');
+          return res.status(200).json({ received: true, ignored: true, reason: 'No AI configured for company' });
+        }
+
+        // Verificar se agente está pausado
+        if (company.agentPaused === 1) {
+          console.log('⏸️ [CHATWOOT INBOUND] AI agent is paused for company', company.id);
+          return res.status(200).json({ received: true, ignored: true, reason: 'AI agent paused' });
+        }
+
+        // Extrair telefone do contato
+        const cwConversation = payload.conversation || {};
+        const cwContact = cwConversation.meta?.sender || payload.sender || {};
+        const cwContactInbox = cwConversation.contact_inbox || {};
+
+        let customerPhone = cwContact.phone_number
+          || cwContactInbox.source_id
+          || cwContact.identifier
+          || '';
+        customerPhone = customerPhone.replace(/[\s+\-()]/g, '').replace(/@s\.whatsapp\.net$/, '');
+
+        if (!customerPhone) {
+          console.warn('⚠️ [CHATWOOT INBOUND] Could not extract customer phone');
+          return res.status(200).json({ received: true, error: 'No phone found' });
+        }
+
+        console.log('📞 [CHATWOOT INBOUND] Customer phone:', customerPhone);
+
+        // 2. Encontrar ou criar instância WhatsApp para esta empresa
+        const instances = await storage.getWhatsappInstancesByCompany(company.id);
+        const whatsappInstance = instances.find((i: any) => i.status === 'connected') || instances[0];
+        const instanceId = whatsappInstance?.id || 0;
+
+        // 3. Encontrar ou criar conversa interna
+        // Gerar variantes do telefone para buscar na DB
+        const cwPhoneVariants = buildPhoneVariants(customerPhone);
+        let conversation: any = null;
+        for (const variant of cwPhoneVariants) {
+          conversation = await storage.getConversation(company.id, instanceId, variant);
+          if (conversation) break;
+        }
+
+        if (!conversation) {
+          conversation = await storage.createConversation({
+            companyId: company.id,
+            whatsappInstanceId: instanceId,
+            phoneNumber: customerPhone,
+            contactName: cwContact.name || customerPhone,
+            providerType: 'chatwoot',
+          });
+          console.log('📝 [CHATWOOT INBOUND] New conversation created:', conversation.id);
+        }
+
+        // 4. Verificar modo de takeover (humano vs agente)
+        if (conversation.takeoverMode === 'human') {
+          const timeoutMinutes = company.agentInactivityTimeout || 30;
+          const lastMsgTime = conversation.lastMessageAt ? new Date(conversation.lastMessageAt).getTime() : 0;
+          const now = Date.now();
+          const elapsedMinutes = (now - lastMsgTime) / (1000 * 60);
+
+          // Verificar se é bloqueio permanente (data sentinela 2037)
+          const isPermanentBlock = lastMsgTime > new Date('2037-01-01').getTime();
+
+          if (isPermanentBlock || elapsedMinutes < timeoutMinutes) {
+            console.log('🚫 [CHATWOOT INBOUND] Human takeover active, AI blocked for conversation', conversation.id);
+            // Salvar mensagem no histórico mesmo sem responder
+            await storage.createMessage({
+              conversationId: conversation.id,
+              content: messageContent,
+              role: 'user',
+              messageType: 'text',
+              timestamp: new Date(),
+            });
+            return res.status(200).json({ received: true, ignored: true, reason: 'Human takeover active' });
+          } else {
+            // Timeout expirado, restaurar modo agente
+            await storage.updateConversation(conversation.id, { takeoverMode: 'agent' });
+            console.log('⏰ [CHATWOOT INBOUND] Human takeover expired, AI restored for conversation', conversation.id);
+          }
+        }
+
+        // 5. Salvar mensagem do cliente no histórico
+        await storage.createMessage({
+          conversationId: conversation.id,
+          content: messageContent,
+          role: 'user',
+          messageType: 'text',
+          timestamp: new Date(),
+        });
+
+        // Responder 200 imediatamente (processamento assíncrono)
+        res.status(200).json({ received: true, processing: true });
+
+        // 6. DEBOUNCE: Agrupar mensagens rápidas do mesmo cliente
+        const cwDebounceKey = `cw:${chatwootConversationId}`;
+        chatwootLastMessageTime.set(cwDebounceKey, Date.now());
+
+        // Acumular mensagem
+        const pending = chatwootPendingMessages.get(cwDebounceKey) || [];
+        pending.push(messageContent);
+        chatwootPendingMessages.set(cwDebounceKey, pending);
+
+        // Se já está processando, a mensagem será agrupada
+        if (chatwootProcessingLocks.get(cwDebounceKey)) {
+          console.log('⏳ [CHATWOOT INBOUND] Message queued for grouping (lock active)');
+          return;
+        }
+
+        chatwootProcessingLocks.set(cwDebounceKey, true);
+
+        try {
+          // Debounce: esperar 7s de silêncio (máx 84s)
+          const DEBOUNCE_MS = 7000;
+          const MAX_ITERATIONS = 12;
+          for (let i = 0; i < MAX_ITERATIONS; i++) {
+            await new Promise(resolve => setTimeout(resolve, DEBOUNCE_MS));
+            const lastTime = chatwootLastMessageTime.get(cwDebounceKey) || 0;
+            if (Date.now() - lastTime >= DEBOUNCE_MS) break;
+          }
+
+          // Coletar todas as mensagens acumuladas
+          const allMessages = chatwootPendingMessages.get(cwDebounceKey) || [messageContent];
+          chatwootPendingMessages.delete(cwDebounceKey);
+
+          let messageText = allMessages.length > 1
+            ? allMessages.join('\n')
+            : allMessages[0];
+
+          console.log('📝 [CHATWOOT INBOUND] Processing', allMessages.length, 'grouped message(s)');
+
+          // 7. Carregar histórico de conversa (últimas 15 mensagens)
+          const recentMessages = await storage.getRecentMessages(conversation.id, 15);
+          const conversationHistory = recentMessages
+            .reverse()
+            .filter(msg => {
+              if (msg.role === 'system' || !msg.role) return false;
+              if (msg.content.includes('[PENDING_CANCEL_ID:') || msg.content.includes('[PENDING_RESCHEDULE_ID:')) return false;
+              if (msg.role === 'assistant') {
+                if (msg.content.includes('Agendamento Confirmado!') || msg.content.includes('Obrigado por escolher nossos serviços')) return false;
+              }
+              return true;
+            })
+            .map(msg => {
+              const isLikelyHumanMessage = msg.role === 'assistant' && conversation.takeoverMode === 'human';
+              if (isLikelyHumanMessage) {
+                return { role: msg.role as 'user' | 'assistant', content: `[MENSAGEM DO ATENDENTE HUMANO]: ${msg.content}` };
+              }
+              return { role: msg.role as 'user' | 'assistant', content: msg.content };
+            });
+
+          // 8. Construir system prompt (mesma lógica da pipeline WhatsApp)
+          const professionals = await storage.getProfessionalsByCompany(company.id);
+          const activeProfessionals = professionals.filter(prof => prof.active && !prof.archived);
+          const availableProfessionals = activeProfessionals.map(prof => `- ${prof.name}`).join('\n');
+
+          const autoSelectEnabled = company.autoSelectProfessional === 1;
+          const hasOnlyOneProfessional = activeProfessionals.length === 1;
+          const shouldAutoSelect = autoSelectEnabled && hasOnlyOneProfessional;
+
+          const services = await storage.getServicesByCompany(company.id);
+          let filteredServices = services.filter(service => service.isActive !== false);
+
+          // Detectar profissional mencionado
+          const lastUserMsg = messageText.toLowerCase();
+          let selectedProfessional: any = null;
+          if (shouldAutoSelect) {
+            selectedProfessional = activeProfessionals[0];
+          } else {
+            for (const prof of activeProfessionals) {
+              if (lastUserMsg.includes(prof.name.toLowerCase())) {
+                selectedProfessional = prof;
+                break;
+              }
+            }
+          }
+
+          if (selectedProfessional) {
+            filteredServices = filteredServices.filter(service => !service.professionalId || service.professionalId === selectedProfessional.id);
+          }
+
+          const formatDuration = (minutes: number): string => {
+            const hours = Math.floor(minutes / 60);
+            const mins = minutes % 60;
+            let result = '';
+            if (hours > 0) result += `${hours}h`;
+            if (mins > 0) result += `${mins}min`;
+            return result || '0min';
+          };
+
+          const availableServices = filteredServices
+            .map(service => `- ${service.name} (duração: ${formatDuration(service.duration || 30)})`)
+            .join('\n');
+
+          const availableServicesWithPrices = filteredServices
+            .map(service => `- ${service.name}: R$ ${service.price ? Number(service.price).toFixed(2) : 'Sob consulta'} (duração: ${formatDuration(service.duration || 30)})`)
+            .join('\n');
+
+          // Gerar informações de disponibilidade
+          let availabilityInfo = '';
+          let specificDateInfo = '';
+          try {
+            availabilityInfo = await generateAvailabilityTextForAI(company.id);
+          } catch (err) {
+            console.warn('⚠️ [CHATWOOT INBOUND] Error generating availability info:', err);
+          }
+
+          const today = getBrazilDate();
+          const getNextWeekdayDate = (dayName: string): string => {
+            const dayMap: { [key: string]: number } = {
+              'domingo': 0, 'segunda': 1, 'terça': 2, 'quarta': 3,
+              'quinta': 4, 'sexta': 5, 'sábado': 6
+            };
+            const targetDay = dayMap[dayName.toLowerCase()];
+            if (targetDay === undefined) return '';
+            const date = new Date();
+            const currentDay = date.getDay();
+            let daysUntilTarget = targetDay - currentDay;
+            if (daysUntilTarget === 0) daysUntilTarget = 7;
+            if (daysUntilTarget < 0) daysUntilTarget += 7;
+            date.setDate(date.getDate() + daysUntilTarget);
+            return date.toLocaleDateString('pt-BR');
+          };
+
+          const systemPrompt = `${company.aiAgentPrompt}
+
+Importante: Você está representando a empresa "${company.fantasyName}" via WhatsApp.
+
+⚠️ REGRAS DE FORMATAÇÃO DE MENSAGENS:
+- Envie APENAS texto simples, SEM formatação markdown
+- NÃO use *negrito*, _itálico_ ou ~tachado~
+- NÃO use formatação [texto](link) para links
+- Envie URLs completas e diretas quando necessário
+- Use emojis quando apropriado para deixar a conversa mais amigável
+
+🤝 INTERVENÇÕES DE ATENDENTES HUMANOS:
+- Algumas mensagens no histórico podem ter o prefixo "[MENSAGEM DO ATENDENTE HUMANO]:"
+- Continue a conversa de forma natural, levando em conta o que o atendente disse
+
+INFORMAÇÕES DA EMPRESA:
+- Nome: ${company.fantasyName}
+- Endereço: ${[company.address, company.number ? `nº ${company.number}` : null, company.neighborhood, company.city && company.state ? `${company.city}/${company.state}` : company.city || company.state].filter(Boolean).join(', ') || 'Não informado'}${company.googleMapsLocation ? `\n- Localização Google Maps: ${company.googleMapsLocation}` : ''}
+- Telefone: ${company.phone || 'Não informado'}
+- CEP: ${company.zipCode || 'Não informado'}${company.coursesDescription ? `\n\n🎓 INFORMAÇÕES SOBRE CURSOS:\n${company.coursesDescription}` : ''}
+
+HOJE É: ${today.toLocaleDateString('pt-BR')} (${['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'][today.getDay()]})
+HORÁRIO ATUAL: ${today.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+
+IMPORTANTE: NÃO aceite agendamentos para horários que já passaram!
+
+PRÓXIMOS DIAS DA SEMANA:
+- Domingo: ${getNextWeekdayDate('domingo')}
+- Segunda-feira: ${getNextWeekdayDate('segunda')}
+- Terça-feira: ${getNextWeekdayDate('terça')}
+- Quarta-feira: ${getNextWeekdayDate('quarta')}
+- Quinta-feira: ${getNextWeekdayDate('quinta')}
+- Sexta-feira: ${getNextWeekdayDate('sexta')}
+- Sábado: ${getNextWeekdayDate('sábado')}
+
+PROFISSIONAIS DISPONÍVEIS PARA AGENDAMENTO:
+${availableProfessionals || 'Nenhum profissional cadastrado no momento'}
+
+SERVIÇOS DISPONÍVEIS:
+${availableServices || 'Nenhum serviço cadastrado no momento'}
+
+PREÇOS DOS SERVIÇOS (use apenas quando o cliente PERGUNTAR especificamente sobre valores):
+${availableServicesWithPrices || 'Nenhum serviço cadastrado no momento'}
+
+${availabilityInfo}
+${specificDateInfo}
+
+Quando o cliente informar a DATA desejada, inclua na sua resposta o comando:
+[MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
+O sistema vai substituir esse comando pelos horários disponíveis automaticamente.
+
+Quando o cliente perguntar se tem um HORÁRIO ESPECÍFICO na semana:
+[VERIFICAR_HORARIO_SEMANA:NOME_PROFISSIONAL:HH:MM]
+
+Para listar agendamentos do cliente:
+[LISTAR_AGENDAMENTOS]
+
+Para listar agendamentos para cancelamento:
+[LISTAR_AGENDAMENTOS_CANCELAR]
+
+${shouldAutoSelect ? `NOTA: Há apenas um profissional (${activeProfessionals[0]?.name}). Use-o automaticamente sem perguntar.` : ''}`;
+
+          // 9. Chamar OpenAI
+          const OpenAI = (await import('openai')).default;
+          const openai = new OpenAI({ apiKey: company.openaiApiKey });
+
+          const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+            { role: 'system', content: systemPrompt },
+            ...conversationHistory,
+            { role: 'user', content: messageText },
+          ];
+
+          const completion = await openai.chat.completions.create({
+            model: company.openaiModel || 'gpt-4o-mini',
+            messages: messages,
+            temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7,
+            max_tokens: company.openaiMaxTokens || 180,
+          });
+
+          let aiResponse = completion?.choices[0]?.message?.content || 'Desculpe, não consegui processar sua mensagem.';
+
+          // 10. Processar comandos especiais da IA
+          // [LISTAR_AGENDAMENTOS]
+          if (aiResponse.includes('[LISTAR_AGENDAMENTOS]')) {
+            const appointmentsList = await listClientAppointments(customerPhone, company.id);
+            aiResponse = aiResponse.replace('[LISTAR_AGENDAMENTOS]', appointmentsList);
+          }
+
+          // [LISTAR_AGENDAMENTOS_CANCELAR]
+          if (aiResponse.includes('[LISTAR_AGENDAMENTOS_CANCELAR]')) {
+            const appointmentsList = await listClientAppointmentsNumbered(customerPhone, company.id, 'cancelar');
+            aiResponse = aiResponse.replace(/.*\[LISTAR_AGENDAMENTOS_CANCELAR\].*/g, appointmentsList);
+          }
+
+          // [VERIFICAR_HORARIO_SEMANA:professionalName:time]
+          const verificarHorarioMatch = aiResponse.match(/\[VERIFICAR_HORARIO_SEMANA:([^:]+):(\d{1,2}:\d{2})\]/);
+          if (verificarHorarioMatch) {
+            const [fullMatch, professionalIdentifier, targetTime] = verificarHorarioMatch;
+            const companyProfessionals = await storage.getProfessionalsByCompany(company.id);
+            const profName = professionalIdentifier.trim().toLowerCase();
+            let foundProfessional = companyProfessionals.find(p => p.name.toLowerCase() === profName)
+              || companyProfessionals.find(p => p.name.toLowerCase().includes(profName) || p.name.toLowerCase().split(' ')[0] === profName);
+            if (foundProfessional) {
+              const resultado = await checkSpecificTimeAvailability(company.id, foundProfessional.id, targetTime, 7);
+              aiResponse = aiResponse.replace(fullMatch, resultado);
+            } else {
+              aiResponse = aiResponse.replace(fullMatch, `Desculpe, não consegui identificar o profissional "${professionalIdentifier}".`);
+            }
+          }
+
+          // [MOSTRAR_HORARIOS_LIVRES:service:professional:date]
+          let horariosMatch;
+          while ((horariosMatch = aiResponse.match(/\[MOSTRAR_HORARIOS_LIVRES:([^:]+):([^:]+):(\d{4}-\d{2}-\d{2})\]/)) !== null) {
+            const [fullMatch, serviceIdentifier, professionalIdentifier, dateStr] = horariosMatch;
+            const companyServices = await storage.getServicesByCompany(company.id);
+            const companyProfessionals = await storage.getProfessionalsByCompany(company.id);
+
+            // Resolver serviço
+            const serviceName = serviceIdentifier.trim().toLowerCase();
+            let foundService = companyServices.find(s => s.name.toLowerCase() === serviceName);
+            if (!foundService) {
+              const matching = companyServices.filter(s => s.name.toLowerCase().includes(serviceName) || serviceName.includes(s.name.toLowerCase()));
+              foundService = matching.length === 1 ? matching[0] : matching.sort((a, b) => a.name.length - b.name.length)[0];
+            }
+
+            // Resolver profissional
+            const profNameLower = professionalIdentifier.trim().toLowerCase();
+            let foundProfessional = companyProfessionals.find(p => p.name.toLowerCase() === profNameLower);
+            if (!foundProfessional) {
+              const matching = companyProfessionals.filter(p => p.name.toLowerCase().includes(profNameLower) || p.name.toLowerCase().split(' ')[0] === profNameLower);
+              foundProfessional = matching[0];
+            }
+
+            if (foundService && foundProfessional) {
+              const horariosLivres = await getAvailableTimesForService(company.id, foundService.id, foundProfessional.id, dateStr);
+              aiResponse = aiResponse.replace(fullMatch, horariosLivres);
+            } else {
+              let errorMsg = 'Desculpe, não consegui identificar ';
+              if (!foundService && !foundProfessional) errorMsg += `o serviço "${serviceIdentifier}" nem o profissional "${professionalIdentifier}".`;
+              else if (!foundService) errorMsg += `o serviço "${serviceIdentifier}".`;
+              else errorMsg += `o profissional "${professionalIdentifier}".`;
+              aiResponse = aiResponse.replace(fullMatch, errorMsg + ' Pode me informar novamente?');
+            }
+          }
+
+          // Validar disponibilidade na resposta
+          aiResponse = await validateAvailabilityInResponse(aiResponse, company.id, activeProfessionals);
+
+          console.log('🤖 [CHATWOOT INBOUND] AI response:', aiResponse.substring(0, 150));
+
+          // 11. Enviar resposta via Chatwoot API
+          const chatwootService = new ChatwootService({
+            baseUrl: company.chatwootBaseUrl,
+            apiAccessToken: company.chatwootApiToken,
+            accountId: company.chatwootAccountId,
+            inboxId: company.chatwootInboxId,
+          });
+
+          await chatwootService.sendMessage(
+            chatwootConversationId,
+            aiResponse,
+            'outgoing'
+          );
+
+          console.log('📤 [CHATWOOT INBOUND] AI response sent to Chatwoot conversation', chatwootConversationId);
+
+          // 12. Salvar resposta no histórico interno
+          await storage.createMessage({
+            conversationId: conversation.id,
+            content: aiResponse,
+            role: 'assistant',
+            messageType: 'text',
+            delivered: true,
+            timestamp: new Date(),
+          });
+
+          // 13. Cache anti-loop: quando o Chatwoot ecoa esta resposta como message_created outgoing
+          cacheAIResponse(conversation.id, aiResponse);
+          console.log('🤖 [CHATWOOT INBOUND] Response cached for echo detection');
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        } catch (aiErr: any) {
+          console.error('❌ [CHATWOOT INBOUND] AI processing error:', aiErr.message);
+        } finally {
+          chatwootProcessingLocks.delete(cwDebounceKey);
+          chatwootLastMessageTime.delete(cwDebounceKey);
+        }
+
+        return; // Response already sent (200 above)
       }
 
       // ────────────────────────────────────────────────
