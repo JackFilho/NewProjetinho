@@ -7469,11 +7469,47 @@ if (ignoredNumbers !== undefined) {
         console.log('💾 [CHATWOOT WEBHOOK] Agent message saved to conversation history');
       }
 
+      // ────────────────────────────────────────────────
+      // OUTBOUND: Enviar mensagem do agente para o WhatsApp via Meta Cloud API
+      // ────────────────────────────────────────────────
+      if (agentContent) {
+        try {
+          const instance = await storage.getWhatsappInstance(matchingConversation.whatsappInstanceId);
+          if (!instance || !instance.metaPhoneNumberId || !instance.metaAccessToken) {
+            console.warn('⚠️ [CHATWOOT OUTBOUND] WhatsApp instance not found or missing Meta credentials for instance', matchingConversation.whatsappInstanceId);
+          } else {
+            // Número do destinatário: usar o phoneNumber da conversa (cliente)
+            // Precisa estar no formato internacional (ex: 5581994526071)
+            let recipientPhone = matchingConversation.phoneNumber.replace(/[@s.whatsapp.net]/g, '').replace(/[^\d]/g, '');
+            // Se não tem código do país (Brasil), adicionar 55
+            if (recipientPhone.length <= 11 && !recipientPhone.startsWith('55')) {
+              recipientPhone = '55' + recipientPhone;
+            }
+
+            const metaService = createMetaWhatsAppService({
+              phoneNumberId: instance.metaPhoneNumberId,
+              wabaId: instance.metaWabaId || '',
+              accessToken: instance.metaAccessToken,
+            });
+
+            const result = await metaService.sendText({
+              to: recipientPhone,
+              text: agentContent,
+            });
+
+            console.log('📤 [CHATWOOT OUTBOUND] Message sent to WhatsApp via Meta API');
+            console.log('📤 [CHATWOOT OUTBOUND] Recipient:', recipientPhone, '| Meta msg ID:', result?.messages?.[0]?.id || 'unknown');
+          }
+        } catch (outboundErr: any) {
+          console.error('❌ [CHATWOOT OUTBOUND] Failed to send message to WhatsApp:', outboundErr.message);
+        }
+      }
+
       console.log('🤝 [CHATWOOT WEBHOOK] Human takeover activated for conversation', matchingConversation.id);
       console.log('🚫 [CHATWOOT WEBHOOK] AI blocked for this conversation');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-      return res.status(200).json({ received: true, processed: true, takeover: true });
+      return res.status(200).json({ received: true, processed: true, takeover: true, messageSent: true });
 
     } catch (error: any) {
       console.error('❌ [CHATWOOT WEBHOOK] Error:', error.message);
