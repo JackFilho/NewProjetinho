@@ -15,6 +15,8 @@
 
 import { Router, Request, Response } from 'express';
 import { eq } from 'drizzle-orm';
+import path from 'path';
+import fs from 'fs';
 import { db } from '../db';
 import { webhookEvents } from '../../shared/schema';
 import { MetaWhatsAppService, MetaWebhookMessage } from './meta-whatsapp';
@@ -373,6 +375,64 @@ export function handleEvents(deps: MetaWebhookDeps) {
 // MESSAGE PROCESSOR (reaproveitado do handler anterior)
 // =====================================================================
 
+/**
+ * Transcreve áudio usando OpenAI Whisper.
+ * Retorna o texto transcrito ou null em caso de erro.
+ */
+async function transcribeAudioFromBuffer(audioBuffer: Buffer, openaiApiKey: string): Promise<string | null> {
+  try {
+    const OpenAI = (await import('openai')).default;
+    const openai = new OpenAI({ apiKey: openaiApiKey });
+
+    // Detectar extensão pelo header do arquivo
+    let extension = 'ogg';
+    if (audioBuffer.length > 4) {
+      const header = audioBuffer.subarray(0, 4);
+      const headerStr = header.toString('ascii', 0, 4);
+      if (header[0] === 0xFF && (header[1] & 0xF0) === 0xF0) extension = 'mp3';
+      else if (headerStr === 'OggS') extension = 'ogg';
+      else if (headerStr === 'RIFF') extension = 'wav';
+      else if (headerStr.includes('ftyp')) extension = 'm4a';
+    }
+
+    const tempFilePath = path.join('/tmp', `meta_audio_${Date.now()}.${extension}`);
+    fs.writeFileSync(tempFilePath, audioBuffer);
+
+    try {
+      const transcription = await openai.audio.transcriptions.create({
+        file: fs.createReadStream(tempFilePath) as any,
+        model: 'whisper-1',
+        language: 'pt',
+      });
+      return transcription.text || null;
+    } finally {
+      try { fs.unlinkSync(tempFilePath); } catch {}
+    }
+  } catch (err) {
+    console.error('[meta-webhook] audio transcription error:', err);
+    return null;
+  }
+}
+
+/**
+ * Mapeia tipo de mídia para extensão e filename legível.
+ */
+function getMediaFileInfo(type: string, mimeType?: string): { extension: string; filename: string } {
+  const mimeToExt: Record<string, string> = {
+    'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/wav': 'wav',
+    'audio/aac': 'aac', 'audio/amr': 'amr',
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+    'video/mp4': 'mp4', 'video/3gpp': '3gp',
+    'application/pdf': 'pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  };
+
+  const ext = (mimeType && mimeToExt[mimeType]) || type;
+  const prefix = type === 'ptt' ? 'audio' : type;
+  return { extension: ext, filename: `${prefix}_${Date.now()}.${ext}` };
+}
+
 async function processIncomingMetaMessage(
   message: NormalizedIncomingMessage,
   deps: MetaWebhookDeps
@@ -415,18 +475,63 @@ async function processIncomingMetaMessage(
       'meta_official'
     );
 
-    const textContent = message.text || `[${message.type}]`;
+    // ── Processar mídia (áudio, imagem, vídeo, documento) ──
+    const isMediaMessage = ['audio', 'ptt', 'image', 'video', 'document', 'sticker'].includes(message.type);
+    const isAudioMessage = message.type === 'audio' || message.type === 'ptt';
+
+    let mediaBuffer: Buffer | null = null;
+    let mediaFilename: string = '';
+    let mediaMimeType: string = '';
+    let transcribedText: string | null = null;
+
+    if (isMediaMessage && message.media?.id) {
+      try {
+        // Criar serviço Meta para baixar mídia
+        const metaService = new MetaWhatsAppService({
+          phoneNumberId: instance.metaPhoneNumberId,
+          wabaId: instance.metaWabaId,
+          accessToken: instance.metaAccessToken,
+        });
+
+        // 1. Obter URL de download da mídia
+        const mediaInfo = await metaService.getMediaUrl(message.media.id);
+        console.log('[meta-webhook] media URL obtained | type=%s mime=%s', message.type, mediaInfo.mime_type);
+
+        // 2. Baixar o arquivo de mídia
+        mediaBuffer = await metaService.downloadMedia(mediaInfo.url);
+        mediaMimeType = mediaInfo.mime_type || message.media.mimeType || 'application/octet-stream';
+
+        const fileInfo = getMediaFileInfo(message.type, mediaMimeType);
+        mediaFilename = message.media.filename || fileInfo.filename;
+
+        console.log('[meta-webhook] media downloaded | size=%d bytes filename=%s', mediaBuffer.length, mediaFilename);
+
+        // 3. Para áudio: transcrever com Whisper
+        if (isAudioMessage && company.openaiApiKey) {
+          transcribedText = await transcribeAudioFromBuffer(mediaBuffer, company.openaiApiKey);
+          if (transcribedText) {
+            console.log('[meta-webhook] audio transcribed | text="%s"', transcribedText.substring(0, 100));
+          }
+        }
+      } catch (mediaErr) {
+        console.warn('[meta-webhook] media download/processing error:', mediaErr);
+        // Continua sem mídia - envia como texto
+      }
+    }
+
+    // Determinar conteúdo textual para persistir
+    const textForDb = transcribedText || message.text || `[${message.type}]`;
     await deps.saveMessage(
       conversation.id,
       'user',
-      textContent,
+      textForDb,
       message.messageId,
       message.type
     );
 
     console.log('[meta-webhook] message persisted | conversation=%d', conversation.id);
 
-    // Chatwoot sync
+    // ── Chatwoot sync (com mídia quando disponível) ──
     if (company.chatwootEnabled && company.chatwootBaseUrl && company.chatwootApiToken) {
       try {
         const chatwoot = new ChatwootService({
@@ -435,20 +540,47 @@ async function processIncomingMetaMessage(
           accountId: company.chatwootAccountId,
           inboxId: company.chatwootInboxId,
         });
-        await chatwoot.syncIncomingMessage(
-          message.from,
-          message.contactName,
-          textContent,
-          company.chatwootInboxId
-        );
+
+        if (mediaBuffer && mediaFilename) {
+          // Enviar com arquivo anexo
+          let chatwootContent = '';
+          if (isAudioMessage && transcribedText) {
+            chatwootContent = `[Transcrição do áudio]: ${transcribedText}`;
+          } else if (message.text || message.media?.caption) {
+            chatwootContent = message.text || message.media?.caption || '';
+          }
+
+          await chatwoot.syncIncomingMediaMessage(
+            message.from,
+            message.contactName,
+            chatwootContent,
+            mediaBuffer,
+            mediaFilename,
+            mediaMimeType,
+            company.chatwootInboxId
+          );
+          console.log('[meta-webhook] chatwoot media synced | type=%s', message.type);
+        } else {
+          // Mensagem de texto simples
+          await chatwoot.syncIncomingMessage(
+            message.from,
+            message.contactName,
+            textForDb,
+            company.chatwootInboxId
+          );
+        }
       } catch (chatwootErr) {
         console.warn('[meta-webhook] chatwoot sync failed:', chatwootErr);
       }
     }
 
-    // AI agent callback
+    // AI agent callback (com texto transcrito para áudio)
     if (deps.onMessageReceived) {
-      await deps.onMessageReceived({ message, company, instance, conversation });
+      // Enriquecer a mensagem com a transcrição para o AI agent
+      const enrichedMessage = transcribedText
+        ? { ...message, text: transcribedText, originalType: message.type }
+        : message;
+      await deps.onMessageReceived({ message: enrichedMessage as any, company, instance, conversation });
     }
   } catch (err) {
     console.error('[meta-webhook] message processing error:', err);

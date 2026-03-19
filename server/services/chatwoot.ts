@@ -311,6 +311,47 @@ export class ChatwootService {
     );
   }
 
+  /**
+   * Enviar mensagem com arquivo anexo (multipart/form-data).
+   * Usa a API de mensagens do Chatwoot que aceita file uploads.
+   * Ideal para enviar áudio, imagens, vídeos e documentos.
+   */
+  async sendMessageWithFile(
+    conversationId: number,
+    content: string,
+    fileBuffer: Buffer,
+    filename: string,
+    mimeType: string,
+    messageType: 'incoming' | 'outgoing' = 'incoming',
+    isPrivate: boolean = false
+  ): Promise<ChatwootMessage> {
+    const url = `${this.baseApiUrl}/conversations/${conversationId}/messages`;
+
+    const formData = new FormData();
+    formData.append('content', content);
+    formData.append('message_type', messageType);
+    formData.append('private', String(isPrivate));
+    formData.append('attachments[]', new Blob([fileBuffer], { type: mimeType }), filename);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'api_access_token': this.config.apiAccessToken,
+      },
+      body: formData,
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const errorMsg = (data as any)?.error || (data as any)?.message || `Chatwoot API Error: ${response.status}`;
+      console.error('[chatwoot] sendMessageWithFile error:', data);
+      throw new Error(errorMsg);
+    }
+
+    return data as ChatwootMessage;
+  }
+
   /** Listar mensagens de uma conversa */
   async getMessages(conversationId: number, before?: number): Promise<ChatwootMessage[]> {
     let endpoint = `/conversations/${conversationId}/messages`;
@@ -434,6 +475,47 @@ export class ChatwootService {
     const message = await this.sendMessage(
       conversation.id,
       messageContent,
+      'incoming'
+    );
+
+    return { contact, conversation, message };
+  }
+
+  /**
+   * Sincroniza uma mensagem com mídia (áudio, imagem, vídeo, documento) para o Chatwoot.
+   * Baixa a mídia e envia como anexo via multipart/form-data.
+   *
+   * @param phone - Número de telefone do remetente
+   * @param contactName - Nome do contato
+   * @param messageContent - Texto da mensagem (ou transcrição para áudio)
+   * @param mediaBuffer - Buffer do arquivo de mídia
+   * @param mediaFilename - Nome do arquivo
+   * @param mediaMimeType - MIME type do arquivo
+   * @param inboxId - ID da inbox (opcional)
+   */
+  async syncIncomingMediaMessage(
+    phone: string,
+    contactName: string,
+    messageContent: string,
+    mediaBuffer: Buffer,
+    mediaFilename: string,
+    mediaMimeType: string,
+    inboxId?: number
+  ): Promise<{ contact: ChatwootContact; conversation: ChatwootConversation; message: ChatwootMessage }> {
+    // 1. Criar ou encontrar contato
+    const contact = await this.findOrCreateContact(contactName, phone);
+    if (!contact.id) throw new Error('Falha ao criar contato no Chatwoot');
+
+    // 2. Criar ou encontrar conversa
+    const conversation = await this.findOrCreateConversation(contact.id, inboxId);
+
+    // 3. Enviar mensagem com arquivo anexo como incoming
+    const message = await this.sendMessageWithFile(
+      conversation.id,
+      messageContent,
+      mediaBuffer,
+      mediaFilename,
+      mediaMimeType,
       'incoming'
     );
 
