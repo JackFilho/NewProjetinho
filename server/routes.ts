@@ -7626,6 +7626,305 @@ if (ignoredNumbers !== undefined) {
               return { role: msg.role as 'user' | 'assistant', content: msg.content };
             });
 
+          // ========================================
+          // 7.5 INTERCEPTORES PRÉ-IA (cancel/reschedule/número)
+          // Mesma lógica do fluxo WhatsApp - processa ANTES de chamar a IA
+          // ========================================
+          const lowerMsgCW = messageText.toLowerCase().trim();
+          const cancelKeywordsCW = ['cancelar', 'desmarcar', 'não vou poder ir', 'preciso cancelar', 'não vou conseguir ir', 'não vou mais', 'quero desmarcar', 'preciso desmarcar'];
+          const rescheduleKeywordsCW = ['remarcar', 'reagendar', 'alterar horário', 'alterar horario', 'mudar data', 'trocar horário', 'trocar horario', 'mudar horário', 'mudar horario', 'adiar'];
+          const hasCancelKeywordCW = cancelKeywordsCW.some(kw => lowerMsgCW.includes(kw));
+          const hasRescheduleKeywordCW = rescheduleKeywordsCW.some(kw => lowerMsgCW.includes(kw));
+
+          // Verificar contexto para não interceptar "cancelar" como confirmação
+          const lastBotMsgCWIntercept = conversationHistory.filter((m: any) => m.role === 'assistant').slice(-1)[0]?.content || '';
+          const isAlreadyInCancelConfirmationCW = lastBotMsgCWIntercept.includes('Confirma o cancelamento?') ||
+            lastBotMsgCWIntercept.includes('CANCELAR* para confirmar') ||
+            lastBotMsgCWIntercept.includes('CANCELAR para confirmar') ||
+            lastBotMsgCWIntercept.includes('SIM* para cancelar') ||
+            lastBotMsgCWIntercept.includes('SIM para cancelar');
+
+          // ========================================
+          // INTERCEPTOR: Cancelamento/Reagendamento keywords
+          // ========================================
+          if ((hasCancelKeywordCW || hasRescheduleKeywordCW) && !isAlreadyInCancelConfirmationCW) {
+            console.log(`🔄 [CHATWOOT INBOUND] Interceptado: ${hasCancelKeywordCW ? 'cancelamento' : 'reagendamento'}`);
+
+            const appointmentsList = await listClientAppointmentsNumbered(customerPhone, company.id, hasCancelKeywordCW ? 'cancelar' : 'remarcar');
+            let interceptResponse = '';
+
+            if (hasRescheduleKeywordCW) {
+              interceptResponse = `Para reagendar, primeiro preciso cancelar o agendamento atual. Vou verificar seus agendamentos...\n\n${appointmentsList}`;
+            } else {
+              interceptResponse = `Vou verificar seus agendamentos...\n\n${appointmentsList}`;
+            }
+
+            const chatwootServiceIntercept = new ChatwootService({
+              baseUrl: company.chatwootBaseUrl,
+              apiAccessToken: company.chatwootApiToken,
+              accountId: company.chatwootAccountId,
+              inboxId: company.chatwootInboxId,
+            });
+            await chatwootServiceIntercept.sendMessage(chatwootConversationId, interceptResponse, 'outgoing');
+            await storage.createMessage({
+              conversationId: conversation.id,
+              content: interceptResponse,
+              role: 'assistant',
+              messageType: 'text',
+              delivered: true,
+              timestamp: new Date(),
+            });
+            cacheAIResponse(conversation.id, interceptResponse);
+            console.log('📤 [CHATWOOT INBOUND] Cancel/reschedule intercepted, response sent');
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            chatwootProcessingLocks.delete(cwDebounceKey);
+            chatwootLastMessageTime.delete(cwDebounceKey);
+            return;
+          }
+
+          // ========================================
+          // INTERCEPTOR: Seleção por número (após listagem de agendamentos)
+          // ========================================
+          const wasListingForCancelCW = lastBotMsgCWIntercept.includes('Qual agendamento você deseja cancelar') ||
+            lastBotMsgCWIntercept.includes('Qual agendamento você deseja remarcar');
+
+          // Função para extrair número
+          const extractNumberFromTextCW = (text: string, listMessage: string): number | null => {
+            const lowerText = text.toLowerCase().trim();
+            const writtenNumbers: { [key: string]: number } = {
+              'um': 1, 'uma': 1, 'primeiro': 1, 'primeira': 1,
+              'dois': 2, 'duas': 2, 'segundo': 2,
+              'tres': 3, 'três': 3, 'terceiro': 3,
+              'quatro': 4, 'cinco': 5, 'seis': 6, 'sete': 7, 'oito': 8, 'nove': 9, 'dez': 10
+            };
+            const directMatch = lowerText.match(/^[1-9]$|^10$/);
+            if (directMatch) return parseInt(directMatch[0]);
+            const phraseMatch = lowerText.match(/(?:o|a|opção|opcao|agendamento|número|numero)\s*(\d+)/);
+            if (phraseMatch && parseInt(phraseMatch[1]) >= 1 && parseInt(phraseMatch[1]) <= 10) return parseInt(phraseMatch[1]);
+            // Dia da semana matching
+            const daysOfWeek: { [key: string]: string } = {
+              'domingo': 'Domingo', 'segunda': 'Segunda', 'terça': 'Terça', 'terca': 'Terça',
+              'quarta': 'Quarta', 'quinta': 'Quinta', 'sexta': 'Sexta', 'sábado': 'Sábado', 'sabado': 'Sábado'
+            };
+            for (const [dayKey, dayName] of Object.entries(daysOfWeek)) {
+              if (lowerText.includes(dayKey)) {
+                const numberEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+                for (let i = 0; i < numberEmojis.length; i++) {
+                  const emojiPattern = new RegExp(`${numberEmojis[i]}\\s*${dayName}`, 'i');
+                  if (emojiPattern.test(listMessage)) return i + 1;
+                }
+                break;
+              }
+            }
+            for (const [word, num] of Object.entries(writtenNumbers)) {
+              if (['segunda', 'quarta', 'quinta', 'sexta'].includes(word)) continue;
+              if (lowerText.includes(word)) return num;
+            }
+            const anyNumberMatch = lowerText.match(/\b(\d+)\b/);
+            if (anyNumberMatch && parseInt(anyNumberMatch[1]) >= 1 && parseInt(anyNumberMatch[1]) <= 10) return parseInt(anyNumberMatch[1]);
+            return null;
+          };
+
+          const selectedNumberCW = extractNumberFromTextCW(messageText, lastBotMsgCWIntercept);
+
+          if (wasListingForCancelCW && selectedNumberCW) {
+            console.log(`📋 [CHATWOOT INBOUND] Usuário escolheu agendamento número: ${selectedNumberCW}`);
+
+            const cleanPhoneCW = customerPhone.replace(/\D/g, '');
+            const nowBrasiliaCW = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+            const todayStrCW = nowBrasiliaCW.toISOString().split('T')[0];
+
+            const [aptRowsCW] = await pool.execute(`
+              SELECT a.id, a.appointment_date as appointmentDate, a.appointment_time as appointmentTime,
+                     a.status, a.professional_id as professionalId, a.service_id as serviceId
+              FROM appointments a
+              LEFT JOIN professionals p ON a.professional_id = p.id
+              WHERE REPLACE(REPLACE(REPLACE(a.client_phone, '-', ''), ' ', ''), '(', '') LIKE ?
+                AND a.appointment_date >= ?
+                AND a.status IN ('Pendente', 'Confirmado', 'confirmado', 'pendente', 'agendado', 'Agendado', 'scheduled', 'confirmed')
+                AND p.company_id = ?
+              ORDER BY a.appointment_date ASC, a.appointment_time ASC
+              LIMIT 10
+            `, [`%${cleanPhoneCW}%`, todayStrCW, company.id]);
+
+            const clientAppointmentsCW = aptRowsCW as any[];
+            let numberSelectionResponse = '';
+
+            if (selectedNumberCW <= clientAppointmentsCW.length) {
+              const selectedApt = clientAppointmentsCW[selectedNumberCW - 1];
+              const profInfo = await storage.getProfessional(selectedApt.professionalId);
+              const svcInfo = await storage.getService(selectedApt.serviceId);
+              const aptDate = new Date(selectedApt.appointmentDate);
+              const dayNamesCW = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+
+              numberSelectionResponse = `✅ Agendamento selecionado:\n\n📅 ${dayNamesCW[aptDate.getDay()]}, ${aptDate.toLocaleDateString('pt-BR')} às ${selectedApt.appointmentTime}\n💼 ${svcInfo?.name || 'Serviço'}\n👤 ${profInfo?.name || 'Profissional'}\n\nConfirma o cancelamento? Digite CANCELAR para confirmar ou NÃO para manter o agendamento.`;
+
+              // Salvar PENDING_CANCEL_ID
+              await pool.execute(
+                `INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)`,
+                [conversation.id, 'system', `[PENDING_CANCEL_ID:${selectedApt.id}]`]
+              );
+            } else {
+              numberSelectionResponse = `❌ Número inválido. Por favor, escolha um número entre 1 e ${clientAppointmentsCW.length}.`;
+            }
+
+            const chatwootServiceNum = new ChatwootService({
+              baseUrl: company.chatwootBaseUrl,
+              apiAccessToken: company.chatwootApiToken,
+              accountId: company.chatwootAccountId,
+              inboxId: company.chatwootInboxId,
+            });
+            await chatwootServiceNum.sendMessage(chatwootConversationId, numberSelectionResponse, 'outgoing');
+            await storage.createMessage({
+              conversationId: conversation.id,
+              content: numberSelectionResponse,
+              role: 'assistant',
+              messageType: 'text',
+              delivered: true,
+              timestamp: new Date(),
+            });
+            cacheAIResponse(conversation.id, numberSelectionResponse);
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            chatwootProcessingLocks.delete(cwDebounceKey);
+            chatwootLastMessageTime.delete(cwDebounceKey);
+            return;
+          }
+
+          // ========================================
+          // INTERCEPTOR: Confirmação de cancelamento (CANCELAR/SIM após PENDING_CANCEL_ID)
+          // ========================================
+          const isConfirmingCancelWordCW = /^(cancelar|cancela|cancelamento)$/i.test(lowerMsgCW);
+          const isConfirmingSIMCW = /^(sim|sin|sím|sii|s|ok|confirmo|confirmar)[!.?]*$/i.test(lowerMsgCW);
+          const isAskingCancelConfirmationCW = isAlreadyInCancelConfirmationCW ||
+            lastBotMsgCWIntercept.includes('deseja cancelar o agendamento') ||
+            lastBotMsgCWIntercept.includes('deseja cancelar seu agendamento') ||
+            lastBotMsgCWIntercept.includes('Qual agendamento você deseja cancelar') ||
+            (lastBotMsgCWIntercept.includes('cancelar') && lastBotMsgCWIntercept.includes('Posso prosseguir'));
+
+          if ((isConfirmingCancelWordCW || isConfirmingSIMCW) && isAskingCancelConfirmationCW) {
+            console.log('✅ [CHATWOOT INBOUND] Confirmação de cancelamento detectada');
+
+            const allMsgsCW = await storage.getMessagesByConversation(conversation.id);
+            const pendingCancelMsgCW = allMsgsCW.find((m: any) => m.content.includes('[PENDING_CANCEL_ID:'));
+
+            let cancelResponse = '';
+
+            if (pendingCancelMsgCW) {
+              const idMatchCW = pendingCancelMsgCW.content.match(/\[PENDING_CANCEL_ID:(\d+)\]/);
+              if (idMatchCW) {
+                const aptIdCW = parseInt(idMatchCW[1]);
+                const cancelResultCW = await cancelAppointmentById(aptIdCW, company.id);
+
+                if (cancelResultCW.success) {
+                  cancelResponse = '✅ Agendamento cancelado com sucesso!\n\nSeu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é só me avisar!';
+                  await pool.execute(
+                    `DELETE FROM messages WHERE conversation_id = ? AND content LIKE '%[PENDING_CANCEL_ID:%'`,
+                    [conversation.id]
+                  );
+                  clearAvailabilityCache(company.id);
+                } else {
+                  cancelResponse = `❌ ${cancelResultCW.message}`;
+                }
+              }
+            } else {
+              // Fallback: extrair dados da mensagem
+              const dateMatchCW = lastBotMsgCWIntercept.match(/📅\s+[^,]+,\s+(\d{2}\/\d{2}\/\d{4})\s+às\s+(\d{1,2}:\d{2})/);
+              if (dateMatchCW) {
+                const datePartsCW = dateMatchCW[1].match(/(\d{2})\/(\d{2})\/(\d{4})/);
+                if (datePartsCW) {
+                  const parsedDateCW = `${datePartsCW[3]}-${datePartsCW[2]}-${datePartsCW[1]}`;
+                  const parsedTimeCW = dateMatchCW[2].padStart(5, '0');
+                  const cleanPhoneFB = customerPhone.replace(/\D/g, '');
+
+                  const [fbRows] = await pool.execute(`
+                    SELECT a.id FROM appointments a
+                    LEFT JOIN professionals p ON a.professional_id = p.id
+                    WHERE REPLACE(REPLACE(REPLACE(a.client_phone, '-', ''), ' ', ''), '(', '') LIKE ?
+                      AND a.appointment_date = ? AND a.appointment_time = ?
+                      AND a.status IN ('Pendente', 'Confirmado', 'confirmado', 'pendente', 'agendado', 'Agendado', 'scheduled', 'confirmed')
+                      AND p.company_id = ?
+                    LIMIT 1
+                  `, [`%${cleanPhoneFB}%`, parsedDateCW, parsedTimeCW, company.id]);
+
+                  const fbApts = fbRows as any[];
+                  if (fbApts.length > 0) {
+                    const cancelResultFB = await cancelAppointmentById(fbApts[0].id, company.id);
+                    cancelResponse = cancelResultFB.success
+                      ? '✅ Agendamento cancelado com sucesso!\n\nSeu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é só me avisar!'
+                      : `❌ ${cancelResultFB.message}`;
+                    if (cancelResultFB.success) clearAvailabilityCache(company.id);
+                  } else {
+                    cancelResponse = '❌ Não consegui encontrar o agendamento para cancelar. Por favor, tente novamente.';
+                  }
+                }
+              } else {
+                cancelResponse = '❌ Ocorreu um erro ao processar o cancelamento. Por favor, tente novamente desde o início.';
+              }
+            }
+
+            if (cancelResponse) {
+              const chatwootServiceCancel = new ChatwootService({
+                baseUrl: company.chatwootBaseUrl,
+                apiAccessToken: company.chatwootApiToken,
+                accountId: company.chatwootAccountId,
+                inboxId: company.chatwootInboxId,
+              });
+              await chatwootServiceCancel.sendMessage(chatwootConversationId, cancelResponse, 'outgoing');
+              await storage.createMessage({
+                conversationId: conversation.id,
+                content: cancelResponse,
+                role: 'assistant',
+                messageType: 'text',
+                delivered: true,
+                timestamp: new Date(),
+              });
+              cacheAIResponse(conversation.id, cancelResponse);
+            }
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            chatwootProcessingLocks.delete(cwDebounceKey);
+            chatwootLastMessageTime.delete(cwDebounceKey);
+            return;
+          }
+
+          // ========================================
+          // INTERCEPTOR: Recusa de cancelamento ("Não")
+          // ========================================
+          if (/^(não|nao|no|nope)[!.?]*$/i.test(lowerMsgCW) && isAlreadyInCancelConfirmationCW) {
+            console.log('❌ [CHATWOOT INBOUND] Cancelamento recusado pelo cliente');
+            // Limpar PENDING_CANCEL_ID
+            await pool.execute(
+              `DELETE FROM messages WHERE conversation_id = ? AND content LIKE '%[PENDING_CANCEL_ID:%'`,
+              [conversation.id]
+            );
+            const noCancelResponse = 'Ok, seu agendamento foi mantido! Se precisar de algo mais, é só me avisar.';
+            const chatwootServiceNo = new ChatwootService({
+              baseUrl: company.chatwootBaseUrl,
+              apiAccessToken: company.chatwootApiToken,
+              accountId: company.chatwootAccountId,
+              inboxId: company.chatwootInboxId,
+            });
+            await chatwootServiceNo.sendMessage(chatwootConversationId, noCancelResponse, 'outgoing');
+            await storage.createMessage({
+              conversationId: conversation.id,
+              content: noCancelResponse,
+              role: 'assistant',
+              messageType: 'text',
+              delivered: true,
+              timestamp: new Date(),
+            });
+            cacheAIResponse(conversation.id, noCancelResponse);
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            chatwootProcessingLocks.delete(cwDebounceKey);
+            chatwootLastMessageTime.delete(cwDebounceKey);
+            return;
+          }
+
+          // Atualizar contactName se disponível
+          const cwContact = (payload.conversation?.meta?.sender || payload.sender || {});
+          if (cwContact.name && cwContact.name !== customerPhone) {
+            await storage.updateConversation(conversation.id, { contactName: cwContact.name });
+          }
+
           // 8. Construir system prompt (mesma lógica da pipeline WhatsApp)
           const professionals = await storage.getProfessionalsByCompany(company.id);
           const activeProfessionals = professionals.filter(prof => prof.active && !prof.archived);
@@ -8107,8 +8406,22 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
             }
           }
 
+          // Fallback: [MOSTRAR_HORARIOS_LIVRES] malformado (sem data)
+          let horariosLivresMalformadoCW;
+          while ((horariosLivresMalformadoCW = aiResponse.match(/\[MOSTRAR_HORARIOS_LIVRES:([^\]]+)\]/)) !== null) {
+            if (/\d{4}-\d{2}-\d{2}/.test(horariosLivresMalformadoCW[1])) break;
+            console.log('⚠️ [CHATWOOT INBOUND] Comando MOSTRAR_HORARIOS_LIVRES malformado (sem data):', horariosLivresMalformadoCW[0]);
+            aiResponse = aiResponse.replace(horariosLivresMalformadoCW[0], 'Em qual dia você gostaria de agendar?');
+          }
+
           // Validar disponibilidade na resposta
           aiResponse = await validateAvailabilityInResponse(aiResponse, company.id, activeProfessionals);
+
+          // Limpeza: remover perguntas extras após mensagem de sucesso
+          if (aiResponse.toLowerCase().includes('agendamento realizado com sucesso') ||
+              aiResponse.toLowerCase().includes('agendamento confirmado')) {
+            aiResponse = aiResponse.replace(/\n*(?:Qualquer dúvida|Se precisar|Estamos à disposição|estou por aqui)[^\n]*$/gi, '').trim();
+          }
 
           console.log('🤖 [CHATWOOT INBOUND] AI response:', aiResponse.substring(0, 150));
 
@@ -8144,7 +8457,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 
           // ========================================
           // 14. DETECÇÃO DE CONFIRMAÇÃO E CRIAÇÃO DE AGENDAMENTO
-          // (mesma lógica do fluxo WhatsApp)
+          // (mesma lógica completa do fluxo WhatsApp)
           // ========================================
           const confirmationPatternsCW = [
             /^(sim|sin|sím|sii|s|ok|confirmo|confirmar|confirmado)[!.?]*$/i,
@@ -8162,38 +8475,81 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
           ));
 
           if (isUserConfirmingCW) {
-            // Verificar contexto: última mensagem da IA pede confirmação de agendamento?
             const lastAssistantMsgCW = conversationHistory.filter((m: any) => m.role === 'assistant').slice(-1)[0]?.content || '';
 
-            // Verificar se é pós-confirmação (não criar duplicata)
+            // Contextos que NÃO devem criar agendamento
             const isPostConfirmationCW =
               lastAssistantMsgCW.includes('Agendamento realizado com sucesso') ||
               lastAssistantMsgCW.includes('Nos vemos no dia') ||
               lastAssistantMsgCW.includes('Nos vemos na') ||
+              lastAssistantMsgCW.includes('Nos vemos no') ||
               lastAssistantMsgCW.includes('agendamento foi confirmado') ||
               lastAssistantMsgCW.includes('Agendamento Confirmado!') ||
-              lastAssistantMsgCW.includes('Obrigado por escolher nossos serviços');
+              lastAssistantMsgCW.includes('Obrigado por escolher nossos serviços') ||
+              (lastAssistantMsgCW.includes('confirmado para') && lastAssistantMsgCW.includes('às'));
 
-            // Verificar se é contexto de cancelamento
-            const isCancelContextCW =
+            const isCancelContextCW14 =
               lastAssistantMsgCW.includes('Confirma o cancelamento?') ||
               lastAssistantMsgCW.includes('CANCELAR para confirmar') ||
+              lastAssistantMsgCW.includes('CANCELAR* para confirmar') ||
               lastAssistantMsgCW.includes('SIM para cancelar') ||
-              lastAssistantMsgCW.includes('deseja cancelar');
+              lastAssistantMsgCW.includes('SIM* para cancelar') ||
+              lastAssistantMsgCW.includes('deseja cancelar o agendamento') ||
+              lastAssistantMsgCW.includes('deseja cancelar seu agendamento') ||
+              lastAssistantMsgCW.includes('Qual agendamento você deseja cancelar') ||
+              (lastAssistantMsgCW.includes('cancelar') && lastAssistantMsgCW.includes('Posso prosseguir'));
 
-            // Verificar se é contexto de reagendamento
-            const isRescheduleContextCW =
+            const isRescheduleContextCW14 =
+              lastAssistantMsgCW.includes('mudar seu agendamento') ||
               lastAssistantMsgCW.includes('remarcar') ||
               lastAssistantMsgCW.includes('reagendar') ||
-              (lastAssistantMsgCW.includes('cancelar') && lastAssistantMsgCW.includes('nova data'));
+              lastAssistantMsgCW.includes('trocar o dia') ||
+              lastAssistantMsgCW.includes('trocar a data') ||
+              lastAssistantMsgCW.includes('trocar o horário') ||
+              lastAssistantMsgCW.includes('alterar o agendamento') ||
+              lastAssistantMsgCW.includes('alterar seu agendamento') ||
+              lastAssistantMsgCW.includes('adiar') ||
+              lastAssistantMsgCW.includes('mudar para') ||
+              lastAssistantMsgCW.includes('necessário cancelar o agendamento atual') ||
+              (lastAssistantMsgCW.includes('cancelar') && lastAssistantMsgCW.includes('nova data')) ||
+              (lastAssistantMsgCW.includes('mudar') && lastAssistantMsgCW.includes('agendamento')) ||
+              (lastAssistantMsgCW.includes('alterar') && lastAssistantMsgCW.includes('agendamento'));
 
-            if (!isPostConfirmationCW && !isCancelContextCW && !isRescheduleContextCW) {
-              console.log('✅ [CHATWOOT INBOUND] Confirmação de agendamento detectada! Criando agendamento...');
+            // Contexto de lembrete de confirmação (SIM deve ser tratado como confirmação)
+            const isConfirmationReminderCW =
+              lastAssistantMsgCW.includes('agendamento ainda não foi confirmado') ||
+              (lastAssistantMsgCW.includes('Basta responder') && lastAssistantMsgCW.includes('para confirmar')) ||
+              (lastAssistantMsgCW.includes('Está tudo correto') && lastAssistantMsgCW.includes('confirmar'));
 
-              // Buscar mensagem de resumo para extrair dados
+            if (isPostConfirmationCW && !isConfirmationReminderCW) {
+              console.log('✅ [CHATWOOT INBOUND] "Ok/Sim" detectado APÓS confirmação - ignorando');
+            } else if (isRescheduleContextCW14 && !isConfirmationReminderCW) {
+              console.log('🔄 [CHATWOOT INBOUND] "Sim" em contexto de reagendamento - listando agendamentos');
+              // Listar agendamentos para cancelar
+              const aptListReschedule = await listClientAppointmentsNumbered(customerPhone, company.id, 'cancelar');
+              const rescheduleResponse = `Para remarcar, primeiro preciso cancelar o agendamento atual.\n\n${aptListReschedule}`;
+              const chatwootSvcReschedule = new ChatwootService({
+                baseUrl: company.chatwootBaseUrl,
+                apiAccessToken: company.chatwootApiToken,
+                accountId: company.chatwootAccountId,
+                inboxId: company.chatwootInboxId,
+              });
+              await chatwootSvcReschedule.sendMessage(chatwootConversationId, rescheduleResponse, 'outgoing');
+              await storage.createMessage({
+                conversationId: conversation.id,
+                content: rescheduleResponse,
+                role: 'assistant',
+                messageType: 'text',
+                delivered: true,
+                timestamp: new Date(),
+              });
+              cacheAIResponse(conversation.id, rescheduleResponse);
+            } else if (!isCancelContextCW14 || isConfirmationReminderCW) {
+              console.log('✅ [CHATWOOT INBOUND] Confirmação de agendamento detectada!');
+
+              // Buscar mensagem de resumo
               let summaryMessageCW = null;
 
-              // Verificar se a resposta atual da IA contém dados de agendamento
               const aiResponseHasAppointmentData = (aiResponse.includes('👤') || aiResponse.includes('Nome:')) &&
                 (aiResponse.includes('📅') || aiResponse.includes('Data:')) &&
                 (aiResponse.includes('🕐') || aiResponse.includes('Horário:')) &&
@@ -8202,77 +8558,243 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 
               if (aiResponseHasAppointmentData) {
                 summaryMessageCW = { content: aiResponse };
-                console.log('✅ [CHATWOOT INBOUND] Usando resposta atual da IA como fonte de dados');
               } else {
-                // Buscar nas mensagens anteriores
-                const cwConversationMessages = await storage.getMessagesByConversation(conversation.id);
-                const recentMsgsCW = cwConversationMessages.slice(0, 15);
+                const cwConvMessages = await storage.getMessagesByConversation(conversation.id);
+                const recentMsgsCW = cwConvMessages.slice(0, 15);
 
+                // Buscar cancelamento/remarcação primeiro
                 summaryMessageCW = recentMsgsCW.find((m: any) =>
                   m.role === 'assistant' &&
                   !m.content.includes('Agendamento Confirmado!') &&
-                  !m.content.includes('Obrigado por escolher nossos serviços') &&
                   !m.content.includes('Agendamento realizado com sucesso') &&
                   !m.content.includes('Nos vemos no dia') &&
                   (
-                    ((m.content.includes('Está tudo correto?') ||
-                      m.content.includes('Responda SIM para confirmar') ||
-                      m.content.includes('Digite SIM ou OK para confirmar') ||
-                      m.content.includes('confirmar seu agendamento') ||
-                      m.content.includes('Vou confirmar')) &&
-                     (m.content.includes('👤') || m.content.includes('Nome:')) &&
-                     (m.content.includes('📅') || m.content.includes('Data:')) &&
-                     (m.content.includes('🕐') || m.content.includes('Horário:')))
-                  )
+                    (m.content.includes('Responda SIM para cancelar') ||
+                     m.content.includes('CANCELAR para confirmar') ||
+                     m.content.includes('Confirma o cancelamento?') ||
+                     m.content.includes('Confirma a remarcação?'))
+                  ) &&
+                  (m.content.match(/\d{2}\/\d{2}\/\d{4}/) || m.content.match(/segunda|terça|quarta|quinta|sexta|sábado|domingo/i)) &&
+                  (m.content.match(/\d{1,2}:\d{2}/) || m.content.includes('às'))
                 );
+
+                // Se não encontrou, buscar agendamento normal
+                if (!summaryMessageCW) {
+                  summaryMessageCW = recentMsgsCW.find((m: any) =>
+                    m.role === 'assistant' &&
+                    !m.content.includes('Agendamento Confirmado!') &&
+                    !m.content.includes('Obrigado por escolher nossos serviços') &&
+                    !m.content.includes('Agendamento realizado com sucesso') &&
+                    !m.content.includes('Nos vemos no dia') &&
+                    (
+                      ((m.content.includes('Está tudo correto?') ||
+                        m.content.includes('Responda SIM para confirmar') ||
+                        m.content.includes('Digite SIM ou OK para confirmar') ||
+                        m.content.includes('confirmar seu agendamento') ||
+                        m.content.includes('Vou confirmar')) &&
+                       (m.content.includes('👤') || m.content.includes('Nome:')) &&
+                       (m.content.includes('📅') || m.content.includes('Data:')) &&
+                       (m.content.includes('🕐') || m.content.includes('Horário:')))
+                    )
+                  );
+                }
               }
 
               if (summaryMessageCW) {
                 console.log('📋 [CHATWOOT INBOUND] Resumo encontrado:', summaryMessageCW.content.substring(0, 200));
 
                 try {
-                  const appointmentIdCW = await createAppointmentFromAIConfirmation(
-                    conversation.id,
-                    company.id,
-                    aiResponse,
-                    customerPhone,
-                    'agendado',
-                    conversation.contactName || undefined
-                  );
+                  // ========================================
+                  // ASAAS PAYMENT FLOW
+                  // ========================================
+                  const asaasEnabledCW = isAsaasEnabled;
 
-                  if (appointmentIdCW === null) {
-                    console.log('❌ [CHATWOOT INBOUND] Conflito de horário detectado');
-                    // Enviar mensagem de erro via Chatwoot
-                    const cwErrorMsg = '❌ Desculpe, mas não foi possível confirmar seu agendamento pois o horário solicitado já está ocupado por outro cliente. Por favor, escolha outro horário disponível.';
-                    const chatwootServiceErr = new ChatwootService({
+                  if (asaasEnabledCW) {
+                    console.log('💳 [CHATWOOT INBOUND] Asaas habilitado - verificando serviço com preço...');
+                    const servicesForCheckCW = await storage.getServicesByCompany(company.id);
+
+                    // Extrair serviço da mensagem de resumo
+                    let serviceWithPriceCW = null;
+                    const serviceMatchCW = summaryMessageCW.content.match(/(?:💼|✂️)\s*(?:Serviço:?)?\s*([^\n]+)/i) ||
+                                           summaryMessageCW.content.match(/Serviço:\s*([^\n]+)/i);
+                    if (serviceMatchCW) {
+                      const extractedNameCW = serviceMatchCW[1].trim();
+                      // Match exato
+                      serviceWithPriceCW = servicesForCheckCW.find((s: any) =>
+                        s.name.toLowerCase() === extractedNameCW.toLowerCase() && s.price && Number(s.price) > 0
+                      );
+                      // Match parcial
+                      if (!serviceWithPriceCW) {
+                        serviceWithPriceCW = servicesForCheckCW.find((s: any) => {
+                          const match = extractedNameCW.toLowerCase().includes(s.name.toLowerCase()) ||
+                                        s.name.toLowerCase().includes(extractedNameCW.toLowerCase());
+                          return match && s.price && Number(s.price) > 0;
+                        });
+                      }
+                    }
+
+                    if (serviceWithPriceCW) {
+                      console.log('💰 [CHATWOOT INBOUND] Serviço com preço:', serviceWithPriceCW.name, 'R$', serviceWithPriceCW.price);
+                      console.log('✅ [CHATWOOT INBOUND] NÃO criando agendamento - será criado após pagamento');
+
+                      const paymentQuestionCW = `💳 Forma de Pagamento\n\nPara confirmar seu agendamento, como você prefere pagar?\n\n1️⃣ PIX - Pagamento instantâneo\n2️⃣ Cartão de Crédito - Parcele em até 12x\n\n💰 Valor: R$ ${Number(serviceWithPriceCW.price).toFixed(2)}\n\nDigite 1 para PIX ou 2 para Cartão`;
+
+                      const chatwootSvcPayment = new ChatwootService({
+                        baseUrl: company.chatwootBaseUrl,
+                        apiAccessToken: company.chatwootApiToken,
+                        accountId: company.chatwootAccountId,
+                        inboxId: company.chatwootInboxId,
+                      });
+                      await chatwootSvcPayment.sendMessage(chatwootConversationId, paymentQuestionCW, 'outgoing');
+                      await storage.createMessage({
+                        conversationId: conversation.id,
+                        content: paymentQuestionCW,
+                        role: 'assistant',
+                        messageType: 'text',
+                        delivered: true,
+                        timestamp: new Date(),
+                      });
+                      cacheAIResponse(conversation.id, paymentQuestionCW);
+                      // Não criar agendamento - será criado pelo webhook de pagamento
+                    } else {
+                      console.log('ℹ️ [CHATWOOT INBOUND] Serviço sem preço - criando agendamento normal');
+                      // Cair no fluxo normal abaixo
+                      await createAppointmentCW();
+                    }
+                  } else {
+                    // Sem Asaas - criar agendamento normal
+                    await createAppointmentCW();
+                  }
+
+                  // Função auxiliar para criar agendamento
+                  async function createAppointmentCW() {
+                    const appointmentIdCW = await createAppointmentFromAIConfirmation(
+                      conversation.id,
+                      company.id,
+                      aiResponse,
+                      customerPhone,
+                      'agendado',
+                      conversation.contactName || undefined
+                    );
+
+                    if (appointmentIdCW === null) {
+                      console.log('❌ [CHATWOOT INBOUND] Conflito de horário detectado');
+
+                      // Error webhook
+                      await sendAppointmentErrorWebhook(company.id, 'CONFLICT', 'Horário já está ocupado', {
+                        conversationId: conversation.id,
+                        phoneNumber: customerPhone,
+                      });
+
+                      const cwErrorMsg = '❌ Desculpe, mas não foi possível confirmar seu agendamento pois o horário solicitado já está ocupado por outro cliente.\n\nPor favor, escolha outro horário disponível e tente novamente.';
+                      const chatwootSvcErr = new ChatwootService({
+                        baseUrl: company.chatwootBaseUrl,
+                        apiAccessToken: company.chatwootApiToken,
+                        accountId: company.chatwootAccountId,
+                        inboxId: company.chatwootInboxId,
+                      });
+                      await chatwootSvcErr.sendMessage(chatwootConversationId, cwErrorMsg, 'outgoing');
+                      await storage.createMessage({
+                        conversationId: conversation.id,
+                        content: cwErrorMsg,
+                        role: 'assistant',
+                        messageType: 'text',
+                        delivered: true,
+                        timestamp: new Date(),
+                      });
+                      cacheAIResponse(conversation.id, cwErrorMsg);
+                    } else if (appointmentIdCW) {
+                      console.log('✅ [CHATWOOT INBOUND] Agendamento criado com sucesso! ID:', appointmentIdCW);
+                      clearAvailabilityCache(company.id);
+
+                      // Timer: Lembrete de confirmação (29 min)
+                      const reminderKeyCW = `cw:${company.id}:${customerPhone}`;
+                      try {
+                        // Cancelar timer anterior se existir
+                        const existingTimerEntry = pendingConfirmationTimers.get(reminderKeyCW);
+                        if (existingTimerEntry) clearTimeout(existingTimerEntry.timer);
+
+                        const reminderTimer = setTimeout(async () => {
+                          try {
+                            pendingConfirmationTimers.delete(reminderKeyCW);
+                            const apt = await storage.getAppointment(appointmentIdCW);
+                            if (apt && (apt.status === 'agendado' || apt.status === 'Agendado')) {
+                              const reminderMsg = 'Oi! Notei que seu agendamento ainda não foi confirmado. Basta responder SIM para confirmar! Se precisar alterar algo, é só me dizer.';
+                              const chatwootSvcReminder = new ChatwootService({
+                                baseUrl: company.chatwootBaseUrl,
+                                apiAccessToken: company.chatwootApiToken,
+                                accountId: company.chatwootAccountId,
+                                inboxId: company.chatwootInboxId,
+                              });
+                              await chatwootSvcReminder.sendMessage(chatwootConversationId, reminderMsg, 'outgoing');
+                              await storage.createMessage({
+                                conversationId: conversation.id,
+                                content: reminderMsg,
+                                role: 'assistant',
+                                messageType: 'text',
+                                delivered: true,
+                                timestamp: new Date(),
+                              });
+                              cacheAIResponse(conversation.id, reminderMsg);
+                            }
+                          } catch (err) {
+                            console.error('⚠️ [CHATWOOT] Erro no lembrete de confirmação:', err);
+                          }
+                        }, 29 * 60 * 1000);
+                        pendingConfirmationTimers.set(reminderKeyCW, {
+                          timer: reminderTimer,
+                          conversationId: conversation.id,
+                          instanceName: `chatwoot-${company.id}`,
+                          companyId: company.id,
+                          phoneNumber: customerPhone,
+                        });
+                      } catch (timerErr) {
+                        console.warn('⚠️ [CHATWOOT] Erro ao configurar timer de lembrete:', timerErr);
+                      }
+                    }
+                  }
+                } catch (appointErr: any) {
+                  console.error('❌ [CHATWOOT INBOUND] Erro ao criar agendamento:', appointErr.message);
+                  await sendAppointmentErrorWebhook(company.id, 'UNKNOWN', appointErr.message, {
+                    conversationId: conversation.id,
+                    phoneNumber: customerPhone,
+                  });
+                }
+              } else {
+                console.log('⚠️ [CHATWOOT INBOUND] Confirmação detectada mas nenhum resumo encontrado');
+              }
+            } else {
+              console.log('ℹ️ [CHATWOOT INBOUND] Confirmação detectada em contexto de cancelamento - ignorando');
+            }
+          }
+
+          // ========================================
+          // 15. PDF/CURSO: enviar se curso mencionado
+          // ========================================
+          if (company.coursesDescription && company.coursesPdfs) {
+            const courseKeywords = ['curso', 'cursos', 'treinamento', 'capacitação'];
+            const mentionedCourse = courseKeywords.some(kw => messageText.toLowerCase().includes(kw));
+
+            if (mentionedCourse) {
+              try {
+                const pdfUrls = (company.coursesPdfs as string).split(',').map((u: string) => u.trim()).filter((u: string) => u);
+                for (const pdfUrl of pdfUrls) {
+                  if (pdfUrl) {
+                    console.log('📄 [CHATWOOT INBOUND] Enviando PDF do curso:', pdfUrl);
+                    // Chatwoot suporta envio de arquivos via API - enviar como mensagem com attachment
+                    const chatwootSvcPdf = new ChatwootService({
                       baseUrl: company.chatwootBaseUrl,
                       apiAccessToken: company.chatwootApiToken,
                       accountId: company.chatwootAccountId,
                       inboxId: company.chatwootInboxId,
                     });
-                    await chatwootServiceErr.sendMessage(chatwootConversationId, cwErrorMsg, 'outgoing');
-                    await storage.createMessage({
-                      conversationId: conversation.id,
-                      content: cwErrorMsg,
-                      role: 'assistant',
-                      messageType: 'text',
-                      delivered: true,
-                      timestamp: new Date(),
-                    });
-                  } else if (appointmentIdCW) {
-                    console.log('✅ [CHATWOOT INBOUND] Agendamento criado com sucesso! ID:', appointmentIdCW);
-                    // Limpar cache de disponibilidade
-                    clearAvailabilityCache(company.id);
+                    // Enviar URL como mensagem (Chatwoot renderiza links automaticamente)
+                    await chatwootSvcPdf.sendMessage(chatwootConversationId, `📄 Material do curso: ${pdfUrl}`, 'outgoing');
                   }
-                } catch (appointErr: any) {
-                  console.error('❌ [CHATWOOT INBOUND] Erro ao criar agendamento:', appointErr.message);
                 }
-              } else {
-                console.log('⚠️ [CHATWOOT INBOUND] Confirmação detectada mas nenhum resumo de agendamento encontrado');
+              } catch (pdfErr) {
+                console.warn('⚠️ [CHATWOOT INBOUND] Erro ao enviar PDF:', pdfErr);
               }
-            } else {
-              console.log('ℹ️ [CHATWOOT INBOUND] Confirmação detectada mas contexto não é agendamento novo',
-                { isPostConfirmationCW, isCancelContextCW, isRescheduleContextCW });
             }
           }
 
