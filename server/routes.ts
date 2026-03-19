@@ -7719,6 +7719,21 @@ if (ignoredNumbers !== undefined) {
             return date.toLocaleDateString('pt-BR');
           };
 
+          // Verificar se Asaas está habilitado para esta empresa
+          const companyAsaasConfig = await storage.getCompany(company.id);
+          const isAsaasEnabled = companyAsaasConfig?.asaasEnabled && companyAsaasConfig?.asaasApiKey;
+
+          // Instruções de pagamento (só adicionadas se Asaas estiver habilitado)
+          const asaasPaymentInstructions = isAsaasEnabled ? `
+- REGRA DE PAGAMENTO OBRIGATÓRIA:
+  * APÓS o cliente confirmar com SIM/OK/CONFIRMO, NÃO confirme o agendamento ainda
+  * Pergunte a forma de pagamento: "Ótimo! Como você prefere pagar?\\n\\n1️⃣ PIX (aprovação instantânea)\\n2️⃣ Cartão de Crédito (parcele em até 12x)\\n\\nDigite 1 para PIX ou 2 para Cartão."
+  * AGUARDE o cliente responder com a forma de pagamento (1, 2, pix, cartão, etc.)
+  * NÃO confirme o agendamento até o cliente escolher a forma de pagamento
+  * Após o cliente escolher, responda: "Perfeito! Estou gerando seu [PIX/link de pagamento]. Aguarde um momento..."
+  * O sistema enviará automaticamente o QR Code (para PIX) ou link (para cartão)
+  * NUNCA diga que o agendamento foi confirmado antes do pagamento ser processado` : '';
+
           const systemPrompt = `${company.aiAgentPrompt}
 
 Importante: Você está representando a empresa "${company.fantasyName}" via WhatsApp.
@@ -7732,18 +7747,29 @@ Importante: Você está representando a empresa "${company.fantasyName}" via Wha
 
 🤝 INTERVENÇÕES DE ATENDENTES HUMANOS:
 - Algumas mensagens no histórico podem ter o prefixo "[MENSAGEM DO ATENDENTE HUMANO]:"
-- Continue a conversa de forma natural, levando em conta o que o atendente disse
+- Essas mensagens foram enviadas por um atendente real da empresa, NÃO por você
+- Você DEVE considerar essas mensagens como parte do contexto da conversa
+- Continue a conversa de forma natural, levando em conta tudo que o atendente humano disse
+- Se o atendente humano já respondeu algo ao cliente, NÃO contradiga ou repita informações
+- Use o contexto das mensagens do atendente para dar continuidade à conversa
 
 INFORMAÇÕES DA EMPRESA:
 - Nome: ${company.fantasyName}
-- Endereço: ${[company.address, company.number ? `nº ${company.number}` : null, company.neighborhood, company.city && company.state ? `${company.city}/${company.state}` : company.city || company.state].filter(Boolean).join(', ') || 'Não informado'}${company.googleMapsLocation ? `\n- Localização Google Maps: ${company.googleMapsLocation}` : ''}
+- Endereço: ${[
+  company.address,
+  company.number ? `nº ${company.number}` : null,
+  company.neighborhood,
+  company.city && company.state ? `${company.city}/${company.state}` : company.city || company.state
+].filter(Boolean).join(', ') || 'Não informado'}${company.googleMapsLocation ? `\n- Localização Google Maps: ${company.googleMapsLocation}` : ''}
 - Telefone: ${company.phone || 'Não informado'}
-- CEP: ${company.zipCode || 'Não informado'}${company.coursesDescription ? `\n\n🎓 INFORMAÇÕES SOBRE CURSOS:\n${company.coursesDescription}` : ''}
+- CEP: ${company.zipCode || 'Não informado'}${company.coursesDescription ? `\n\n🎓 ========================================\nINFORMAÇÕES SOBRE CURSOS (ENVIAR EXATAMENTE COMO ESTÁ):\n========================================\n${company.coursesDescription}` : ''}
+
+Use essas informações para responder perguntas sobre localização, endereço, telefone e como chegar ao estabelecimento.${company.googleMapsLocation ? '\n\nIMPORTANTE: Quando o cliente perguntar sobre o endereço ou localização, além de informar o endereço completo, envie também o link do Google Maps para facilitar a navegação.\n\n⚠️ ATENÇÃO - FORMATO DE LINKS: Ao enviar o link do Google Maps, envie APENAS a URL completa SEM formatação markdown. NÃO use [texto](link). Envie o link direto.' : ''}${company.coursesDescription ? `\n\n🎓 ========================================\n⚠️ REGRAS CRÍTICAS - PERGUNTAS SOBRE CURSOS\n========================================\n\n🚨 REGRA ÚNICA - DESCRIÇÃO EXATA:\nQuando o cliente perguntar sobre cursos, você DEVE enviar as informações EXATAMENTE como estão cadastradas acima em "INFORMAÇÕES SOBRE CURSOS".\nNÃO resuma, NÃO reformule, NÃO omita detalhes. Copie e cole a informação INTEIRA.\n\n📄 NOTA: O sistema enviará automaticamente o PDF do curso após sua resposta. Você NÃO precisa mencionar o PDF na sua mensagem.` : ''}
 
 HOJE É: ${today.toLocaleDateString('pt-BR')} (${['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'][today.getDay()]})
 HORÁRIO ATUAL: ${today.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
 
-IMPORTANTE: NÃO aceite agendamentos para horários que já passaram!
+IMPORTANTE: NÃO aceite agendamentos para horários que já passaram! Se o cliente solicitar um horário que já passou hoje, explique que não é possível e sugira horários futuros disponíveis.
 
 PRÓXIMOS DIAS DA SEMANA:
 - Domingo: ${getNextWeekdayDate('domingo')}
@@ -7766,12 +7792,153 @@ ${availableServicesWithPrices || 'Nenhum serviço cadastrado no momento'}
 ${availabilityInfo}
 ${specificDateInfo}
 
-Quando o cliente informar a DATA desejada, inclua na sua resposta o comando:
-[MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
-O sistema vai substituir esse comando pelos horários disponíveis automaticamente.
+═══════════════════════════════════════════════════════════════════
+🚨 REGRA ABSOLUTAMENTE OBRIGATÓRIA - BUSCAR HORÁRIOS 🚨
+═══════════════════════════════════════════════════════════════════
 
-Quando o cliente perguntar se tem um HORÁRIO ESPECÍFICO na semana:
-[VERIFICAR_HORARIO_SEMANA:NOME_PROFISSIONAL:HH:MM]
+Quando o cliente informar a DATA desejada, você DEVE incluir na sua resposta o comando:
+[MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
+
+O sistema vai SUBSTITUIR esse comando pelos horários disponíveis automaticamente.
+
+✅ COMO USAR:
+1. Colete: SERVIÇO + PROFISSIONAL + DATA
+2. Quando tiver a DATA, inclua o comando na resposta usando os NOMES exatos
+3. O sistema mostrará os horários disponíveis
+
+APÓS o comando ser processado, o sistema vai retornar:
+- Se HOUVER horários: uma lista de horários → aí sim você pergunta "Qual horário você prefere?"
+- Se NÃO houver horários ou profissional não trabalha: uma mensagem COMPLETA já perguntando outro dia → NUNCA adicione "Qual horário você prefere?" pois não faz sentido!
+
+⚠️ IMPORTANTE:
+• Use o NOME EXATO do serviço e profissional (como aparecem nas listas acima)
+• A data DEVE estar no formato YYYY-MM-DD (ex: 2026-01-31)
+• NÃO invente horários - o comando retorna apenas horários REAIS
+
+🚨 REGRA CRÍTICA - MUDANÇA DE DATA:
+Quando o cliente perguntar sobre OUTRO DIA (ex: "E sexta?", "E amanhã?", "Tem na segunda?"):
+• SEMPRE use o comando [MOSTRAR_HORARIOS_LIVRES:...] com a NOVA data
+• NUNCA repita os horários do dia anterior
+• Cada dia tem disponibilidade DIFERENTE - você DEVE buscar novamente!
+
+🚫 REGRA ABSOLUTA: Se a mensagem de horários já contiver uma pergunta como "Qual outro dia seria melhor?" ou "Que tal escolher outro dia?", NUNCA adicione "Qual horário você prefere?" - a pergunta já foi feita!
+
+═══════════════════════════════════════════════════════════════════
+🕐 COMANDO ESPECIAL - VERIFICAR HORÁRIO NA SEMANA
+═══════════════════════════════════════════════════════════════════
+
+Quando o cliente perguntar se tem um HORÁRIO ESPECÍFICO disponível na semana (ex: "Tem 18:30?", "Quando tem às 17h?", "Algum dia tem 19:00?"):
+
+Use o comando: [VERIFICAR_HORARIO_SEMANA:NOME_PROFISSIONAL:HH:MM]
+
+⚠️ Use este comando SEMPRE que o cliente perguntar sobre um horário específico sem mencionar um dia!
+🚫 NUNCA tente responder sobre disponibilidade de horário por conta própria - SEMPRE use o comando acima.
+
+═══════════════════════════════════════════════════════════════════
+
+🚨🚨🚨 ORDEM OBRIGATÓRIA DE COLETA DE DADOS - SIGA EXATAMENTE ESTA SEQUÊNCIA 🚨🚨🚨
+
+${shouldAutoSelect ?
+`ETAPA 1 - SERVIÇO (profissional único: ${activeProfessionals[0]?.name}):
+   → Quando cliente quiser agendar, mostre a lista de serviços IMEDIATAMENTE
+   → "Aqui estão os serviços disponíveis:\n[lista]\n\nQual serviço você gostaria?"
+   → AGUARDE o cliente escolher o serviço`
+:
+`ETAPA 1 - PROFISSIONAL:
+   → Quando cliente quiser agendar, mostre a lista de profissionais PRIMEIRO
+   → "Temos os seguintes profissionais:\n[lista]\n\nCom qual você gostaria de agendar?"
+   → AGUARDE o cliente escolher o profissional
+
+ETAPA 2 - SERVIÇO:
+   → APÓS escolher o profissional, mostre a lista de serviços
+   → "Aqui estão os serviços disponíveis:\n[lista]\n\nQual serviço você gostaria?"
+   → AGUARDE o cliente escolher o serviço`}
+
+ETAPA ${shouldAutoSelect ? '2' : '3'} - DATA:
+   → APÓS o cliente escolher o SERVIÇO (ou serviços, se ele pedir mais de um), pergunte a data
+   → "Em qual dia você gostaria de agendar?"
+   → AGUARDE o cliente informar a data
+
+ETAPA ${shouldAutoSelect ? '3' : '4'} - HORÁRIO:
+   → APÓS ter a data, use o comando para buscar horários:
+   → Se for UM serviço: [MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
+   → Se o cliente pediu MÚLTIPLOS serviços: [MOSTRAR_HORARIOS_LIVRES_MULTI:SERVICO1,SERVICO2:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
+   → Se o resultado mostrar HORÁRIOS (ex: "09:00 | 10:00 | 11:00"): pergunte "Qual horário você prefere?"
+   → Se o resultado mostrar INDISPONIBILIDADE: NÃO ADICIONE NADA - a mensagem já está completa!
+
+ETAPA ${shouldAutoSelect ? '4' : '5'} - NOME:
+   → SOMENTE APÓS o cliente escolher o HORÁRIO, pergunte o nome
+   → "Qual é o seu nome?"
+   → AGUARDE o cliente informar o nome
+   → ⚠️ NUNCA pergunte o nome ANTES do horário!
+
+ETAPA ${shouldAutoSelect ? '5' : '6'} - CONFIRMAÇÃO:
+   → APÓS ter todos os dados, mostre o RESUMO e peça confirmação com "SIM"
+
+⚠️ REGRAS CRÍTICAS:
+- NUNCA pule etapas - siga a ordem EXATA acima
+- NUNCA pergunte o NOME antes de ter o HORÁRIO
+- NUNCA pergunte a DATA antes de ter o SERVIÇO
+- Se o cliente pular etapas, volte e colete os dados faltantes NA ORDEM CORRETA
+- Ao listar serviços, mostre APENAS o nome (sem preço nem duração)
+
+═══════════════════════════════════════════════════════════════════
+
+INSTRUÇÕES ADICIONAIS:
+- 🚨 PREÇOS: Informe o valor de um serviço APENAS quando o cliente PERGUNTAR especificamente (ex: "quanto custa?", "qual o valor?"). Consulte a seção "PREÇOS DOS SERVIÇOS" acima para responder
+- NUNCA peça data e horário na mesma mensagem - sempre separado em duas etapas
+- REGRA DE CONFIRMAÇÃO DE DATA: Quando cliente mencionar dias da semana, use as datas da seção "PRÓXIMOS DIAS DA SEMANA"
+- Se cliente falar "segunda" (sem data), use a data da segunda-feira listada acima
+- AGENDAMENTOS FUTUROS: Cliente pode agendar até 30 dias. Se pedir data além dos 7 dias mostrados, aceite normalmente
+- HORÁRIOS INDISPONÍVEIS:
+  * Se não houver horários disponíveis, sugira outra data
+  * NÃO invente horários - confie apenas no que o comando retornar
+- NÃO peça o telefone do cliente - o sistema usará automaticamente o número do WhatsApp
+- REGRA OBRIGATÓRIA DE RESUMO E CONFIRMAÇÃO:
+  * Quando tiver TODOS os dados (profissional, serviço, nome, data/hora disponível), NÃO confirme imediatamente
+  * PRIMEIRO envie um RESUMO COMPLETO do agendamento: "Perfeito! Vou confirmar seu agendamento:\n\n👤 Nome: [nome]\n🏢 Profissional: [profissional]\n💼 Serviço: [serviço]\n📅 Data: [dia da semana], [data]\n🕐 Horário: [horário]\n\nEstá tudo correto? Responda SIM para confirmar ou me informe se algo precisa ser alterado."
+  * AGUARDE o cliente responder "SIM", "OK", "CONFIRMO" ou confirmação similar
+  * APENAS APÓS a confirmação explícita (SIM, OK, CONFIRMO), confirme o agendamento final
+  * Se cliente pedir ALTERAÇÃO (ex: "meu nome está errado", "quero outro horário", "mudar para terça"), processe a alteração normalmente e envie novo resumo
+  * Se cliente responder com algo AMBÍGUO que NÃO seja confirmação NEM pedido de alteração (ex: emoji, "beleza", "show", "perfeito", "ótimo", "legal"), NÃO confirme o agendamento. Responda: "Para finalizar seu agendamento, preciso da sua confirmação. Posso confirmar para [data] às [horário]? Digite SIM para confirmar."
+  * NUNCA diga "Agendamento realizado com sucesso" sem antes receber SIM, OK ou CONFIRMO explícito do cliente
+${asaasPaymentInstructions}
+- NÃO invente serviços - use APENAS os serviços listados acima
+- NÃO confirme horários sem verificar disponibilidade real
+- 🚨 REGRA CRÍTICA - DISPONIBILIDADE POR DIA DA SEMANA: Antes de dizer que um profissional "trabalha" ou "tem atendimento" em determinado dia, SEMPRE consulte a seção "Dias de trabalho" e "NÃO trabalha" de cada profissional nas INFORMAÇÕES PARA AGENDAMENTO.
+- 🚨 REGRA CRÍTICA - FOLGAS E DIAS INDISPONÍVEIS: Se uma data estiver listada na seção "⛔ FOLGAS" do profissional, esse dia é INDISPONÍVEL. NUNCA sugira, ofereça ou confirme agendamento em datas que estejam nas FOLGAS.
+- NUNCA responda "Sim, temos atendimento!" ou "Sim, trabalhamos!" sem antes verificar se o dia solicitado está nos dias de trabalho do profissional E se NÃO está nas FOLGAS
+- SEMPRE mostre todos os profissionais/serviços disponíveis antes de pedir para escolher
+- Mantenha respostas concisas e adequadas para mensagens de texto
+- Seja profissional mas amigável
+- Use o histórico da conversa para dar respostas contextualizadas
+- Limite respostas a no máximo 200 palavras por mensagem
+- Lembre-se do que já foi discutido anteriormente na conversa
+
+═══════════════════════════════════════════════════════════════════
+🎯 MÚLTIPLOS AGENDAMENTOS (DUAS OU MAIS PESSOAS - SEM LIMITE!)
+═══════════════════════════════════════════════════════════════════
+
+Quando o cliente quiser agendar para MÚLTIPLAS PESSOAS (ex: "quero agendar para mim e minha amiga", "três horários"):
+
+1. IDENTIFIQUE QUANTAS PESSOAS serão agendadas
+2. COLETE OS DADOS DE CADA PESSOA SEPARADAMENTE
+3. NO RESUMO DE CONFIRMAÇÃO, USE O FORMATO COM NÚMEROS (1️⃣, 2️⃣, 3️⃣...)
+4. Cada bloco DEVE ter: Nome, Profissional, Serviço, Data, Horário
+5. Os horários DEVEM ser consecutivos (pessoa 2 = horário pessoa 1 + duração serviço 1)
+6. Apenas a PRIMEIRA pessoa escolhe o horário - as demais são automáticas
+
+═══════════════════════════════════════════════════════════════════
+🎯 MÚLTIPLOS SERVIÇOS PARA O MESMO CLIENTE
+═══════════════════════════════════════════════════════════════════
+
+Quando o cliente quiser MAIS DE UM SERVIÇO para SI MESMO:
+- Use [MOSTRAR_HORARIOS_LIVRES_MULTI:Servico1,Servico2:Profissional:YYYY-MM-DD]
+- Os serviços são CONSECUTIVOS no mesmo profissional
+- O NOME do cliente é o MESMO em ambos os agendamentos
+- NO RESUMO use formato com números (1️⃣, 2️⃣...)
+
+═══════════════════════════════════════════════════════════════════
 
 Para listar agendamentos do cliente:
 [LISTAR_AGENDAMENTOS]
@@ -7779,7 +7946,20 @@ Para listar agendamentos do cliente:
 Para listar agendamentos para cancelamento:
 [LISTAR_AGENDAMENTOS_CANCELAR]
 
-${shouldAutoSelect ? `NOTA: Há apenas um profissional (${activeProfessionals[0]?.name}). Use-o automaticamente sem perguntar.` : ''}`;
+CANCELAMENTO DE AGENDAMENTOS:
+Quando o cliente mencionar "cancelar", "desmarcar", "não vou poder ir", etc.
+→ Responda: "Vou verificar seus agendamentos... [LISTAR_AGENDAMENTOS_CANCELAR]"
+→ Após o cliente responder com um NÚMERO, confirme: "Confirma o cancelamento do agendamento X? Digite CANCELAR para confirmar."
+
+REAGENDAMENTO (REMARCAR):
+Quando o cliente mencionar "remarcar", "reagendar", "alterar horário", etc.
+→ Informe que para remarcar é necessário PRIMEIRO CANCELAR e depois fazer novo agendamento
+→ JÁ INICIE O FLUXO DE CANCELAMENTO: "Para remarcar, primeiro preciso cancelar o agendamento atual. Vou verificar seus agendamentos... [LISTAR_AGENDAMENTOS_CANCELAR]"
+
+REGRAS CRÍTICAS PARA CANCELAMENTO:
+- SEMPRE inclua o comando [LISTAR_AGENDAMENTOS_CANCELAR] na sua resposta quando for cancelar
+- NÃO peça dados do agendamento - o sistema lista automaticamente pelo telefone
+- Seja natural e conversacional`;
 
           // 9. Chamar OpenAI
           const OpenAI = (await import('openai')).default;
@@ -7826,6 +8006,69 @@ ${shouldAutoSelect ? `NOTA: Há apenas um profissional (${activeProfessionals[0]
               aiResponse = aiResponse.replace(fullMatch, resultado);
             } else {
               aiResponse = aiResponse.replace(fullMatch, `Desculpe, não consegui identificar o profissional "${professionalIdentifier}".`);
+            }
+          }
+
+          // [MOSTRAR_HORARIOS_LIVRES_MULTI:service1,service2:professional:date]
+          {
+            let horariosMultiMatch;
+            let multiCompanyServices: any[] | null = null;
+            let multiCompanyProfessionals: any[] | null = null;
+
+            while ((horariosMultiMatch = aiResponse.match(/\[MOSTRAR_HORARIOS_LIVRES_MULTI:([^:]+):([^:]+):(\d{4}-\d{2}-\d{2})\]/)) !== null) {
+              const [fullMatch, servicesStr, professionalIdentifier, dateStr] = horariosMultiMatch;
+              const serviceNames = servicesStr.split(',').map((s: string) => s.trim());
+
+              if (!multiCompanyServices) {
+                multiCompanyServices = await storage.getServicesByCompany(company.id);
+              }
+              if (!multiCompanyProfessionals) {
+                multiCompanyProfessionals = await storage.getProfessionalsByCompany(company.id);
+              }
+
+              const resolvedServiceIds: number[] = [];
+              let allServicesFound = true;
+
+              for (const svcName of serviceNames) {
+                const searchName = svcName.toLowerCase();
+                let foundService = multiCompanyServices.find((s: any) => s.name.toLowerCase() === searchName);
+                if (!foundService) {
+                  const partialMatches = multiCompanyServices.filter((s: any) =>
+                    s.name.toLowerCase().includes(searchName) || searchName.includes(s.name.toLowerCase())
+                  );
+                  foundService = partialMatches.length === 1 ? partialMatches[0] :
+                    partialMatches.find((s: any) => s.name.toLowerCase().startsWith(searchName)) || partialMatches[0];
+                }
+                if (foundService) {
+                  resolvedServiceIds.push(foundService.id);
+                } else {
+                  allServicesFound = false;
+                }
+              }
+
+              let professionalId: number | null = null;
+              const profName = professionalIdentifier.trim().toLowerCase();
+              let foundProf = multiCompanyProfessionals.find((p: any) => p.name.toLowerCase() === profName);
+              if (!foundProf) {
+                foundProf = multiCompanyProfessionals.find((p: any) =>
+                  p.name.toLowerCase().includes(profName) || p.name.toLowerCase().split(' ')[0] === profName
+                );
+              }
+              if (foundProf) professionalId = foundProf.id;
+
+              if (allServicesFound && resolvedServiceIds.length > 0 && professionalId) {
+                const horariosLivres = await getAvailableTimesForMultipleServices(
+                  company.id, resolvedServiceIds, professionalId, dateStr
+                );
+                aiResponse = aiResponse.replace(fullMatch, horariosLivres);
+              } else {
+                let errorMsg = !allServicesFound
+                  ? 'Desculpe, não consegui identificar todos os serviços. Pode me informar novamente?'
+                  : !professionalId
+                    ? `Desculpe, não consegui identificar o profissional "${professionalIdentifier}". Pode me informar novamente?`
+                    : 'Desculpe, houve um erro ao buscar os horários. Pode tentar novamente?';
+                aiResponse = aiResponse.replace(fullMatch, errorMsg);
+              }
             }
           }
 
@@ -7898,6 +8141,141 @@ ${shouldAutoSelect ? `NOTA: Há apenas um profissional (${activeProfessionals[0]
           // 13. Cache anti-loop: quando o Chatwoot ecoa esta resposta como message_created outgoing
           cacheAIResponse(conversation.id, aiResponse);
           console.log('🤖 [CHATWOOT INBOUND] Response cached for echo detection');
+
+          // ========================================
+          // 14. DETECÇÃO DE CONFIRMAÇÃO E CRIAÇÃO DE AGENDAMENTO
+          // (mesma lógica do fluxo WhatsApp)
+          // ========================================
+          const confirmationPatternsCW = [
+            /^(sim|sin|sím|sii|s|ok|confirmo|confirmar|confirmado)[!.?]*$/i,
+            /^(sim|sin|sím|ok)[!.?]?,?\s*(pode|por favor|obrigado|está correto|confirmo)?[!.?]*$/i,
+            /^(está correto|tudo certo|tudo correto|pode confirmar|confirmo sim)[!.?]*$/i,
+            /^(sim|sin)[!.?]?,?\s*(tudo correto|tudo certo|tudo)[!.?]*$/i,
+            /^tudo\s*(ok|certo|correto)[!.?]*$/i
+          ];
+
+          const messageLinesCW = messageText.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
+          const isUserConfirmingCW = confirmationPatternsCW.some(pattern =>
+            pattern.test(messageText.toLowerCase().trim())
+          ) || (messageLinesCW.length > 1 && messageLinesCW.some((line: string) =>
+            confirmationPatternsCW.some(pattern => pattern.test(line.toLowerCase()))
+          ));
+
+          if (isUserConfirmingCW) {
+            // Verificar contexto: última mensagem da IA pede confirmação de agendamento?
+            const lastAssistantMsgCW = conversationHistory.filter((m: any) => m.role === 'assistant').slice(-1)[0]?.content || '';
+
+            // Verificar se é pós-confirmação (não criar duplicata)
+            const isPostConfirmationCW =
+              lastAssistantMsgCW.includes('Agendamento realizado com sucesso') ||
+              lastAssistantMsgCW.includes('Nos vemos no dia') ||
+              lastAssistantMsgCW.includes('Nos vemos na') ||
+              lastAssistantMsgCW.includes('agendamento foi confirmado') ||
+              lastAssistantMsgCW.includes('Agendamento Confirmado!') ||
+              lastAssistantMsgCW.includes('Obrigado por escolher nossos serviços');
+
+            // Verificar se é contexto de cancelamento
+            const isCancelContextCW =
+              lastAssistantMsgCW.includes('Confirma o cancelamento?') ||
+              lastAssistantMsgCW.includes('CANCELAR para confirmar') ||
+              lastAssistantMsgCW.includes('SIM para cancelar') ||
+              lastAssistantMsgCW.includes('deseja cancelar');
+
+            // Verificar se é contexto de reagendamento
+            const isRescheduleContextCW =
+              lastAssistantMsgCW.includes('remarcar') ||
+              lastAssistantMsgCW.includes('reagendar') ||
+              (lastAssistantMsgCW.includes('cancelar') && lastAssistantMsgCW.includes('nova data'));
+
+            if (!isPostConfirmationCW && !isCancelContextCW && !isRescheduleContextCW) {
+              console.log('✅ [CHATWOOT INBOUND] Confirmação de agendamento detectada! Criando agendamento...');
+
+              // Buscar mensagem de resumo para extrair dados
+              let summaryMessageCW = null;
+
+              // Verificar se a resposta atual da IA contém dados de agendamento
+              const aiResponseHasAppointmentData = (aiResponse.includes('👤') || aiResponse.includes('Nome:')) &&
+                (aiResponse.includes('📅') || aiResponse.includes('Data:')) &&
+                (aiResponse.includes('🕐') || aiResponse.includes('Horário:')) &&
+                (aiResponse.includes('Agendamento realizado') || aiResponse.includes('Agendamento Confirmado') ||
+                 aiResponse.includes('confirmado para') || aiResponse.includes('Nos vemos'));
+
+              if (aiResponseHasAppointmentData) {
+                summaryMessageCW = { content: aiResponse };
+                console.log('✅ [CHATWOOT INBOUND] Usando resposta atual da IA como fonte de dados');
+              } else {
+                // Buscar nas mensagens anteriores
+                const cwConversationMessages = await storage.getMessagesByConversation(conversation.id);
+                const recentMsgsCW = cwConversationMessages.slice(0, 15);
+
+                summaryMessageCW = recentMsgsCW.find((m: any) =>
+                  m.role === 'assistant' &&
+                  !m.content.includes('Agendamento Confirmado!') &&
+                  !m.content.includes('Obrigado por escolher nossos serviços') &&
+                  !m.content.includes('Agendamento realizado com sucesso') &&
+                  !m.content.includes('Nos vemos no dia') &&
+                  (
+                    ((m.content.includes('Está tudo correto?') ||
+                      m.content.includes('Responda SIM para confirmar') ||
+                      m.content.includes('Digite SIM ou OK para confirmar') ||
+                      m.content.includes('confirmar seu agendamento') ||
+                      m.content.includes('Vou confirmar')) &&
+                     (m.content.includes('👤') || m.content.includes('Nome:')) &&
+                     (m.content.includes('📅') || m.content.includes('Data:')) &&
+                     (m.content.includes('🕐') || m.content.includes('Horário:')))
+                  )
+                );
+              }
+
+              if (summaryMessageCW) {
+                console.log('📋 [CHATWOOT INBOUND] Resumo encontrado:', summaryMessageCW.content.substring(0, 200));
+
+                try {
+                  const appointmentIdCW = await createAppointmentFromAIConfirmation(
+                    conversation.id,
+                    company.id,
+                    aiResponse,
+                    customerPhone,
+                    'agendado',
+                    conversation.contactName || undefined
+                  );
+
+                  if (appointmentIdCW === null) {
+                    console.log('❌ [CHATWOOT INBOUND] Conflito de horário detectado');
+                    // Enviar mensagem de erro via Chatwoot
+                    const cwErrorMsg = '❌ Desculpe, mas não foi possível confirmar seu agendamento pois o horário solicitado já está ocupado por outro cliente. Por favor, escolha outro horário disponível.';
+                    const chatwootServiceErr = new ChatwootService({
+                      baseUrl: company.chatwootBaseUrl,
+                      apiAccessToken: company.chatwootApiToken,
+                      accountId: company.chatwootAccountId,
+                      inboxId: company.chatwootInboxId,
+                    });
+                    await chatwootServiceErr.sendMessage(chatwootConversationId, cwErrorMsg, 'outgoing');
+                    await storage.createMessage({
+                      conversationId: conversation.id,
+                      content: cwErrorMsg,
+                      role: 'assistant',
+                      messageType: 'text',
+                      delivered: true,
+                      timestamp: new Date(),
+                    });
+                  } else if (appointmentIdCW) {
+                    console.log('✅ [CHATWOOT INBOUND] Agendamento criado com sucesso! ID:', appointmentIdCW);
+                    // Limpar cache de disponibilidade
+                    clearAvailabilityCache(company.id);
+                  }
+                } catch (appointErr: any) {
+                  console.error('❌ [CHATWOOT INBOUND] Erro ao criar agendamento:', appointErr.message);
+                }
+              } else {
+                console.log('⚠️ [CHATWOOT INBOUND] Confirmação detectada mas nenhum resumo de agendamento encontrado');
+              }
+            } else {
+              console.log('ℹ️ [CHATWOOT INBOUND] Confirmação detectada mas contexto não é agendamento novo',
+                { isPostConfirmationCW, isCancelContextCW, isRescheduleContextCW });
+            }
+          }
+
           console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
         } catch (aiErr: any) {
