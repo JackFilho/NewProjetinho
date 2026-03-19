@@ -7276,6 +7276,19 @@ if (ignoredNumbers !== undefined) {
       const payload = req.body;
       const event = payload.event;
 
+      // DEBUG: Dump completo do payload para diagnosticar áudio e attachments
+      console.log('━━━ [CHATWOOT WEBHOOK DEBUG] ━━━');
+      console.log('Event:', event);
+      console.log('Message type:', payload.message_type);
+      console.log('Content:', JSON.stringify(payload.content));
+      console.log('Content type:', payload.content_type);
+      console.log('Sender type:', payload.sender?.type);
+      console.log('Attachments (root):', JSON.stringify(payload.attachments || []).substring(0, 500));
+      console.log('Attachments (content_attributes):', JSON.stringify(payload.content_attributes?.attachments || []).substring(0, 500));
+      console.log('Attachments (message):', JSON.stringify(payload.message?.attachments || []).substring(0, 500));
+      console.log('Full payload keys:', Object.keys(payload).join(', '));
+      console.log('━━━ [/CHATWOOT WEBHOOK DEBUG] ━━━');
+
       // Label name that blocks AI (case-insensitive)
       const HUMAN_LABEL = 'humano';
 
