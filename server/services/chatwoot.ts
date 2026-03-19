@@ -359,34 +359,6 @@ export class ChatwootService {
     });
   }
 
-  // === Typing Indicator ===
-
-  /**
-   * Envia indicador de "digitando..." para o cliente.
-   * Usa o endpoint toggle_typing_status da API do Chatwoot.
-   * O Chatwoot propaga o typing para o canal (WhatsApp, widget, etc.).
-   */
-  async toggleTyping(conversationId: number, status: 'on' | 'off' = 'on'): Promise<void> {
-    try {
-      const url = `${this.baseApiUrl}/conversations/${conversationId}/toggle_typing_status`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'api_access_token': this.config.apiAccessToken,
-        },
-        body: JSON.stringify({ typing_status: status }),
-      });
-      console.log(`💬 Chatwoot typing ${status}: ${response.status} ${response.statusText}`);
-      if (!response.ok) {
-        const errorBody = await response.text().catch(() => '');
-        console.warn(`⚠️ Chatwoot typing error: ${response.status} - ${errorBody}`);
-      }
-    } catch (error) {
-      console.warn('⚠️ Chatwoot: Falha ao enviar typing indicator:', (error as Error).message);
-    }
-  }
-
   // === Webhook Processing ===
 
   /**

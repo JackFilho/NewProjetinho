@@ -7682,17 +7682,6 @@ if (ignoredNumbers !== undefined) {
               return { role: msg.role as 'user' | 'assistant', content: msg.content };
             });
 
-          // Helper: enviar typing indicator nos interceptors e resposta IA
-          const cwTypingHelper = async () => {
-            const svc = new ChatwootService({
-              baseUrl: company.chatwootBaseUrl,
-              apiAccessToken: company.chatwootApiToken,
-              accountId: company.chatwootAccountId,
-              inboxId: company.chatwootInboxId,
-            });
-            await svc.toggleTyping(chatwootConversationId, 'on');
-          };
-
           // ========================================
           // 7.5 INTERCEPTORES PRÉ-IA (cancel/reschedule/número)
           // Mesma lógica do fluxo WhatsApp - processa ANTES de chamar a IA
@@ -7716,7 +7705,7 @@ if (ignoredNumbers !== undefined) {
           // ========================================
           if ((hasCancelKeywordCW || hasRescheduleKeywordCW) && !isAlreadyInCancelConfirmationCW) {
             console.log(`🔄 [CHATWOOT INBOUND] Interceptado: ${hasCancelKeywordCW ? 'cancelamento' : 'reagendamento'}`);
-            await cwTypingHelper();
+
 
             const appointmentsList = await listClientAppointmentsNumbered(customerPhone, company.id, hasCancelKeywordCW ? 'cancelar' : 'remarcar');
             let interceptResponse = '';
@@ -7797,7 +7786,7 @@ if (ignoredNumbers !== undefined) {
 
           if (wasListingForCancelCW && selectedNumberCW) {
             console.log(`📋 [CHATWOOT INBOUND] Usuário escolheu agendamento número: ${selectedNumberCW}`);
-            await cwTypingHelper();
+
 
             const cleanPhoneCW = customerPhone.replace(/\D/g, '');
             const nowBrasiliaCW = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
@@ -7872,7 +7861,7 @@ if (ignoredNumbers !== undefined) {
 
           if ((isConfirmingCancelWordCW || isConfirmingSIMCW) && isAskingCancelConfirmationCW) {
             console.log('✅ [CHATWOOT INBOUND] Confirmação de cancelamento detectada');
-            await cwTypingHelper();
+
 
             const allMsgsCW = await storage.getMessagesByConversation(conversation.id);
             const pendingCancelMsgCW = allMsgsCW.find((m: any) => m.content.includes('[PENDING_CANCEL_ID:'));
@@ -7961,7 +7950,7 @@ if (ignoredNumbers !== undefined) {
           // ========================================
           if (/^(não|nao|no|nope)[!.?]*$/i.test(lowerMsgCW) && isAlreadyInCancelConfirmationCW) {
             console.log('❌ [CHATWOOT INBOUND] Cancelamento recusado pelo cliente');
-            await cwTypingHelper();
+
             // Limpar PENDING_CANCEL_ID
             await pool.execute(
               `DELETE FROM messages WHERE conversation_id = ? AND content LIKE '%[PENDING_CANCEL_ID:%'`,
@@ -8331,15 +8320,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 - NÃO peça dados do agendamento - o sistema lista automaticamente pelo telefone
 - Seja natural e conversacional`;
 
-          // 9. Enviar typing indicator e chamar OpenAI
-          const chatwootTypingSvc = new ChatwootService({
-            baseUrl: company.chatwootBaseUrl,
-            apiAccessToken: company.chatwootApiToken,
-            accountId: company.chatwootAccountId,
-            inboxId: company.chatwootInboxId,
-          });
-          await chatwootTypingSvc.toggleTyping(chatwootConversationId, 'on');
-
+          // 9. Chamar OpenAI
           const OpenAI = (await import('openai')).default;
           const openai = new OpenAI({ apiKey: company.openaiApiKey });
 
