@@ -7428,8 +7428,15 @@ if (ignoredNumbers !== undefined) {
         && cwSenderType !== 'user';
 
       if (isIncomingCustomerMessage) {
-        const messageContent = (payload.content || '').trim();
-        if (!messageContent) {
+        let messageContent = (payload.content || '').trim();
+
+        // Detectar attachments de áudio do Chatwoot
+        const cwAttachments = payload.attachments || payload.message?.attachments || [];
+        const audioAttachment = cwAttachments.find(
+          (att: any) => att.file_type === 'audio' && (att.data_url || att.external_url)
+        );
+
+        if (!messageContent && !audioAttachment) {
           return res.status(200).json({ received: true, ignored: true, reason: 'Empty incoming message' });
         }
 
@@ -7442,6 +7449,9 @@ if (ignoredNumbers !== undefined) {
         console.log('📨 [CHATWOOT INBOUND] Customer message received');
         console.log('📨 [CHATWOOT INBOUND] Account:', chatwootAccountId, '| Inbox:', chatwootInboxId, '| Conversation:', chatwootConversationId);
         console.log('📨 [CHATWOOT INBOUND] Content:', messageContent.substring(0, 100));
+        if (audioAttachment) {
+          console.log('🎵 [CHATWOOT INBOUND] Audio attachment detected:', audioAttachment.file_type);
+        }
 
         if (!chatwootAccountId || !chatwootConversationId) {
           console.warn('⚠️ [CHATWOOT INBOUND] Missing accountId or conversationId');
@@ -7484,6 +7494,37 @@ if (ignoredNumbers !== undefined) {
         if (company.agentPaused === 1) {
           console.log('⏸️ [CHATWOOT INBOUND] AI agent is paused for company', company.id);
           return res.status(200).json({ received: true, ignored: true, reason: 'AI agent paused' });
+        }
+
+        // ────────────────────────────────────────────────
+        // TRANSCRIÇÃO DE ÁUDIO: Baixar e transcrever com Whisper
+        // ────────────────────────────────────────────────
+        if (audioAttachment && !messageContent) {
+          const audioUrl = audioAttachment.data_url || audioAttachment.external_url;
+          console.log('🎵 [CHATWOOT INBOUND] Downloading audio from:', audioUrl);
+          try {
+            const audioResponse = await fetch(audioUrl);
+            if (audioResponse.ok) {
+              const audioArrayBuffer = await audioResponse.arrayBuffer();
+              const audioBase64 = Buffer.from(audioArrayBuffer).toString('base64');
+              console.log(`🎵 [CHATWOOT INBOUND] Audio downloaded: ${audioArrayBuffer.byteLength} bytes`);
+
+              const transcribedText = await transcribeAudio(audioBase64, company.openaiApiKey);
+              if (transcribedText && transcribedText.trim()) {
+                messageContent = transcribedText.trim();
+                console.log('🎵 [CHATWOOT INBOUND] Audio transcribed:', messageContent.substring(0, 100));
+              } else {
+                console.warn('⚠️ [CHATWOOT INBOUND] Audio transcription returned empty');
+                return res.status(200).json({ received: true, ignored: true, reason: 'Audio transcription empty' });
+              }
+            } else {
+              console.error('❌ [CHATWOOT INBOUND] Failed to download audio:', audioResponse.status);
+              return res.status(200).json({ received: true, ignored: true, reason: 'Audio download failed' });
+            }
+          } catch (audioErr) {
+            console.error('❌ [CHATWOOT INBOUND] Audio transcription error:', audioErr);
+            return res.status(200).json({ received: true, ignored: true, reason: 'Audio transcription error' });
+          }
         }
 
         // Extrair telefone do contato
@@ -7626,6 +7667,17 @@ if (ignoredNumbers !== undefined) {
               return { role: msg.role as 'user' | 'assistant', content: msg.content };
             });
 
+          // Helper: enviar typing indicator nos interceptors e resposta IA
+          const cwTypingHelper = async () => {
+            const svc = new ChatwootService({
+              baseUrl: company.chatwootBaseUrl,
+              apiAccessToken: company.chatwootApiToken,
+              accountId: company.chatwootAccountId,
+              inboxId: company.chatwootInboxId,
+            });
+            await svc.toggleTyping(chatwootConversationId, 'on');
+          };
+
           // ========================================
           // 7.5 INTERCEPTORES PRÉ-IA (cancel/reschedule/número)
           // Mesma lógica do fluxo WhatsApp - processa ANTES de chamar a IA
@@ -7649,6 +7701,7 @@ if (ignoredNumbers !== undefined) {
           // ========================================
           if ((hasCancelKeywordCW || hasRescheduleKeywordCW) && !isAlreadyInCancelConfirmationCW) {
             console.log(`🔄 [CHATWOOT INBOUND] Interceptado: ${hasCancelKeywordCW ? 'cancelamento' : 'reagendamento'}`);
+            await cwTypingHelper();
 
             const appointmentsList = await listClientAppointmentsNumbered(customerPhone, company.id, hasCancelKeywordCW ? 'cancelar' : 'remarcar');
             let interceptResponse = '';
@@ -7729,6 +7782,7 @@ if (ignoredNumbers !== undefined) {
 
           if (wasListingForCancelCW && selectedNumberCW) {
             console.log(`📋 [CHATWOOT INBOUND] Usuário escolheu agendamento número: ${selectedNumberCW}`);
+            await cwTypingHelper();
 
             const cleanPhoneCW = customerPhone.replace(/\D/g, '');
             const nowBrasiliaCW = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
@@ -7803,6 +7857,7 @@ if (ignoredNumbers !== undefined) {
 
           if ((isConfirmingCancelWordCW || isConfirmingSIMCW) && isAskingCancelConfirmationCW) {
             console.log('✅ [CHATWOOT INBOUND] Confirmação de cancelamento detectada');
+            await cwTypingHelper();
 
             const allMsgsCW = await storage.getMessagesByConversation(conversation.id);
             const pendingCancelMsgCW = allMsgsCW.find((m: any) => m.content.includes('[PENDING_CANCEL_ID:'));
@@ -7891,6 +7946,7 @@ if (ignoredNumbers !== undefined) {
           // ========================================
           if (/^(não|nao|no|nope)[!.?]*$/i.test(lowerMsgCW) && isAlreadyInCancelConfirmationCW) {
             console.log('❌ [CHATWOOT INBOUND] Cancelamento recusado pelo cliente');
+            await cwTypingHelper();
             // Limpar PENDING_CANCEL_ID
             await pool.execute(
               `DELETE FROM messages WHERE conversation_id = ? AND content LIKE '%[PENDING_CANCEL_ID:%'`,
@@ -8260,7 +8316,15 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 - NÃO peça dados do agendamento - o sistema lista automaticamente pelo telefone
 - Seja natural e conversacional`;
 
-          // 9. Chamar OpenAI
+          // 9. Enviar typing indicator e chamar OpenAI
+          const chatwootTypingSvc = new ChatwootService({
+            baseUrl: company.chatwootBaseUrl,
+            apiAccessToken: company.chatwootApiToken,
+            accountId: company.chatwootAccountId,
+            inboxId: company.chatwootInboxId,
+          });
+          await chatwootTypingSvc.toggleTyping(chatwootConversationId, 'on');
+
           const OpenAI = (await import('openai')).default;
           const openai = new OpenAI({ apiKey: company.openaiApiKey });
 
