@@ -7431,10 +7431,24 @@ if (ignoredNumbers !== undefined) {
         let messageContent = (payload.content || '').trim();
 
         // Detectar attachments de áudio do Chatwoot
-        const cwAttachments = payload.attachments || payload.message?.attachments || [];
-        const audioAttachment = cwAttachments.find(
-          (att: any) => att.file_type === 'audio' && (att.data_url || att.external_url)
-        );
+        // O Chatwoot pode enviar attachments em diferentes locais do payload
+        const cwAttachments = payload.attachments
+          || payload.content_attributes?.attachments
+          || payload.message?.attachments
+          || [];
+
+        console.log('🔍 [CHATWOOT INBOUND] Payload keys:', Object.keys(payload).join(', '));
+        console.log('🔍 [CHATWOOT INBOUND] Attachments found:', cwAttachments.length, JSON.stringify(cwAttachments).substring(0, 300));
+
+        const audioAttachment = Array.isArray(cwAttachments) ? cwAttachments.find(
+          (att: any) => {
+            const isAudio = att.file_type === 'audio'
+              || (att.content_type && att.content_type.startsWith('audio/'))
+              || (att.file?.content_type && att.file.content_type.startsWith('audio/'));
+            const hasUrl = att.data_url || att.external_url || att.thumb_url || att.file_url;
+            return isAudio && hasUrl;
+          }
+        ) : null;
 
         if (!messageContent && !audioAttachment) {
           return res.status(200).json({ received: true, ignored: true, reason: 'Empty incoming message' });
@@ -7500,7 +7514,8 @@ if (ignoredNumbers !== undefined) {
         // TRANSCRIÇÃO DE ÁUDIO: Baixar e transcrever com Whisper
         // ────────────────────────────────────────────────
         if (audioAttachment && !messageContent) {
-          const audioUrl = audioAttachment.data_url || audioAttachment.external_url;
+          const audioUrl = audioAttachment.data_url || audioAttachment.external_url || audioAttachment.file_url || audioAttachment.thumb_url;
+          console.log('🎵 [CHATWOOT INBOUND] Audio attachment details:', JSON.stringify(audioAttachment).substring(0, 500));
           console.log('🎵 [CHATWOOT INBOUND] Downloading audio from:', audioUrl);
           try {
             const audioResponse = await fetch(audioUrl);
