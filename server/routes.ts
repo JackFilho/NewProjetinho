@@ -7673,13 +7673,33 @@ if (ignoredNumbers !== undefined) {
             .map(service => `- ${service.name}: R$ ${service.price ? Number(service.price).toFixed(2) : 'Sob consulta'} (duração: ${formatDuration(service.duration || 30)})`)
             .join('\n');
 
-          // Gerar informações de disponibilidade
+          // Gerar informações de disponibilidade (mesma lógica do fluxo WhatsApp)
+          const existingAppointments = await storage.getAppointmentsByCompany(company.id);
           let availabilityInfo = '';
           let specificDateInfo = '';
           try {
-            availabilityInfo = await generateAvailabilityTextForAI(company.id);
+            availabilityInfo = await getAvailabilityInfoSmart(
+              messageText,
+              conversationHistory,
+              professionals,
+              existingAppointments,
+              company.id,
+              false,
+              filteredServices
+            );
           } catch (err) {
             console.warn('⚠️ [CHATWOOT INBOUND] Error generating availability info:', err);
+          }
+
+          try {
+            specificDateInfo = await checkSpecificDateAvailability(
+              messageText,
+              conversationHistory,
+              professionals,
+              existingAppointments
+            );
+          } catch (err) {
+            console.warn('⚠️ [CHATWOOT INBOUND] Error checking specific date:', err);
           }
 
           const today = getBrazilDate();
