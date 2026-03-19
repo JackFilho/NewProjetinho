@@ -7443,34 +7443,35 @@ if (ignoredNumbers !== undefined) {
       if (isIncomingCustomerMessage) {
         let messageContent = (payload.content || '').trim();
 
-        // Detectar attachments de áudio do Chatwoot
-        // O Chatwoot pode enviar attachments em diferentes locais do payload
+        // Detectar attachments de áudio do Chatwoot (webhook pode incluir no payload)
         const cwAttachments = payload.attachments
           || payload.content_attributes?.attachments
           || payload.message?.attachments
           || [];
 
-        console.log('🔍 [CHATWOOT INBOUND] Payload keys:', Object.keys(payload).join(', '));
-        console.log('🔍 [CHATWOOT INBOUND] Attachments found:', cwAttachments.length, JSON.stringify(cwAttachments).substring(0, 300));
-
-        const audioAttachment = Array.isArray(cwAttachments) ? cwAttachments.find(
-          (att: any) => {
-            const isAudio = att.file_type === 'audio'
-              || (att.content_type && att.content_type.startsWith('audio/'))
-              || (att.file?.content_type && att.file.content_type.startsWith('audio/'));
-            const hasUrl = att.data_url || att.external_url || att.thumb_url || att.file_url;
-            return isAudio && hasUrl;
-          }
-        ) : null;
-
-        if (!messageContent && !audioAttachment) {
-          return res.status(200).json({ received: true, ignored: true, reason: 'Empty incoming message' });
+        let audioAttachment: any = null;
+        if (Array.isArray(cwAttachments) && cwAttachments.length > 0) {
+          audioAttachment = cwAttachments.find(
+            (att: any) => {
+              const isAudio = att.file_type === 'audio'
+                || (att.content_type && att.content_type.startsWith('audio/'))
+                || (att.file?.content_type && att.file.content_type.startsWith('audio/'));
+              const hasUrl = att.data_url || att.external_url || att.thumb_url || att.file_url;
+              return isAudio && hasUrl;
+            }
+          );
         }
 
         // Extrair dados do Chatwoot
         const chatwootAccountId = payload.account?.id;
         const chatwootConversationId = payload.conversation?.id;
         const chatwootInboxId = payload.inbox?.id || payload.conversation?.inbox_id;
+        const chatwootMessageId = payload.id; // ID da mensagem no Chatwoot
+
+        // Se não tem texto NEM attachment no webhook, e não tem IDs para fallback, ignorar
+        if (!messageContent && !audioAttachment && (!chatwootAccountId || !chatwootConversationId)) {
+          return res.status(200).json({ received: true, ignored: true, reason: 'Empty incoming message' });
+        }
 
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         console.log('📨 [CHATWOOT INBOUND] Customer message received');
@@ -7524,8 +7525,56 @@ if (ignoredNumbers !== undefined) {
         }
 
         // ────────────────────────────────────────────────
-        // TRANSCRIÇÃO DE ÁUDIO: Baixar e transcrever com Whisper
+        // TRANSCRIÇÃO DE ÁUDIO: Detectar e transcrever com Whisper
         // ────────────────────────────────────────────────
+        // FALLBACK: Se não encontrou áudio no webhook, buscar via API do Chatwoot
+        if (!audioAttachment && !messageContent && chatwootConversationId) {
+          console.log('🔍 [CHATWOOT INBOUND] No content/audio in webhook. Fetching message via Chatwoot API...');
+          try {
+            // Buscar últimas mensagens da conversa via API para encontrar attachment de áudio
+            const apiUrl = `${company.chatwootBaseUrl.replace(/\/+$/, '')}/api/v1/accounts/${company.chatwootAccountId}/conversations/${chatwootConversationId}/messages`;
+            const apiResponse = await fetch(apiUrl, {
+              headers: {
+                'api_access_token': company.chatwootApiToken,
+                'Content-Type': 'application/json',
+              },
+            });
+
+            if (apiResponse.ok) {
+              const apiData = await apiResponse.json();
+              const messages = apiData.payload || apiData || [];
+              console.log('🔍 [CHATWOOT INBOUND] API returned', Array.isArray(messages) ? messages.length : 'non-array', 'messages');
+
+              // Buscar a mensagem mais recente com attachment de áudio (incoming)
+              const recentMsgs = Array.isArray(messages) ? messages : [];
+              for (const msg of recentMsgs) {
+                if (msg.message_type === 0 || msg.message_type === 'incoming') {
+                  const msgAttachments = msg.attachments || [];
+                  for (const att of msgAttachments) {
+                    if (att.file_type === 'audio' || (att.content_type && att.content_type.startsWith('audio/'))) {
+                      audioAttachment = att;
+                      console.log('🎵 [CHATWOOT INBOUND] Found audio via API:', JSON.stringify(att).substring(0, 500));
+                      break;
+                    }
+                  }
+                  if (audioAttachment) break;
+                }
+              }
+            } else {
+              console.warn('⚠️ [CHATWOOT INBOUND] Chatwoot API fetch failed:', apiResponse.status);
+            }
+          } catch (fetchErr) {
+            console.error('❌ [CHATWOOT INBOUND] Error fetching from Chatwoot API:', fetchErr);
+          }
+        }
+
+        // Se ainda não tem conteúdo nem áudio, ignorar
+        if (!messageContent && !audioAttachment) {
+          console.log('⚠️ [CHATWOOT INBOUND] No text content and no audio attachment found (webhook + API)');
+          return res.status(200).json({ received: true, ignored: true, reason: 'Empty incoming message (no text, no audio)' });
+        }
+
+        // Transcrever áudio se encontrado (do webhook ou da API)
         if (audioAttachment && !messageContent) {
           const audioUrl = audioAttachment.data_url || audioAttachment.external_url || audioAttachment.file_url || audioAttachment.thumb_url;
           console.log('🎵 [CHATWOOT INBOUND] Audio attachment details:', JSON.stringify(audioAttachment).substring(0, 500));
