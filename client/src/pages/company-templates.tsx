@@ -25,9 +25,7 @@ import {
   AlertTriangle,
   Info,
   Search,
-  History,
-  Variable,
-  MessageSquare
+  Variable
 } from 'lucide-react';
 
 interface MetaTemplate {
@@ -45,18 +43,6 @@ interface MetaTemplateComponent {
   format?: string;
   example?: any;
   buttons?: any[];
-}
-
-interface SendHistoryItem {
-  id: number;
-  companyId: number;
-  appointmentId: number;
-  reminderType: string;
-  clientPhone: string;
-  message: string;
-  sentAt: string;
-  status: string;
-  whatsappInstanceId: number;
 }
 
 // Labels descritivos para as variaveis dos templates
@@ -104,11 +90,6 @@ export default function CompanyTemplates() {
       }
       return response.json();
     },
-  });
-
-  // Fetch send history
-  const { data: sendHistory = [], isLoading: historyLoading } = useQuery<SendHistoryItem[]>({
-    queryKey: ['/api/company/reminder-history'],
   });
 
   // Create template mutation
@@ -202,7 +183,6 @@ export default function CompanyTemplates() {
       return response.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/company/reminder-history'] });
       toast({ title: 'Mensagem enviada', description: data.message });
       setSendDialogOpen(false);
       setSendPhone('');
@@ -302,16 +282,6 @@ export default function CompanyTemplates() {
     return true;
   });
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
   return (
     <div className="container mx-auto py-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -344,10 +314,6 @@ export default function CompanyTemplates() {
           <TabsTrigger value="variables" className="flex items-center gap-2">
             <Variable className="h-4 w-4" />
             Variaveis
-          </TabsTrigger>
-          <TabsTrigger value="history" className="flex items-center gap-2">
-            <History className="h-4 w-4" />
-            Historico
           </TabsTrigger>
         </TabsList>
 
@@ -720,61 +686,6 @@ export default function CompanyTemplates() {
           </Card>
         </TabsContent>
 
-        {/* Tab: Historico de Envios */}
-        <TabsContent value="history" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <History className="h-5 w-5" />
-                Historico de Envios
-              </CardTitle>
-              <CardDescription>
-                Visualize todas as mensagens enviadas via templates
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {historyLoading ? (
-                <div className="space-y-3">
-                  {[1, 2, 3].map(i => (
-                    <div key={i} className="animate-pulse">
-                      <div className="h-16 bg-gray-200 rounded-lg"></div>
-                    </div>
-                  ))}
-                </div>
-              ) : sendHistory.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p className="text-lg font-medium">Nenhuma mensagem enviada ainda</p>
-                  <p className="text-sm">As mensagens enviadas via templates aparecerao aqui</p>
-                </div>
-              ) : (
-                <div className="space-y-3 max-h-[600px] overflow-y-auto">
-                  {sendHistory.map((item: SendHistoryItem) => (
-                    <div key={item.id} className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{item.clientPhone}</span>
-                          <Badge
-                            variant={item.status === 'sent' ? 'default' : 'destructive'}
-                            className={item.status === 'sent' ? 'bg-green-100 text-green-800' : ''}
-                          >
-                            {item.status === 'sent' ? 'Enviado' : 'Falhou'}
-                          </Badge>
-                        </div>
-                        <span className="text-sm text-muted-foreground">
-                          {formatDate(item.sentAt)}
-                        </span>
-                      </div>
-                      <div className="bg-muted rounded p-3 text-sm whitespace-pre-wrap">
-                        {item.message}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
 
       {/* Dialog: Enviar Template */}
