@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { FloatingHelpButton } from "@/components/floating-help-button";
@@ -24,7 +24,10 @@ import {
   XCircle,
   AlertTriangle,
   Info,
-  Search
+  Search,
+  History,
+  Variable,
+  MessageSquare
 } from 'lucide-react';
 
 interface MetaTemplate {
@@ -43,6 +46,28 @@ interface MetaTemplateComponent {
   example?: any;
   buttons?: any[];
 }
+
+interface SendHistoryItem {
+  id: number;
+  companyId: number;
+  appointmentId: number;
+  reminderType: string;
+  clientPhone: string;
+  message: string;
+  sentAt: string;
+  status: string;
+  whatsappInstanceId: number;
+}
+
+// Labels descritivos para as variaveis dos templates
+const VARIABLE_LABELS: { [key: string]: string } = {
+  '{{1}}': 'Nome do cliente',
+  '{{2}}': 'Data (ex: 20/03/2026)',
+  '{{3}}': 'Horario (ex: 14:30)',
+  '{{4}}': 'Nome do servico',
+  '{{5}}': 'Nome do profissional',
+  '{{6}}': 'Nome da empresa',
+};
 
 export default function CompanyTemplates() {
   const { toast } = useToast();
@@ -69,7 +94,7 @@ export default function CompanyTemplates() {
   const { data: templates = [], isLoading, isError, error } = useQuery<MetaTemplate[]>({
     queryKey: ['/api/company/meta-templates', statusFilter],
     queryFn: async () => {
-      const url = statusFilter
+      const url = statusFilter && statusFilter !== 'all'
         ? `/api/company/meta-templates?status=${statusFilter}`
         : '/api/company/meta-templates';
       const response = await fetch(url, { credentials: 'include' });
@@ -79,6 +104,11 @@ export default function CompanyTemplates() {
       }
       return response.json();
     },
+  });
+
+  // Fetch send history
+  const { data: sendHistory = [], isLoading: historyLoading } = useQuery<SendHistoryItem[]>({
+    queryKey: ['/api/company/reminder-history'],
   });
 
   // Create template mutation
@@ -125,7 +155,7 @@ export default function CompanyTemplates() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/company/meta-templates'] });
-      toast({ title: 'Template criado', description: 'O template foi enviado para aprovação da Meta.' });
+      toast({ title: 'Template criado', description: 'O template foi enviado para aprovacao da Meta.' });
       setNewTemplate({ name: '', category: 'UTILITY', language: 'pt_BR', headerText: '', bodyText: '', footerText: '' });
     },
     onError: (error: Error) => {
@@ -172,6 +202,7 @@ export default function CompanyTemplates() {
       return response.json();
     },
     onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/company/reminder-history'] });
       toast({ title: 'Mensagem enviada', description: data.message });
       setSendDialogOpen(false);
       setSendPhone('');
@@ -226,11 +257,17 @@ export default function CompanyTemplates() {
     return footerComponent?.text || '';
   };
 
-  // Extract {{1}}, {{2}} etc. variable placeholders from body
+  // Extract {{1}}, {{2}} etc. variable placeholders from body and header
   const extractVariables = (template: MetaTemplate): string[] => {
     const body = getTemplateBodyText(template);
-    const matches = body.match(/\{\{\d+\}\}/g);
-    return matches ? [...new Set(matches)] : [];
+    const header = getTemplateHeaderText(template);
+    const allText = `${header} ${body}`;
+    const matches = allText.match(/\{\{\d+\}\}/g);
+    return matches ? [...new Set(matches)].sort() : [];
+  };
+
+  const getVariableLabel = (variable: string): string => {
+    return VARIABLE_LABELS[variable] || `Variavel ${variable}`;
   };
 
   const handleSendTemplate = () => {
@@ -265,13 +302,23 @@ export default function CompanyTemplates() {
     return true;
   });
 
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   return (
     <div className="container mx-auto py-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight ml-16 sm:ml-0">Templates WhatsApp</h1>
+          <h1 className="text-3xl font-bold tracking-tight ml-16 sm:ml-0">Templates de Mensagens</h1>
           <p className="text-muted-foreground">
-            Gerencie seus templates de mensagem da Meta WhatsApp Cloud API
+            Crie, gerencie e envie templates de mensagem via WhatsApp com variaveis personalizadas
           </p>
         </div>
         <Button
@@ -280,18 +327,9 @@ export default function CompanyTemplates() {
           className="flex items-center gap-2"
         >
           <RefreshCw className="h-4 w-4" />
-          Atualizar
+          Sincronizar
         </Button>
       </div>
-
-      <Alert>
-        <Info className="h-4 w-4" />
-        <AlertDescription>
-          <strong>Regras da Meta:</strong> Mensagens fora da janela de 24 horas so podem ser enviadas via templates aprovados.
-          Templates passam por revisao da Meta (geralmente 24-48h). Use a categoria <strong>UTILITY</strong> para lembretes e confirmacoes,
-          e <strong>MARKETING</strong> para campanhas e promocoes.
-        </AlertDescription>
-      </Alert>
 
       <Tabs defaultValue="templates" className="space-y-4">
         <TabsList>
@@ -303,10 +341,25 @@ export default function CompanyTemplates() {
             <Plus className="h-4 w-4" />
             Criar Template
           </TabsTrigger>
+          <TabsTrigger value="variables" className="flex items-center gap-2">
+            <Variable className="h-4 w-4" />
+            Variaveis
+          </TabsTrigger>
+          <TabsTrigger value="history" className="flex items-center gap-2">
+            <History className="h-4 w-4" />
+            Historico
+          </TabsTrigger>
         </TabsList>
 
         {/* Tab: Lista de Templates */}
         <TabsContent value="templates" className="space-y-4">
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertDescription>
+              Selecione um template aprovado e clique em <strong>"Enviar"</strong> para enviar manualmente a mensagem para um cliente, preenchendo as variaveis na hora do envio.
+            </AlertDescription>
+          </Alert>
+
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -356,6 +409,7 @@ export default function CompanyTemplates() {
                 const bodyText = getTemplateBodyText(template);
                 const headerText = getTemplateHeaderText(template);
                 const footerText = getTemplateFooterText(template);
+                const variables = extractVariables(template);
                 const isApproved = template.status?.toUpperCase() === 'APPROVED';
 
                 return (
@@ -371,6 +425,11 @@ export default function CompanyTemplates() {
                             {getStatusBadge(template.status)}
                             {getCategoryBadge(template.category)}
                             <Badge variant="outline" className="text-xs">{template.language}</Badge>
+                            {variables.length > 0 && (
+                              <Badge variant="outline" className="text-xs border-emerald-300 text-emerald-700">
+                                {variables.length} {variables.length === 1 ? 'variavel' : 'variaveis'}
+                              </Badge>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -468,7 +527,7 @@ export default function CompanyTemplates() {
                   <Label htmlFor="template-name">Nome do Template *</Label>
                   <Input
                     id="template-name"
-                    placeholder="ex: lembrete_agendamento"
+                    placeholder="ex: confirmacao_agendamento"
                     value={newTemplate.name}
                     onChange={(e) => setNewTemplate(prev => ({ ...prev, name: e.target.value }))}
                   />
@@ -486,7 +545,7 @@ export default function CompanyTemplates() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="UTILITY">Utilidade (lembretes, confirmacoes)</SelectItem>
+                      <SelectItem value="UTILITY">Utilidade (confirmacoes, lembretes)</SelectItem>
                       <SelectItem value="MARKETING">Marketing (campanhas, promocoes)</SelectItem>
                       <SelectItem value="AUTHENTICATION">Autenticacao (codigos OTP)</SelectItem>
                     </SelectContent>
@@ -516,7 +575,7 @@ export default function CompanyTemplates() {
                 <Label htmlFor="template-header">Cabecalho (opcional)</Label>
                 <Input
                   id="template-header"
-                  placeholder="ex: Lembrete de Agendamento"
+                  placeholder="ex: Confirmacao de Agendamento"
                   value={newTemplate.headerText}
                   onChange={(e) => setNewTemplate(prev => ({ ...prev, headerText: e.target.value }))}
                   maxLength={60}
@@ -528,14 +587,14 @@ export default function CompanyTemplates() {
                 <Label htmlFor="template-body">Corpo da Mensagem *</Label>
                 <Textarea
                   id="template-body"
-                  placeholder={`ex: Ola! Seu agendamento esta confirmado:\n\nServico: {{1}}\nData: {{2}}\nHorario: {{3}}\n\nAguardamos voce!`}
+                  placeholder={`ex: Ola {{1}}! Seu agendamento esta confirmado:\n\nData: {{2}}\nHorario: {{3}}\n\nAguardamos voce!`}
                   value={newTemplate.bodyText}
                   onChange={(e) => setNewTemplate(prev => ({ ...prev, bodyText: e.target.value }))}
                   rows={8}
                   maxLength={1024}
                 />
                 <div className="flex justify-between text-xs text-muted-foreground">
-                  <p>Use {'{{1}}'}, {'{{2}}'}, {'{{3}}'} para variaveis dinamicas</p>
+                  <p>Use {'{{1}}'}, {'{{2}}'}, {'{{3}}'} etc. para variaveis dinamicas — veja a aba "Variaveis" para mais detalhes</p>
                   <p>{newTemplate.bodyText.length}/1024</p>
                 </div>
               </div>
@@ -544,7 +603,7 @@ export default function CompanyTemplates() {
                 <Label htmlFor="template-footer">Rodape (opcional)</Label>
                 <Input
                   id="template-footer"
-                  placeholder="ex: Enviado automaticamente pelo sistema"
+                  placeholder="ex: Enviado pelo sistema"
                   value={newTemplate.footerText}
                   onChange={(e) => setNewTemplate(prev => ({ ...prev, footerText: e.target.value }))}
                   maxLength={60}
@@ -604,18 +663,130 @@ export default function CompanyTemplates() {
             </AlertDescription>
           </Alert>
         </TabsContent>
+
+        {/* Tab: Variaveis */}
+        <TabsContent value="variables" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Variable className="h-5 w-5" />
+                Guia de Variaveis
+              </CardTitle>
+              <CardDescription>
+                Variaveis permitem personalizar cada mensagem no momento do envio.
+                Ao enviar um template, voce preenche o valor de cada variavel manualmente.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm text-blue-800">
+                  <strong>Como funciona:</strong> Ao criar um template, insira variaveis como <code className="bg-blue-100 px-1 rounded">{'{{1}}'}</code>, <code className="bg-blue-100 px-1 rounded">{'{{2}}'}</code>, etc. no corpo da mensagem.
+                  Na hora de enviar, voce preenchera cada variavel com o valor desejado (ex: nome do cliente, data, horario).
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="font-semibold text-sm">Sugestoes de uso para variaveis</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {Object.entries(VARIABLE_LABELS).map(([variable, label]) => (
+                    <div key={variable} className="flex items-center gap-3 p-3 border rounded-lg">
+                      <code className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded font-mono text-sm font-bold min-w-[50px] text-center">
+                        {variable}
+                      </code>
+                      <span className="text-sm text-muted-foreground">{label}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Estas sao apenas sugestoes. Voce pode usar as variaveis para qualquer finalidade — o valor e definido por voce na hora do envio.
+                </p>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-3">
+                <h3 className="font-semibold text-sm">Exemplo de template</h3>
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 max-w-md">
+                  <p className="font-bold text-sm mb-1">Confirmacao de Agendamento</p>
+                  <p className="text-sm whitespace-pre-wrap">
+                    Ola <span className="bg-emerald-200 px-1 rounded">{'{{1}}'}</span>! Seu agendamento esta confirmado.{'\n\n'}Data: <span className="bg-emerald-200 px-1 rounded">{'{{2}}'}</span>{'\n'}Horario: <span className="bg-emerald-200 px-1 rounded">{'{{3}}'}</span>{'\n\n'}Aguardamos voce!
+                  </p>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Ao enviar este template, voce preenchera: <code>{'{{1}}'}</code> = Nome do cliente, <code>{'{{2}}'}</code> = Data, <code>{'{{3}}'}</code> = Horario.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Tab: Historico de Envios */}
+        <TabsContent value="history" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <History className="h-5 w-5" />
+                Historico de Envios
+              </CardTitle>
+              <CardDescription>
+                Visualize todas as mensagens enviadas via templates
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {historyLoading ? (
+                <div className="space-y-3">
+                  {[1, 2, 3].map(i => (
+                    <div key={i} className="animate-pulse">
+                      <div className="h-16 bg-gray-200 rounded-lg"></div>
+                    </div>
+                  ))}
+                </div>
+              ) : sendHistory.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p className="text-lg font-medium">Nenhuma mensagem enviada ainda</p>
+                  <p className="text-sm">As mensagens enviadas via templates aparecerao aqui</p>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                  {sendHistory.map((item: SendHistoryItem) => (
+                    <div key={item.id} className="border rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{item.clientPhone}</span>
+                          <Badge
+                            variant={item.status === 'sent' ? 'default' : 'destructive'}
+                            className={item.status === 'sent' ? 'bg-green-100 text-green-800' : ''}
+                          >
+                            {item.status === 'sent' ? 'Enviado' : 'Falhou'}
+                          </Badge>
+                        </div>
+                        <span className="text-sm text-muted-foreground">
+                          {formatDate(item.sentAt)}
+                        </span>
+                      </div>
+                      <div className="bg-muted rounded p-3 text-sm whitespace-pre-wrap">
+                        {item.message}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {/* Dialog: Enviar Template */}
       <Dialog open={sendDialogOpen} onOpenChange={setSendDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Send className="h-5 w-5" />
               Enviar Template
             </DialogTitle>
             <DialogDescription>
-              Envie o template <strong>{selectedTemplate?.name}</strong> para um cliente via WhatsApp.
+              Preencha as variaveis e envie o template <strong>{selectedTemplate?.name}</strong> para um cliente via WhatsApp.
             </DialogDescription>
           </DialogHeader>
 
@@ -637,15 +808,18 @@ export default function CompanyTemplates() {
               <>
                 <Separator />
                 <div className="space-y-3">
-                  <Label className="font-semibold">Variaveis do Template</Label>
+                  <Label className="font-semibold">Preencha as variaveis do template</Label>
                   {extractVariables(selectedTemplate).map((variable) => (
                     <div key={variable} className="space-y-1">
-                      <Label htmlFor={`param-${variable}`} className="text-sm">
-                        {variable}
+                      <Label htmlFor={`param-${variable}`} className="text-sm flex items-center gap-2">
+                        <code className="bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-mono text-xs">
+                          {variable}
+                        </code>
+                        <span className="text-muted-foreground">— {getVariableLabel(variable)}</span>
                       </Label>
                       <Input
                         id={`param-${variable}`}
-                        placeholder={`Valor para ${variable}`}
+                        placeholder={getVariableLabel(variable)}
                         value={sendParams[variable] || ''}
                         onChange={(e) => setSendParams(prev => ({ ...prev, [variable]: e.target.value }))}
                       />
@@ -659,17 +833,23 @@ export default function CompanyTemplates() {
               <>
                 <Separator />
                 <div>
-                  <Label className="text-xs font-semibold text-muted-foreground">Pre-visualizacao</Label>
+                  <Label className="text-xs font-semibold text-muted-foreground">Pre-visualizacao da mensagem</Label>
                   <div className="mt-1 bg-green-50 border border-green-200 rounded-lg p-3 text-sm">
+                    {getTemplateHeaderText(selectedTemplate) && (
+                      <p className="font-bold mb-1">{getTemplateHeaderText(selectedTemplate)}</p>
+                    )}
                     <p className="whitespace-pre-wrap">
                       {(() => {
                         let body = getTemplateBodyText(selectedTemplate);
                         Object.entries(sendParams).forEach(([key, value]) => {
-                          if (value) body = body.replace(key, value);
+                          if (value) body = body.replaceAll(key, value);
                         });
                         return body;
                       })()}
                     </p>
+                    {getTemplateFooterText(selectedTemplate) && (
+                      <p className="text-xs text-muted-foreground mt-2">{getTemplateFooterText(selectedTemplate)}</p>
+                    )}
                   </div>
                 </div>
               </>

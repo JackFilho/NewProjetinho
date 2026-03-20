@@ -52,32 +52,6 @@ const birthdayMessageSchema = z.object({
   isActive: z.boolean().default(true),
 });
 
-const reminderSettingsSchema = z.object({
-  messageTemplate: z.string().min(10, "A mensagem deve ter pelo menos 10 caracteres"),
-  isActive: z.boolean(),
-});
-
-interface ReminderSettings {
-  id: number;
-  companyId: number;
-  reminderType: string;
-  isActive: boolean;
-  messageTemplate: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface ReminderHistory {
-  id: number;
-  companyId: number;
-  appointmentId: number;
-  reminderType: string;
-  clientPhone: string;
-  message: string;
-  sentAt: string;
-  status: string;
-  whatsappInstanceId: number;
-}
 
 
 type CompanyProfileData = z.infer<typeof companyProfileSchema>;
@@ -213,7 +187,6 @@ export default function CompanySettings() {
   const [showQrDialog, setShowQrDialog] = useState(false);
   const [showWebhookDialog, setShowWebhookDialog] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
-  const [editingSettings, setEditingSettings] = useState<{ [key: string]: ReminderSettings }>({});
   const [numberToRemove, setNumberToRemove] = useState<string | null>(null);
   const [showRemoveDialog, setShowRemoveDialog] = useState(false);
 
@@ -521,15 +494,6 @@ export default function CompanySettings() {
   // Global settings query for system URL
   const { data: globalSettings } = useQuery({
     queryKey: ["/api/admin/settings"],
-  });
-
-  // Reminder queries
-  const { data: reminderSettings = [], isLoading: settingsLoading } = useQuery({
-    queryKey: ['/api/company/reminder-settings'],
-  });
-
-  const { data: reminderHistory = [], isLoading: historyLoading } = useQuery({
-    queryKey: ['/api/company/reminder-history'],
   });
 
   const updateProfileMutation = useMutation({
@@ -1323,53 +1287,6 @@ export default function CompanySettings() {
     },
   });
 
-  // Reminder mutations
-  const updateReminderSettingsMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: number; data: Partial<ReminderSettings> }) => {
-      const response = await apiRequest(`/api/company/reminder-settings/${id}`, "PUT", data);
-      return response;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/company/reminder-settings'] });
-      toast({
-        title: "Configurações atualizadas",
-        description: "As configurações de lembrete foram atualizadas com sucesso.",
-      });
-      setEditingSettings({});
-    },
-    onError: () => {
-      toast({
-        title: "Erro",
-        description: "Erro ao atualizar configurações de lembrete.",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const testReminderMutation = useMutation({
-    mutationFn: async (phoneNumber?: string) => {
-      const response = await apiRequest("/api/company/test-reminder", "POST", { 
-        testPhone: phoneNumber 
-      });
-      return response;
-    },
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/company/reminder-history'] });
-      toast({
-        title: data.success ? "Teste realizado" : "Erro no teste",
-        description: data.message,
-        variant: data.success ? "default" : "destructive",
-      });
-    },
-    onError: () => {
-      toast({
-        title: "Erro",
-        description: "Erro ao testar função de lembrete.",
-        variant: "destructive",
-      });
-    },
-  });
-
   const updateCompanySettingsMutation = useMutation({
     mutationFn: async (data: CompanySettingsData) => {
       // Se tiver um arquivo de logo selecionado, faz upload primeiro
@@ -1464,7 +1381,7 @@ export default function CompanySettings() {
       </div>
 
         <Tabs defaultValue="profile" className="w-full">
-          <TabsList className="grid w-full grid-cols-7">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="profile" className="flex items-center gap-2">
               <Building2 className="w-4 h-4" />
               Empresa
@@ -1476,10 +1393,6 @@ export default function CompanySettings() {
             <TabsTrigger value="company-settings" className="flex items-center gap-2">
               <Settings className="w-4 h-4" />
               Configurações
-            </TabsTrigger>
-            <TabsTrigger value="reminders" className="flex items-center gap-2">
-              <Bell className="w-4 h-4" />
-              Lembretes
             </TabsTrigger>
             <TabsTrigger value="ai-agent" className="flex items-center gap-2">
               <Bot className="w-4 h-4" />
@@ -3498,10 +3411,6 @@ export default function CompanySettings() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="reminders" className="space-y-6">
-
-        </TabsContent>
-
         <TabsContent value="birthdays" className="space-y-6">
           <Card>
             <CardHeader>
@@ -3805,338 +3714,6 @@ export default function CompanySettings() {
                   )}
                 </CardContent>
               </Card>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="reminders" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Bell className="w-5 h-5" />
-                Sistema de Lembretes
-                <Badge variant="secondary" className="bg-green-100 text-green-700">
-                  Sistema Ativo
-                </Badge>
-              </CardTitle>
-              <CardDescription>
-                Envia lembretes automáticos via WhatsApp para os clientes
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-                <div className="flex items-start gap-3">
-                  <Bell className="w-5 h-5 text-yellow-600 mt-0.5" />
-                  <div>
-                    <p className="font-medium text-yellow-800">Automático</p>
-                    <p className="text-sm text-yellow-700">
-                      Os lembretes são enviados automaticamente pelo sistema. Certifique-se de que há uma instância de WhatsApp conectada e ativa.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Clock className="w-5 h-5 text-blue-600" />
-                      Lembrete de 1 dia
-                    </CardTitle>
-                    <CardDescription>
-                      Enviado 24 horas antes do agendamento para lembrar o cliente
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    {settingsLoading ? (
-                      <div className="animate-pulse space-y-3">
-                        <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                        <div className="h-20 bg-gray-200 rounded"></div>
-                      </div>
-                    ) : (
-                      <>
-                        {(reminderSettings as ReminderSettings[])
-                          .filter(setting => setting.reminderType === '24h')
-                          .map(setting => (
-                            <div key={setting.id}>
-                              <div className="flex items-center justify-between mb-3">
-                                <Label htmlFor={`active-${setting.id}`}>Ativo</Label>
-                                <Switch
-                                  id={`active-${setting.id}`}
-                                  checked={setting.isActive}
-                                  onCheckedChange={(checked) => {
-                                    updateReminderSettingsMutation.mutate({
-                                      id: setting.id,
-                                      data: { isActive: checked }
-                                    });
-                                  }}
-                                  disabled={updateReminderSettingsMutation.isPending}
-                                />
-                              </div>
-                              <div>
-                                <Label htmlFor={`template-${setting.id}`}>Template da Mensagem</Label>
-                                <Textarea
-                                  id={`template-${setting.id}`}
-                                  value={editingSettings[setting.id]?.messageTemplate ?? setting.messageTemplate}
-                                  onChange={(e) => {
-                                    setEditingSettings(prev => ({
-                                      ...prev,
-                                      [setting.id]: {
-                                        ...setting,
-                                        messageTemplate: e.target.value
-                                      }
-                                    }));
-                                  }}
-                                  className="min-h-[100px]"
-                                  placeholder="Digite o template da mensagem..."
-                                />
-                                {editingSettings[setting.id] && (
-                                  <div className="flex gap-2 mt-2">
-                                    <Button
-                                      size="sm"
-                                      onClick={() => {
-                                        updateReminderSettingsMutation.mutate({
-                                          id: setting.id,
-                                          data: { messageTemplate: editingSettings[setting.id].messageTemplate }
-                                        });
-                                      }}
-                                      disabled={updateReminderSettingsMutation.isPending}
-                                    >
-                                      Salvar
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => {
-                                        setEditingSettings(prev => {
-                                          const newSettings = { ...prev };
-                                          delete newSettings[setting.id];
-                                          return newSettings;
-                                        });
-                                      }}
-                                    >
-                                      Cancelar
-                                    </Button>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                      </>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Clock className="w-5 h-5 text-orange-600" />
-                      Lembrete de 1 hora
-                    </CardTitle>
-                    <CardDescription>
-                      Enviado 1 hora antes do agendamento como lembrete final
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    {settingsLoading ? (
-                      <div className="animate-pulse space-y-3">
-                        <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                        <div className="h-20 bg-gray-200 rounded"></div>
-                      </div>
-                    ) : (
-                      <>
-                        {(reminderSettings as ReminderSettings[])
-                          .filter(setting => setting.reminderType === '1h')
-                          .map(setting => (
-                            <div key={setting.id}>
-                              <div className="flex items-center justify-between mb-3">
-                                <Label htmlFor={`active-${setting.id}`}>Ativo</Label>
-                                <Switch
-                                  id={`active-${setting.id}`}
-                                  checked={setting.isActive}
-                                  onCheckedChange={(checked) => {
-                                    updateReminderSettingsMutation.mutate({
-                                      id: setting.id,
-                                      data: { isActive: checked }
-                                    });
-                                  }}
-                                  disabled={updateReminderSettingsMutation.isPending}
-                                />
-                              </div>
-                              <div>
-                                <Label htmlFor={`template-${setting.id}`}>Template da Mensagem</Label>
-                                <Textarea
-                                  id={`template-${setting.id}`}
-                                  value={editingSettings[setting.id]?.messageTemplate ?? setting.messageTemplate}
-                                  onChange={(e) => {
-                                    setEditingSettings(prev => ({
-                                      ...prev,
-                                      [setting.id]: {
-                                        ...setting,
-                                        messageTemplate: e.target.value
-                                      }
-                                    }));
-                                  }}
-                                  className="min-h-[100px]"
-                                  placeholder="Digite o template da mensagem..."
-                                />
-                                {editingSettings[setting.id] && (
-                                  <div className="flex gap-2 mt-2">
-                                    <Button
-                                      size="sm"
-                                      onClick={() => {
-                                        updateReminderSettingsMutation.mutate({
-                                          id: setting.id,
-                                          data: { messageTemplate: editingSettings[setting.id].messageTemplate }
-                                        });
-                                      }}
-                                      disabled={updateReminderSettingsMutation.isPending}
-                                    >
-                                      Salvar
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => {
-                                        setEditingSettings(prev => {
-                                          const newSettings = { ...prev };
-                                          delete newSettings[setting.id];
-                                          return newSettings;
-                                        });
-                                      }}
-                                    >
-                                      Cancelar
-                                    </Button>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                      </>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div className="space-y-4 mt-6">
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <div className="flex items-start gap-3">
-                    <Send className="w-5 h-5 text-blue-600 mt-0.5" />
-                    <div>
-                      <p className="font-medium text-blue-800">Teste da Função de Lembrete</p>
-                      <p className="text-sm text-blue-700 mb-3">
-                        Envie uma mensagem de teste via WhatsApp para verificar a integração
-                      </p>
-                      <div className="space-y-2">
-                        <Label htmlFor="test-phone">Número de telefone para teste</Label>
-                        <Input
-                          id="test-phone"
-                          type="tel"
-                          placeholder="Ex: (11) 99999-9999"
-                          value={testPhoneNumber}
-                          onChange={(e) => setTestPhoneNumber(e.target.value)}
-                          className="max-w-xs"
-                        />
-                        <p className="text-xs text-blue-600">
-                          Digite um número válido do WhatsApp para testar a integração
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="flex gap-2">
-                  <Button
-                    onClick={() => testReminderMutation.mutate(testPhoneNumber)}
-                    disabled={testReminderMutation.isPending || !testPhoneNumber.trim()}
-                    className="flex items-center gap-2"
-                  >
-                    <Send className="w-4 h-4" />
-                    {testReminderMutation.isPending ? "Testando..." : "Testar Função"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/company/reminder-settings'] })}
-                    className="flex items-center gap-2"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                    Atualizar
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-green-700">
-                <Clock className="w-5 h-5" />
-                Histórico de Lembretes
-              </CardTitle>
-              <CardDescription>
-                Lembretes enviados recentemente pelo sistema
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {historyLoading ? (
-                <div className="space-y-3">
-                  {[1, 2, 3].map(i => (
-                    <div key={i} className="animate-pulse">
-                      <div className="h-16 bg-gray-200 rounded-lg"></div>
-                    </div>
-                  ))}
-                </div>
-              ) : (reminderHistory as ReminderHistory[]).length > 0 ? (
-                <div className="space-y-3 max-h-96 overflow-y-auto">
-                  {(reminderHistory as ReminderHistory[]).map((history) => (
-                    <div key={history.id} className="bg-green-50 p-4 rounded-lg border border-green-200">
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <p className="font-medium text-green-900">{history.clientPhone}</p>
-                            <Badge 
-                              variant={history.status === 'sent' ? 'default' : 'destructive'} 
-                              className={history.status === 'sent' ? 'bg-green-600' : ''}
-                            >
-                              {history.status === 'sent' ? 'Enviado' : 'Erro'}
-                            </Badge>
-                          </div>
-                          <p className="text-sm text-green-600 mb-2">
-                            Tipo: {history.reminderType === '24h' ? '1 dia antes' : '1 hora antes'}
-                          </p>
-                          <p className="text-xs text-green-500">
-                            Enviado em {new Date(history.sentAt).toLocaleDateString('pt-BR', {
-                              day: '2-digit',
-                              month: '2-digit',
-                              year: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </p>
-                        </div>
-                        <div className="flex items-center">
-                          {history.status === 'sent' ? (
-                            <CheckCircle className="w-5 h-5 text-green-600" />
-                          ) : (
-                            <XCircle className="w-5 h-5 text-red-600" />
-                          )}
-                        </div>
-                      </div>
-                      <div className="mt-3 p-3 bg-white rounded border border-green-100">
-                        <p className="text-sm text-gray-700">{history.message}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center p-8 bg-gray-50 rounded-lg border border-dashed">
-                  <Bell className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                  <p className="text-gray-600">Nenhum lembrete enviado ainda</p>
-                  <p className="text-sm text-gray-500 mt-1">
-                    Os lembretes aparecerão aqui quando forem enviados automaticamente
-                  </p>
-                </div>
-              )}
             </CardContent>
           </Card>
         </TabsContent>
