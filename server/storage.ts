@@ -72,6 +72,9 @@ import {
   type InsertReviewInvitation,
   type MessageCampaign,
   type InsertMessageCampaign,
+  instagramInstances,
+  type InstagramInstance,
+  type InsertInstagramInstance,
 } from "@shared/schema";
 import { normalizePhone, validateBrazilianPhone, comparePhones } from "../shared/phone-utils";
 import { db, pool } from "./db";
@@ -207,6 +210,14 @@ export interface IStorage {
   updateWhatsappInstance(id: number, instance: Partial<InsertWhatsappInstance>): Promise<WhatsappInstance>;
   deleteWhatsappInstance(id: number): Promise<void>;
   
+  // Instagram instances operations
+  getInstagramInstancesByCompany(companyId: number): Promise<InstagramInstance[]>;
+  getInstagramInstance(id: number): Promise<InstagramInstance | undefined>;
+  findInstagramInstanceByIgAccountId(igAccountId: string): Promise<InstagramInstance | undefined>;
+  createInstagramInstance(instance: InsertInstagramInstance): Promise<InstagramInstance>;
+  updateInstagramInstance(id: number, instance: Partial<InsertInstagramInstance>): Promise<InstagramInstance>;
+  deleteInstagramInstance(id: number): Promise<void>;
+
   // Conversations operations
   getConversation(companyId: number, whatsappInstanceId: number, phoneNumber: string): Promise<Conversation | undefined>;
   createConversation(conversation: InsertConversation): Promise<Conversation>;
@@ -1036,6 +1047,91 @@ export class DatabaseStorage implements IStorage {
         .where(eq(whatsappInstances.id, id));
     } catch (error: any) {
       console.error("Error deleting WhatsApp instance:", error);
+      throw error;
+    }
+  }
+
+  // Instagram instances operations
+  async getInstagramInstancesByCompany(companyId: number): Promise<InstagramInstance[]> {
+    try {
+      return await db
+        .select()
+        .from(instagramInstances)
+        .where(eq(instagramInstances.companyId, companyId));
+    } catch (error: any) {
+      console.error("Error getting Instagram instances:", error);
+      return [];
+    }
+  }
+
+  async getInstagramInstance(id: number): Promise<InstagramInstance | undefined> {
+    try {
+      const [instance] = await db
+        .select()
+        .from(instagramInstances)
+        .where(eq(instagramInstances.id, id));
+      return instance;
+    } catch (error: any) {
+      console.error("Error getting Instagram instance:", error);
+      return undefined;
+    }
+  }
+
+  async findInstagramInstanceByIgAccountId(igAccountId: string): Promise<InstagramInstance | undefined> {
+    try {
+      const [instance] = await db
+        .select()
+        .from(instagramInstances)
+        .where(eq(instagramInstances.igBusinessAccountId, igAccountId));
+      return instance;
+    } catch (error: any) {
+      console.error("Error finding Instagram instance by IG Account ID:", error);
+      return undefined;
+    }
+  }
+
+  async createInstagramInstance(instanceData: InsertInstagramInstance): Promise<InstagramInstance> {
+    try {
+      await db
+        .insert(instagramInstances)
+        .values(instanceData);
+      const [newInstance] = await db
+        .select()
+        .from(instagramInstances)
+        .where(eq(instagramInstances.companyId, instanceData.companyId))
+        .orderBy(desc(instagramInstances.id))
+        .limit(1);
+      return newInstance;
+    } catch (error: any) {
+      console.error("Error creating Instagram instance:", error);
+      throw error;
+    }
+  }
+
+  async updateInstagramInstance(id: number, instanceData: Partial<InsertInstagramInstance>): Promise<InstagramInstance> {
+    try {
+      await db
+        .update(instagramInstances)
+        .set({ ...instanceData, updatedAt: new Date() })
+        .where(eq(instagramInstances.id, id));
+      const [instance] = await db
+        .select()
+        .from(instagramInstances)
+        .where(eq(instagramInstances.id, id));
+      return instance;
+    } catch (error: any) {
+      console.error("Error updating Instagram instance:", error);
+      throw error;
+    }
+  }
+
+  async deleteInstagramInstance(id: number): Promise<void> {
+    try {
+      await db
+        .delete(instagramInstances)
+        .where(eq(instagramInstances.id, id));
+    } catch (error: any) {
+      console.error("Error deleting Instagram instance:", error);
       throw error;
     }
   }

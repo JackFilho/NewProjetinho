@@ -8985,8 +8985,13 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
       console.log('💬 [CHATWOOT WEBHOOK] Content:', (payload.content || '').substring(0, 100));
 
       // Find conversation in our database - try multiple phone format variants
+      // Também buscar com prefixo "ig:" para conversas do Instagram
       const msgPhoneVariants = buildPhoneVariants(phoneNumber);
-      console.log('🔍 [CHATWOOT WEBHOOK] Trying phone variants:', msgPhoneVariants);
+      // Adicionar variante Instagram (ig:SENDER_ID) se parece ser um ID numérico do Instagram
+      if (/^\d+$/.test(phoneNumber)) {
+        msgPhoneVariants.push(`ig:${phoneNumber}`);
+      }
+      console.log('[CHATWOOT WEBHOOK] Trying phone variants:', msgPhoneVariants);
       const matchingConversation = await findConvByPhoneVariants(msgPhoneVariants);
 
       if (!matchingConversation) {
@@ -9061,38 +9066,71 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
       }
 
       // ────────────────────────────────────────────────
-      // OUTBOUND: Enviar mensagem do agente para o WhatsApp via Meta Cloud API
+      // OUTBOUND: Enviar mensagem do agente para WhatsApp ou Instagram
       // ────────────────────────────────────────────────
       if (agentContent) {
-        try {
-          const instance = await storage.getWhatsappInstance(matchingConversation.whatsappInstanceId);
-          if (!instance || !instance.metaPhoneNumberId || !instance.metaAccessToken) {
-            console.warn('⚠️ [CHATWOOT OUTBOUND] WhatsApp instance not found or missing Meta credentials for instance', matchingConversation.whatsappInstanceId);
-          } else {
-            // Número do destinatário: usar o phoneNumber da conversa (cliente)
-            // Precisa estar no formato internacional (ex: 5581994526071)
-            let recipientPhone = matchingConversation.phoneNumber.replace(/[@s.whatsapp.net]/g, '').replace(/[^\d]/g, '');
-            // Se não tem código do país (Brasil), adicionar 55
-            if (recipientPhone.length <= 11 && !recipientPhone.startsWith('55')) {
-              recipientPhone = '55' + recipientPhone;
+        const isInstagramConversation = matchingConversation.providerType === 'instagram' ||
+          matchingConversation.phoneNumber.startsWith('ig:');
+
+        if (isInstagramConversation) {
+          // ── INSTAGRAM OUTBOUND ──
+          try {
+            const igInstance = await storage.getInstagramInstance(matchingConversation.whatsappInstanceId);
+            if (!igInstance || !igInstance.igBusinessAccountId || !igInstance.pageAccessToken) {
+              console.warn('[CHATWOOT OUTBOUND] Instagram instance not found or missing credentials for instance', matchingConversation.whatsappInstanceId);
+            } else {
+              const { createMetaInstagramService } = await import('./services/meta-instagram.js');
+              const igService = createMetaInstagramService({
+                igBusinessAccountId: igInstance.igBusinessAccountId,
+                facebookPageId: igInstance.facebookPageId || '',
+                pageAccessToken: igInstance.pageAccessToken,
+              });
+
+              // Extrair o IGSID (remover prefixo "ig:")
+              const recipientId = matchingConversation.phoneNumber.replace(/^ig:/, '');
+
+              const result = await igService.sendText({
+                recipientId,
+                text: agentContent,
+              });
+
+              console.log('[CHATWOOT OUTBOUND] Message sent to Instagram | recipient:', recipientId, '| msg ID:', result?.message_id || 'unknown');
             }
-
-            const metaService = createMetaWhatsAppService({
-              phoneNumberId: instance.metaPhoneNumberId,
-              wabaId: instance.metaWabaId || '',
-              accessToken: instance.metaAccessToken,
-            });
-
-            const result = await metaService.sendText({
-              to: recipientPhone,
-              text: agentContent,
-            });
-
-            console.log('📤 [CHATWOOT OUTBOUND] Message sent to WhatsApp via Meta API');
-            console.log('📤 [CHATWOOT OUTBOUND] Recipient:', recipientPhone, '| Meta msg ID:', result?.messages?.[0]?.id || 'unknown');
+          } catch (outboundErr: any) {
+            console.error('[CHATWOOT OUTBOUND] Failed to send message to Instagram:', outboundErr.message);
           }
-        } catch (outboundErr: any) {
-          console.error('❌ [CHATWOOT OUTBOUND] Failed to send message to WhatsApp:', outboundErr.message);
+        } else {
+          // ── WHATSAPP OUTBOUND ──
+          try {
+            const instance = await storage.getWhatsappInstance(matchingConversation.whatsappInstanceId);
+            if (!instance || !instance.metaPhoneNumberId || !instance.metaAccessToken) {
+              console.warn('[CHATWOOT OUTBOUND] WhatsApp instance not found or missing Meta credentials for instance', matchingConversation.whatsappInstanceId);
+            } else {
+              // Número do destinatário: usar o phoneNumber da conversa (cliente)
+              // Precisa estar no formato internacional (ex: 5581994526071)
+              let recipientPhone = matchingConversation.phoneNumber.replace(/[@s.whatsapp.net]/g, '').replace(/[^\d]/g, '');
+              // Se não tem código do país (Brasil), adicionar 55
+              if (recipientPhone.length <= 11 && !recipientPhone.startsWith('55')) {
+                recipientPhone = '55' + recipientPhone;
+              }
+
+              const metaService = createMetaWhatsAppService({
+                phoneNumberId: instance.metaPhoneNumberId,
+                wabaId: instance.metaWabaId || '',
+                accessToken: instance.metaAccessToken,
+              });
+
+              const result = await metaService.sendText({
+                to: recipientPhone,
+                text: agentContent,
+              });
+
+              console.log('[CHATWOOT OUTBOUND] Message sent to WhatsApp via Meta API');
+              console.log('[CHATWOOT OUTBOUND] Recipient:', recipientPhone, '| Meta msg ID:', result?.messages?.[0]?.id || 'unknown');
+            }
+          } catch (outboundErr: any) {
+            console.error('[CHATWOOT OUTBOUND] Failed to send message to WhatsApp:', outboundErr.message);
+          }
         }
       }
 
@@ -21017,6 +21055,139 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     } catch (error) {
       console.error("Error configuring WhatsApp instance:", error);
       res.status(500).json({ message: "Erro ao configurar instância do WhatsApp" });
+    }
+  });
+
+  // ==========================================
+  // Instagram Instances Management API
+  // ==========================================
+
+  app.get('/api/company/instagram/instances', async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+      const instances = await storage.getInstagramInstancesByCompany(companyId);
+      res.json(instances);
+    } catch (error: any) {
+      console.error("Error getting Instagram instances:", error);
+      res.status(500).json({ message: "Erro ao buscar instâncias do Instagram" });
+    }
+  });
+
+  app.post('/api/company/instagram/instances', async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+
+      const {
+        instanceName,
+        igBusinessAccountId,
+        facebookPageId,
+        pageAccessToken,
+        metaAppId,
+        metaAppSecret,
+        webhookVerifyToken,
+      } = req.body;
+
+      if (!instanceName || !igBusinessAccountId || !facebookPageId || !pageAccessToken) {
+        return res.status(400).json({ message: "Campos obrigatórios: instanceName, igBusinessAccountId, facebookPageId, pageAccessToken" });
+      }
+
+      // Buscar username e foto de perfil do Instagram
+      let igUsername: string | undefined;
+      let igProfilePictureUrl: string | undefined;
+      try {
+        const { createMetaInstagramService } = await import('./services/meta-instagram.js');
+        const igService = createMetaInstagramService({
+          igBusinessAccountId,
+          facebookPageId,
+          pageAccessToken,
+        });
+        // Buscar informações do perfil IG via Graph API
+        const profileResponse = await fetch(
+          `https://graph.facebook.com/v21.0/${igBusinessAccountId}?fields=username,profile_picture_url&access_token=${pageAccessToken}`
+        );
+        if (profileResponse.ok) {
+          const profileData = await profileResponse.json() as any;
+          igUsername = profileData.username;
+          igProfilePictureUrl = profileData.profile_picture_url;
+        }
+      } catch (profileErr) {
+        console.warn('[instagram] Could not fetch IG profile:', profileErr);
+      }
+
+      const instance = await storage.createInstagramInstance({
+        companyId,
+        instanceName,
+        status: 'connected',
+        igBusinessAccountId,
+        facebookPageId,
+        pageAccessToken,
+        metaAppId: metaAppId || null,
+        metaAppSecret: metaAppSecret || null,
+        webhookVerifyToken: webhookVerifyToken || null,
+        igUsername: igUsername || null,
+        igProfilePictureUrl: igProfilePictureUrl || null,
+      });
+
+      // Atualizar empresa com Instagram habilitado
+      await storage.updateCompany(companyId, {
+        instagramEnabled: 1,
+        instagramPageId: facebookPageId,
+        instagramAccessToken: pageAccessToken,
+        instagramBusinessAccountId: igBusinessAccountId,
+      });
+
+      console.log(`[instagram] Instance created: ${instanceName} for company ${companyId}`);
+      res.json(instance);
+    } catch (error: any) {
+      console.error("Error creating Instagram instance:", error);
+      res.status(500).json({ message: "Erro ao criar instância do Instagram", details: error.message });
+    }
+  });
+
+  app.put('/api/company/instagram/instances/:id', async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+
+      const instanceId = parseInt(req.params.id);
+      const instance = await storage.getInstagramInstance(instanceId);
+      if (!instance || instance.companyId !== companyId) {
+        return res.status(404).json({ message: "Instância não encontrada" });
+      }
+
+      const updated = await storage.updateInstagramInstance(instanceId, req.body);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating Instagram instance:", error);
+      res.status(500).json({ message: "Erro ao atualizar instância do Instagram" });
+    }
+  });
+
+  app.delete('/api/company/instagram/instances/:id', async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+
+      const instanceId = parseInt(req.params.id);
+      const instance = await storage.getInstagramInstance(instanceId);
+      if (!instance || instance.companyId !== companyId) {
+        return res.status(404).json({ message: "Instância não encontrada" });
+      }
+
+      await storage.deleteInstagramInstance(instanceId);
+
+      // Verificar se ainda tem instâncias Instagram ativas
+      const remaining = await storage.getInstagramInstancesByCompany(companyId);
+      if (remaining.length === 0) {
+        await storage.updateCompany(companyId, { instagramEnabled: 0 });
+      }
+
+      res.json({ message: "Instância do Instagram excluída com sucesso" });
+    } catch (error: any) {
+      console.error("Error deleting Instagram instance:", error);
+      res.status(500).json({ message: "Erro ao excluir instância do Instagram" });
     }
   });
 

@@ -108,6 +108,12 @@ export const companies = mysqlTable("companies", {
   chatwootApiToken: varchar("chatwoot_api_token", { length: 500 }),
   chatwootAccountId: int("chatwoot_account_id"),
   chatwootInboxId: int("chatwoot_inbox_id"),
+  // Instagram integration
+  instagramEnabled: int("instagram_enabled").notNull().default(0),
+  instagramPageId: varchar("instagram_page_id", { length: 100 }),
+  instagramAccessToken: text("instagram_access_token"),
+  instagramBusinessAccountId: varchar("instagram_business_account_id", { length: 100 }),
+  chatwootInstagramInboxId: int("chatwoot_instagram_inbox_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
@@ -914,6 +920,26 @@ export const chatwootConversationMap = mysqlTable("chatwoot_conversation_map", {
   chatwootConversationId: int("chatwoot_conversation_id").notNull(),
   chatwootContactId: int("chatwoot_contact_id").notNull(),
   phoneNumber: varchar("phone_number", { length: 50 }).notNull(),
+  channel: varchar("channel", { length: 20 }).notNull().default("whatsapp"), // whatsapp | instagram
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
+// ===== Instagram Instances =====
+export const instagramInstances = mysqlTable("instagram_instances", {
+  id: serial("id").primaryKey(),
+  companyId: int("company_id").notNull(),
+  instanceName: varchar("instance_name", { length: 255 }).notNull(),
+  status: varchar("status", { length: 50 }).default("disconnected"),
+  // Meta Instagram API fields
+  igBusinessAccountId: varchar("ig_business_account_id", { length: 100 }),
+  facebookPageId: varchar("facebook_page_id", { length: 100 }),
+  pageAccessToken: text("page_access_token"),
+  metaAppId: varchar("meta_app_id", { length: 100 }),
+  metaAppSecret: varchar("meta_app_secret", { length: 255 }),
+  webhookVerifyToken: varchar("webhook_verify_token", { length: 255 }),
+  igUsername: varchar("ig_username", { length: 255 }),
+  igProfilePictureUrl: text("ig_profile_picture_url"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
@@ -949,10 +975,13 @@ export const messageDeliveryStatus = mysqlTable("message_delivery_status", {
 export const insertChatwootConversationMapSchema = createInsertSchema(chatwootConversationMap).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertMetaMessageTemplateSchema = createInsertSchema(metaMessageTemplates).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertMessageDeliveryStatusSchema = createInsertSchema(messageDeliveryStatus).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertInstagramInstanceSchema = createInsertSchema(instagramInstances).omit({ id: true, createdAt: true, updatedAt: true });
 
 export type ChatwootConversationMap = typeof chatwootConversationMap.$inferSelect;
 export type MetaMessageTemplate = typeof metaMessageTemplates.$inferSelect;
 export type MessageDeliveryStatus = typeof messageDeliveryStatus.$inferSelect;
+export type InstagramInstance = typeof instagramInstances.$inferSelect;
+export type InsertInstagramInstance = z.infer<typeof insertInstagramInstanceSchema>;
 
 // ===== Webhook Events (auditoria, idempotência e multi-tenant) =====
 export const webhookEvents = mysqlTable("webhook_events", {

@@ -33,8 +33,9 @@ import { normalizePhone, formatBrazilianPhone } from './utils/phone.js';
 // Import WhatsApp provider
 import { createWhatsAppProvider } from './services/whatsapp-provider.js';
 
-// Import Meta webhook handler
+// Import Meta webhook handlers
 import { createMetaWebhookRouter } from './services/meta-webhook-handler.js';
+import { createInstagramWebhookRouter } from './services/meta-instagram-webhook-handler.js';
 
 // Import bcrypt for password hashing
 import bcrypt from 'bcrypt';
@@ -54,7 +55,7 @@ app.use(express.json({
   limit: '50mb',
   verify: (req: any, _res, buf) => {
     // Preserve raw body for webhook signature validation (X-Hub-Signature-256)
-    if (req.url?.includes('/api/webhook/whatsapp/') || req.url?.includes('/api/webhook/meta') || req.url?.includes('/webhooks/meta/')) {
+    if (req.url?.includes('/api/webhook/whatsapp/') || req.url?.includes('/api/webhook/meta') || req.url?.includes('/webhooks/meta/') || req.url?.includes('/api/webhook/instagram')) {
       req.rawBody = buf.toString('utf8');
     }
   },
@@ -91,6 +92,37 @@ const metaWebhookRouter = createMetaWebhookRouter({
   },
 });
 app.use(metaWebhookRouter);
+
+// === Instagram webhook router (BEFORE session — webhooks don't need sessions) ===
+const instagramWebhookRouter = createInstagramWebhookRouter({
+  getGlobalSettings: () => storage.getGlobalSettings(),
+  findInstagramInstanceByIgAccountId: (igAccountId: string) => storage.findInstagramInstanceByIgAccountId(igAccountId),
+  getCompany: (companyId: number) => storage.getCompany(companyId),
+  findOrCreateConversation: async (companyId, instanceId, senderId, contactName, providerType) => {
+    let conv = await storage.getConversation(companyId, instanceId, senderId);
+    if (!conv) {
+      conv = await storage.createConversation({
+        companyId,
+        whatsappInstanceId: instanceId,
+        phoneNumber: senderId,
+        contactName,
+        providerType,
+        status: 'active',
+      });
+    }
+    return conv;
+  },
+  saveMessage: async (conversationId, role, content, messageId, messageType) => {
+    return storage.createMessage({
+      conversationId,
+      role,
+      content,
+      providerMessageId: messageId,
+      messageType,
+    });
+  },
+});
+app.use(instagramWebhookRouter);
 
 // === Session (after webhook routes — webhooks don't need cookies/sessions) ===
 const sessionSecret = process.env.SESSION_SECRET;
