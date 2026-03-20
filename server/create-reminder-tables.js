@@ -59,15 +59,15 @@ async function createReminderTables() {
         const reminderTemplates = [
           {
             type: 'confirmation',
-            template: '🎉 *Agendamento Confirmado!*\n\n📍 *{companyName}*\n💇‍♀️ *Serviço:* {serviceName}\n👨‍💼 *Profissional:* {professionalName}\n📅 *Data e Hora:* {appointmentDate} às {appointmentTime}\n\nObrigado por escolher nossos serviços! 😊'
+            template: '🎉 *Agendamento Confirmado!*\n\nOlá, *{clientName}*! 👋\n\n📍 *{companyName}*\n💇‍♀️ *Serviço:* {serviceName}\n👨‍💼 *Profissional:* {professionalName}\n📅 *Data e Hora:* {appointmentDate} às {appointmentTime}\n\nObrigado por escolher nossos serviços! 😊'
           },
           {
             type: '24h',
-            template: '⏰ *Lembrete de Agendamento*\n\n📍 *{companyName}*\n💇‍♀️ *Serviço:* {serviceName}\n👨‍💼 *Profissional:* {professionalName}\n📅 *Data e Hora:* {appointmentDate} às {appointmentTime}\n\n*Seu agendamento é amanhã!* \nNos vemos em breve! 😊'
+            template: '⏰ *Lembrete de Agendamento*\n\nOlá, *{clientName}*! 👋\n\n📍 *{companyName}*\n💇‍♀️ *Serviço:* {serviceName}\n👨‍💼 *Profissional:* {professionalName}\n📅 *Data e Hora:* {appointmentDate} às {appointmentTime}\n\n*Seu agendamento é amanhã!* \nNos vemos em breve! 😊'
           },
           {
             type: '1h',
-            template: '🔔 *Lembrete Final*\n\n📍 *{companyName}*\n💇‍♀️ *Serviço:* {serviceName}\n👨‍💼 *Profissional:* {professionalName}\n📅 *Data e Hora:* {appointmentDate} às {appointmentTime}\n\n*Seu agendamento é em 1 hora!* \nEstamos te esperando! 🚀'
+            template: '🔔 *Lembrete Final*\n\nOlá, *{clientName}*! 👋\n\n📍 *{companyName}*\n💇‍♀️ *Serviço:* {serviceName}\n👨‍💼 *Profissional:* {professionalName}\n📅 *Data e Hora:* {appointmentDate} às {appointmentTime}\n\n*Seu agendamento é em 1 hora!* \nEstamos te esperando! 🚀'
           }
         ];
 

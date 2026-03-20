@@ -2605,10 +2605,11 @@ export class DatabaseStorage implements IStorage {
 
       // Format the message
       let message = reminderSetting.messageTemplate;
+      message = message.replace('{clientName}', appointment.clientName || 'Cliente');
       message = message.replace('{companyName}', company.fantasyName);
       message = message.replace('{serviceName}', appointment.serviceName || 'Serviço');
       message = message.replace('{professionalName}', appointment.professionalName || 'Profissional');
-      
+
       // Format date and time
       const appointmentDate = new Date(appointment.appointmentDate);
       const formattedDate = appointmentDate.toLocaleDateString('pt-BR');

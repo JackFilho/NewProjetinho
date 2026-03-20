@@ -254,6 +254,7 @@ export default function CompanyReminders() {
                       <div className="mt-2 text-sm text-muted-foreground">
                         <p><strong>Variáveis disponíveis:</strong></p>
                         <ul className="list-disc list-inside mt-1 space-y-1">
+                          <li><code>{'{clientName}'}</code> - Nome do cliente</li>
                           <li><code>{'{companyName}'}</code> - Nome da empresa</li>
                           <li><code>{'{serviceName}'}</code> - Nome do serviço</li>
                           <li><code>{'{professionalName}'}</code> - Nome do profissional</li>
