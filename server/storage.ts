@@ -2313,14 +2313,6 @@ export class DatabaseStorage implements IStorage {
 
       console.log('✅ Appointment created with ID:', appointment.id);
 
-      // Send confirmation reminder after creating appointment
-      try {
-        await this.sendAppointmentReminder(appointment.id, 'confirmation');
-      } catch (reminderError) {
-        console.error('⚠️ Failed to send appointment reminder:', reminderError);
-        // Don't throw here, appointment was created successfully
-      }
-
       return appointment;
     } catch (error: any) {
       console.error("Error creating appointment:", error);
