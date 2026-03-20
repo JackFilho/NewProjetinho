@@ -2655,7 +2655,37 @@ export class DatabaseStorage implements IStorage {
 
         let responseOk = true;
         try {
-          await metaService.sendText({ to: formattedPhone, text: message });
+          // Check if Meta template is configured for this reminder type
+          const useMetaTemplate = (reminderSetting as any).useMetaTemplate || (reminderSetting as any).use_meta_template;
+          const metaTemplateName = (reminderSetting as any).metaTemplateName || (reminderSetting as any).meta_template_name;
+          const metaTemplateLang = (reminderSetting as any).metaTemplateLanguage || (reminderSetting as any).meta_template_language || 'pt_BR';
+
+          if (useMetaTemplate && metaTemplateName) {
+            // Send via approved Meta template with dynamic variables
+            const clientName = appointment.clientName || 'Cliente';
+            const appointmentDateFormatted = appointmentDate.toLocaleDateString('pt-BR');
+            const appointmentTimeFormatted = appointment.appointmentTime;
+
+            await metaService.sendTemplate({
+              to: formattedPhone,
+              templateName: metaTemplateName,
+              languageCode: metaTemplateLang,
+              components: [
+                {
+                  type: 'body',
+                  parameters: [
+                    { type: 'text', text: clientName },
+                    { type: 'text', text: appointmentDateFormatted },
+                    { type: 'text', text: appointmentTimeFormatted },
+                  ],
+                },
+              ],
+            });
+            console.log(`📋 Template Meta "${metaTemplateName}" enviado para ${formattedPhone}`);
+          } else {
+            // Fallback: send as plain text (only works within 24h window)
+            await metaService.sendText({ to: formattedPhone, text: message });
+          }
         } catch (error) {
           responseOk = false;
           console.error('❌ Falha ao enviar mensagem Meta:', error);

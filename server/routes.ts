@@ -21676,6 +21676,47 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     }
   });
 
+  // Reminder settings CRUD
+  app.get('/api/company/reminder-settings', isCompanyAuthenticated, async (req, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const settings = await storage.getReminderSettings(companyId);
+      res.json(settings);
+    } catch (error: any) {
+      console.error("Error getting reminder settings:", error);
+      res.status(500).json({ error: "Erro ao buscar configurações de lembrete" });
+    }
+  });
+
+  app.put('/api/company/reminder-settings/:id', isCompanyAuthenticated, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { isActive, messageTemplate, useMetaTemplate, metaTemplateName, metaTemplateLanguage } = req.body;
+      const settings = await storage.updateReminderSettings(id, {
+        isActive: isActive ? 1 : 0,
+        messageTemplate,
+        useMetaTemplate: useMetaTemplate ? 1 : 0,
+        metaTemplateName,
+        metaTemplateLanguage,
+      });
+      res.json(settings);
+    } catch (error: any) {
+      console.error("Error updating reminder settings:", error);
+      res.status(500).json({ error: "Erro ao atualizar configurações de lembrete" });
+    }
+  });
+
+  app.get('/api/company/reminder-history', isCompanyAuthenticated, async (req, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const history = await storage.getReminderHistory(companyId);
+      res.json(history);
+    } catch (error: any) {
+      console.error("Error getting reminder history:", error);
+      res.status(500).json({ error: "Erro ao buscar histórico de lembretes" });
+    }
+  });
+
   // Test reminder function
   app.post('/api/company/test-reminder', isCompanyAuthenticated, async (req, res) => {
     try {

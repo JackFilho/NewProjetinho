@@ -10,7 +10,9 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import { FloatingHelpButton } from "@/components/floating-help-button";
-import { Bell, Clock, MessageSquare, Send, CheckCircle, XCircle } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Bell, Clock, MessageSquare, Send, CheckCircle, XCircle, FileText } from 'lucide-react';
 
 interface ReminderSettings {
   id: number;
@@ -18,8 +20,19 @@ interface ReminderSettings {
   reminderType: string;
   isActive: boolean;
   messageTemplate: string;
+  useMetaTemplate: boolean;
+  metaTemplateName: string | null;
+  metaTemplateLanguage: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+interface MetaTemplate {
+  id: number;
+  name: string;
+  status: string;
+  category: string;
+  language: string;
 }
 
 interface ReminderHistory {
@@ -47,6 +60,11 @@ export default function CompanyReminders() {
   // Fetch reminder history
   const { data: reminderHistory = [], isLoading: historyLoading } = useQuery({
     queryKey: ['/api/company/reminder-history'],
+  });
+
+  // Fetch Meta approved templates
+  const { data: metaTemplates = [] } = useQuery<MetaTemplate[]>({
+    queryKey: ['/api/company/meta-templates'],
   });
 
   // Update reminder settings mutation
@@ -112,6 +130,9 @@ export default function CompanyReminders() {
         data: {
           isActive: settings.isActive,
           messageTemplate: settings.messageTemplate,
+          useMetaTemplate: settings.useMetaTemplate,
+          metaTemplateName: settings.metaTemplateName,
+          metaTemplateLanguage: settings.metaTemplateLanguage,
         },
       });
     }
@@ -241,8 +262,110 @@ export default function CompanyReminders() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {/* Meta Template Configuration */}
+                    <div className="border rounded-lg p-4 bg-blue-50/50 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <FileText className="h-4 w-4 text-blue-600" />
+                        <Label className="font-semibold text-blue-900">Template Meta (WhatsApp Business)</Label>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Para enviar mensagens fora da janela de 24h, use um template aprovado pela Meta.
+                      </p>
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          checked={currentSettings.useMetaTemplate || false}
+                          onCheckedChange={(checked) => {
+                            const settings = reminderSettings.find((s: ReminderSettings) => s.reminderType === setting.reminderType);
+                            if (settings) {
+                              setEditingSettings(prev => ({
+                                ...prev,
+                                [setting.reminderType]: { ...prev[setting.reminderType] || settings, useMetaTemplate: checked },
+                              }));
+                            }
+                          }}
+                        />
+                        <Label>Usar Template Meta aprovado</Label>
+                      </div>
+                      {currentSettings.useMetaTemplate && (
+                        <div className="space-y-3">
+                          <div>
+                            <Label htmlFor={`meta-template-${setting.reminderType}`}>Nome do Template</Label>
+                            <Select
+                              value={currentSettings.metaTemplateName || ''}
+                              onValueChange={(value) => {
+                                const settings = reminderSettings.find((s: ReminderSettings) => s.reminderType === setting.reminderType);
+                                if (settings) {
+                                  const selectedTemplate = metaTemplates.find((t: MetaTemplate) => t.name === value);
+                                  setEditingSettings(prev => ({
+                                    ...prev,
+                                    [setting.reminderType]: {
+                                      ...prev[setting.reminderType] || settings,
+                                      metaTemplateName: value,
+                                      metaTemplateLanguage: selectedTemplate?.language || 'pt_BR',
+                                    },
+                                  }));
+                                }
+                              }}
+                            >
+                              <SelectTrigger className="mt-1">
+                                <SelectValue placeholder="Selecione um template aprovado" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {metaTemplates
+                                  .filter((t: MetaTemplate) => t.status === 'APPROVED')
+                                  .map((t: MetaTemplate) => (
+                                    <SelectItem key={t.name} value={t.name}>
+                                      {t.name} ({t.language})
+                                    </SelectItem>
+                                  ))}
+                              </SelectContent>
+                            </Select>
+                            {metaTemplates.filter((t: MetaTemplate) => t.status === 'APPROVED').length === 0 && (
+                              <p className="text-sm text-amber-600 mt-1">
+                                Nenhum template aprovado encontrado. Sincronize seus templates na página de Templates Meta.
+                              </p>
+                            )}
+                          </div>
+                          <div>
+                            <Label>Idioma do Template</Label>
+                            <Input
+                              value={currentSettings.metaTemplateLanguage || 'pt_BR'}
+                              onChange={(e) => {
+                                const settings = reminderSettings.find((s: ReminderSettings) => s.reminderType === setting.reminderType);
+                                if (settings) {
+                                  setEditingSettings(prev => ({
+                                    ...prev,
+                                    [setting.reminderType]: { ...prev[setting.reminderType] || settings, metaTemplateLanguage: e.target.value },
+                                  }));
+                                }
+                              }}
+                              className="mt-1"
+                              placeholder="pt_BR"
+                            />
+                          </div>
+                          <div className="p-3 bg-white rounded border text-sm space-y-1">
+                            <p className="font-medium">Variáveis do template (na ordem):</p>
+                            <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                              <li><code>{'{{1}}'}</code> → Nome do cliente</li>
+                              <li><code>{'{{2}}'}</code> → Data do agendamento</li>
+                              <li><code>{'{{3}}'}</code> → Horário do agendamento</li>
+                            </ol>
+                            <p className="text-xs text-muted-foreground mt-2">
+                              Seu template na Meta deve usar essas variáveis nessa ordem. Exemplo:<br/>
+                              <em>"Olá, {'{{1}}'} o motivo do nosso contato é referente a consulta que está agendada para o dia {'{{2}}'} às {'{{3}}'}, podemos confirmar?"</em>
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <Separator />
+
+                    {/* Fallback plain text message (used within 24h window) */}
                     <div>
-                      <Label htmlFor={`message-${setting.reminderType}`}>Modelo da Mensagem</Label>
+                      <Label htmlFor={`message-${setting.reminderType}`}>
+                        Mensagem de texto {currentSettings.useMetaTemplate ? '(fallback - janela 24h)' : ''}
+                      </Label>
                       <Textarea
                         id={`message-${setting.reminderType}`}
                         value={currentSettings.messageTemplate}

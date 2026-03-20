@@ -472,6 +472,9 @@ export const reminderSettings = mysqlTable("reminder_settings", {
   reminderType: varchar("reminder_type", { length: 50 }).notNull(),
   isActive: int("is_active").default(1),
   messageTemplate: text("message_template").notNull(),
+  useMetaTemplate: int("use_meta_template").default(0),
+  metaTemplateName: varchar("meta_template_name", { length: 255 }),
+  metaTemplateLanguage: varchar("meta_template_language", { length: 10 }).default("pt_BR"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
