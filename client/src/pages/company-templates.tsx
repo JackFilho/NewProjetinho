@@ -11,6 +11,8 @@ import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { useToast } from '@/hooks/use-toast';
 import { FloatingHelpButton } from "@/components/floating-help-button";
 import {
@@ -25,7 +27,10 @@ import {
   AlertTriangle,
   Info,
   Search,
-  Variable
+  Variable,
+  Check,
+  ChevronsUpDown,
+  User
 } from 'lucide-react';
 
 interface MetaTemplate {
@@ -65,6 +70,9 @@ export default function CompanyTemplates() {
   const [sendPhone, setSendPhone] = useState('');
   const [sendParams, setSendParams] = useState<{ [key: string]: string }>({});
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [clientComboboxOpen, setClientComboboxOpen] = useState(false);
+  const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
+  const [sendMode, setSendMode] = useState<'client' | 'manual'>('client');
 
   // New template form state
   const [newTemplate, setNewTemplate] = useState({
@@ -90,6 +98,11 @@ export default function CompanyTemplates() {
       }
       return response.json();
     },
+  });
+
+  // Fetch clients for combobox
+  const { data: clients = [] } = useQuery<{ id: number; name: string; phone: string | null; email: string | null }[]>({
+    queryKey: ['/api/company/clients'],
   });
 
   // Create template mutation
@@ -188,6 +201,8 @@ export default function CompanyTemplates() {
       setSendPhone('');
       setSendParams({});
       setSelectedTemplate(null);
+      setSelectedClientId(null);
+      setSendMode('client');
     },
     onError: (error: Error) => {
       toast({ title: 'Erro ao enviar', description: error.message, variant: 'destructive' });
@@ -406,6 +421,8 @@ export default function CompanyTemplates() {
                                 setSelectedTemplate(template);
                                 setSendParams({});
                                 setSendPhone('');
+                                setSelectedClientId(null);
+                                setSendMode('client');
                                 setSendDialogOpen(true);
                               }}
                               className="flex items-center gap-1"
@@ -703,16 +720,101 @@ export default function CompanyTemplates() {
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="send-phone">Numero do WhatsApp *</Label>
-              <Input
-                id="send-phone"
-                placeholder="ex: 11999999999"
-                value={sendPhone}
-                onChange={(e) => setSendPhone(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                DDD + numero (o codigo do pais 55 sera adicionado automaticamente)
-              </p>
+              <Label>Destinatario *</Label>
+              <div className="flex gap-2 mb-2">
+                <Button
+                  type="button"
+                  variant={sendMode === 'client' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setSendMode('client')}
+                >
+                  <User className="h-4 w-4 mr-1" />
+                  Buscar cliente
+                </Button>
+                <Button
+                  type="button"
+                  variant={sendMode === 'manual' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setSendMode('manual');
+                    setSelectedClientId(null);
+                  }}
+                >
+                  Digitar numero
+                </Button>
+              </div>
+
+              {sendMode === 'client' ? (
+                <div className="space-y-2">
+                  <Popover open={clientComboboxOpen} onOpenChange={setClientComboboxOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={clientComboboxOpen}
+                        className="w-full justify-between font-normal"
+                      >
+                        {selectedClientId
+                          ? clients.find(c => c.id === selectedClientId)?.name || "Selecione um cliente"
+                          : "Selecione um cliente"}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Buscar cliente..." />
+                        <CommandList>
+                          <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
+                          <CommandGroup>
+                            {clients.map((client) => (
+                              <CommandItem
+                                key={client.id}
+                                value={`${client.name} ${client.phone || ''}`}
+                                onSelect={() => {
+                                  setSelectedClientId(client.id);
+                                  setSendPhone(client.phone?.replace(/\D/g, '') || '');
+                                  // Auto-preencher {{1}} com nome do cliente
+                                  if (client.name) {
+                                    setSendParams(prev => ({ ...prev, '{{1}}': client.name }));
+                                  }
+                                  setClientComboboxOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={`mr-2 h-4 w-4 ${selectedClientId === client.id ? "opacity-100" : "opacity-0"}`}
+                                />
+                                <div className="flex flex-col">
+                                  <span>{client.name}</span>
+                                  {client.phone && (
+                                    <span className="text-xs text-muted-foreground">{client.phone}</span>
+                                  )}
+                                </div>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                  {selectedClientId && (
+                    <p className="text-xs text-muted-foreground">
+                      Numero: {sendPhone || 'Cliente sem telefone cadastrado'}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <Input
+                    id="send-phone"
+                    placeholder="ex: 11999999999"
+                    value={sendPhone}
+                    onChange={(e) => setSendPhone(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    DDD + numero (o codigo do pais 55 sera adicionado automaticamente)
+                  </p>
+                </div>
+              )}
             </div>
 
             {selectedTemplate && extractVariables(selectedTemplate).length > 0 && (
