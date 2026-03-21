@@ -205,18 +205,31 @@ const conversationCleanupTimers = new Map<string, NodeJS.Timeout>();
 // Suporta múltiplas mensagens por conversa (ex: fluxo PIX envia QR + código + instruções)
 const recentAISentMessages = new Map<number, { contents: string[]; timestamp: number }>();
 
+// Helper para normalizar texto para comparação anti-eco
+// Remove espaços extras, quebras de linha duplicadas, e normaliza formatação
+function normalizeForEchoComparison(text: string): string {
+  return text
+    .replace(/\r\n/g, '\n')           // Normalizar quebras de linha
+    .replace(/\n{3,}/g, '\n\n')       // Colapsar múltiplas quebras
+    .replace(/[ \t]+/g, ' ')          // Colapsar espaços múltiplos
+    .replace(/\u200B/g, '')           // Remover zero-width space
+    .replace(/\u00A0/g, ' ')          // Normalizar non-breaking space
+    .trim()
+    .substring(0, 200);
+}
+
 // Helper para registrar resposta da AI no cache
 function cacheAIResponse(conversationId: number, content: string) {
   const existing = recentAISentMessages.get(conversationId);
-  const trimmed = content.substring(0, 200);
-  if (existing && (Date.now() - existing.timestamp) < 60000) {
+  const normalized = normalizeForEchoComparison(content);
+  if (existing && (Date.now() - existing.timestamp) < 120000) {
     // Adicionar ao array existente (máximo 10 entradas)
     if (existing.contents.length < 10) {
-      existing.contents.push(trimmed);
+      existing.contents.push(normalized);
     }
     existing.timestamp = Date.now();
   } else {
-    recentAISentMessages.set(conversationId, { contents: [trimmed], timestamp: Date.now() });
+    recentAISentMessages.set(conversationId, { contents: [normalized], timestamp: Date.now() });
   }
 }
 
@@ -7778,6 +7791,7 @@ if (ignoredNumbers !== undefined) {
               interceptResponse = `Vou verificar seus agendamentos...\n\n${appointmentsList}`;
             }
 
+            cacheAIResponse(conversation.id, interceptResponse);
             const chatwootServiceIntercept = new ChatwootService({
               baseUrl: company.chatwootBaseUrl,
               apiAccessToken: company.chatwootApiToken,
@@ -7793,7 +7807,6 @@ if (ignoredNumbers !== undefined) {
               delivered: true,
               timestamp: new Date(),
             });
-            cacheAIResponse(conversation.id, interceptResponse);
             console.log('📤 [CHATWOOT INBOUND] Cancel/reschedule intercepted, response sent');
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
             chatwootProcessingLocks.delete(cwDebounceKey);
@@ -7888,6 +7901,7 @@ if (ignoredNumbers !== undefined) {
               numberSelectionResponse = `❌ Número inválido. Por favor, escolha um número entre 1 e ${clientAppointmentsCW.length}.`;
             }
 
+            cacheAIResponse(conversation.id, numberSelectionResponse);
             const chatwootServiceNum = new ChatwootService({
               baseUrl: company.chatwootBaseUrl,
               apiAccessToken: company.chatwootApiToken,
@@ -7903,7 +7917,6 @@ if (ignoredNumbers !== undefined) {
               delivered: true,
               timestamp: new Date(),
             });
-            cacheAIResponse(conversation.id, numberSelectionResponse);
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
             chatwootProcessingLocks.delete(cwDebounceKey);
             chatwootLastMessageTime.delete(cwDebounceKey);
@@ -7984,6 +7997,7 @@ if (ignoredNumbers !== undefined) {
             }
 
             if (cancelResponse) {
+              cacheAIResponse(conversation.id, cancelResponse);
               const chatwootServiceCancel = new ChatwootService({
                 baseUrl: company.chatwootBaseUrl,
                 apiAccessToken: company.chatwootApiToken,
@@ -7999,7 +8013,6 @@ if (ignoredNumbers !== undefined) {
                 delivered: true,
                 timestamp: new Date(),
               });
-              cacheAIResponse(conversation.id, cancelResponse);
             }
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
             chatwootProcessingLocks.delete(cwDebounceKey);
@@ -8019,6 +8032,7 @@ if (ignoredNumbers !== undefined) {
               [conversation.id]
             );
             const noCancelResponse = 'Ok, seu agendamento foi mantido! Se precisar de algo mais, é só me avisar.';
+            cacheAIResponse(conversation.id, noCancelResponse);
             const chatwootServiceNo = new ChatwootService({
               baseUrl: company.chatwootBaseUrl,
               apiAccessToken: company.chatwootApiToken,
@@ -8034,7 +8048,6 @@ if (ignoredNumbers !== undefined) {
               delivered: true,
               timestamp: new Date(),
             });
-            cacheAIResponse(conversation.id, noCancelResponse);
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
             chatwootProcessingLocks.delete(cwDebounceKey);
             chatwootLastMessageTime.delete(cwDebounceKey);
@@ -8547,7 +8560,12 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 
           console.log('🤖 [CHATWOOT INBOUND] AI response:', aiResponse.substring(0, 150));
 
-          // 11. Enviar resposta via Chatwoot API
+          // 11. Cache anti-loop ANTES de enviar: quando o Chatwoot ecoa esta resposta como message_created outgoing
+          // Cacheamos ANTES do sendMessage para evitar race condition (webhook pode chegar antes do cache)
+          cacheAIResponse(conversation.id, aiResponse);
+          console.log('🤖 [CHATWOOT INBOUND] Response cached for echo detection (pre-send)');
+
+          // 12. Enviar resposta via Chatwoot API
           const chatwootService = new ChatwootService({
             baseUrl: company.chatwootBaseUrl,
             apiAccessToken: company.chatwootApiToken,
@@ -8563,7 +8581,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 
           console.log('📤 [CHATWOOT INBOUND] AI response sent to Chatwoot conversation', chatwootConversationId);
 
-          // 12. Salvar resposta no histórico interno
+          // 13. Salvar resposta no histórico interno
           await storage.createMessage({
             conversationId: conversation.id,
             content: aiResponse,
@@ -8572,10 +8590,6 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
             delivered: true,
             timestamp: new Date(),
           });
-
-          // 13. Cache anti-loop: quando o Chatwoot ecoa esta resposta como message_created outgoing
-          cacheAIResponse(conversation.id, aiResponse);
-          console.log('🤖 [CHATWOOT INBOUND] Response cached for echo detection');
 
           // ========================================
           // 14. DETECÇÃO DE CONFIRMAÇÃO E CRIAÇÃO DE AGENDAMENTO
@@ -8650,6 +8664,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               // Listar agendamentos para cancelar
               const aptListReschedule = await listClientAppointmentsNumbered(customerPhone, company.id, 'cancelar');
               const rescheduleResponse = `Para remarcar, primeiro preciso cancelar o agendamento atual.\n\n${aptListReschedule}`;
+              cacheAIResponse(conversation.id, rescheduleResponse);
               const chatwootSvcReschedule = new ChatwootService({
                 baseUrl: company.chatwootBaseUrl,
                 apiAccessToken: company.chatwootApiToken,
@@ -8665,7 +8680,6 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 delivered: true,
                 timestamp: new Date(),
               });
-              cacheAIResponse(conversation.id, rescheduleResponse);
             } else if (!isCancelContextCW14 || isConfirmationReminderCW) {
               console.log('✅ [CHATWOOT INBOUND] Confirmação de agendamento detectada!');
 
@@ -8761,6 +8775,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 
                       const paymentQuestionCW = `💳 Forma de Pagamento\n\nPara confirmar seu agendamento, como você prefere pagar?\n\n1️⃣ PIX - Pagamento instantâneo\n2️⃣ Cartão de Crédito - Parcele em até 12x\n\n💰 Valor: R$ ${Number(serviceWithPriceCW.price).toFixed(2)}\n\nDigite 1 para PIX ou 2 para Cartão`;
 
+                      cacheAIResponse(conversation.id, paymentQuestionCW);
                       const chatwootSvcPayment = new ChatwootService({
                         baseUrl: company.chatwootBaseUrl,
                         apiAccessToken: company.chatwootApiToken,
@@ -8776,7 +8791,6 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                         delivered: true,
                         timestamp: new Date(),
                       });
-                      cacheAIResponse(conversation.id, paymentQuestionCW);
                       // Não criar agendamento - será criado pelo webhook de pagamento
                     } else {
                       console.log('ℹ️ [CHATWOOT INBOUND] Serviço sem preço - criando agendamento normal');
@@ -8809,6 +8823,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                       });
 
                       const cwErrorMsg = '❌ Desculpe, mas não foi possível confirmar seu agendamento pois o horário solicitado já está ocupado por outro cliente.\n\nPor favor, escolha outro horário disponível e tente novamente.';
+                      cacheAIResponse(conversation.id, cwErrorMsg);
                       const chatwootSvcErr = new ChatwootService({
                         baseUrl: company.chatwootBaseUrl,
                         apiAccessToken: company.chatwootApiToken,
@@ -8824,7 +8839,6 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                         delivered: true,
                         timestamp: new Date(),
                       });
-                      cacheAIResponse(conversation.id, cwErrorMsg);
                     } else if (appointmentIdCW) {
                       console.log('✅ [CHATWOOT INBOUND] Agendamento criado com sucesso! ID:', appointmentIdCW);
                       clearAvailabilityCache(company.id);
@@ -8842,6 +8856,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                             const apt = await storage.getAppointment(appointmentIdCW);
                             if (apt && (apt.status === 'agendado' || apt.status === 'Agendado')) {
                               const reminderMsg = 'Oi! Notei que seu agendamento ainda não foi confirmado. Basta responder SIM para confirmar! Se precisar alterar algo, é só me dizer.';
+                              cacheAIResponse(conversation.id, reminderMsg);
                               const chatwootSvcReminder = new ChatwootService({
                                 baseUrl: company.chatwootBaseUrl,
                                 apiAccessToken: company.chatwootApiToken,
@@ -8857,7 +8872,6 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                                 delivered: true,
                                 timestamp: new Date(),
                               });
-                              cacheAIResponse(conversation.id, reminderMsg);
                             }
                           } catch (err) {
                             console.error('⚠️ [CHATWOOT] Erro no lembrete de confirmação:', err);
@@ -9005,15 +9019,34 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
       // Quando a AI envia uma resposta via Meta API, o Chatwoot sincroniza e dispara message_created
       // com sender.type='user', fazendo parecer que um agente humano enviou a mensagem.
       // Comparamos o conteúdo com o cache de respostas recentes da AI para detectar esse eco.
-      const incomingContent = (payload.content || '').substring(0, 200);
+      // Usa normalização para evitar falsos negativos por diferenças de formatação.
+      const incomingContent = normalizeForEchoComparison(payload.content || '');
       const recentAI = recentAISentMessages.get(matchingConversation.id);
 
-      if (recentAI && (Date.now() - recentAI.timestamp) < 30000) {
+      if (recentAI && (Date.now() - recentAI.timestamp) < 120000) {
         // Verificar se o conteúdo bate com QUALQUER resposta recente da AI
-        const matchIndex = recentAI.contents.findIndex(c => c === incomingContent);
+        // 1. Comparação exata normalizada
+        let matchIndex = recentAI.contents.findIndex(c => c === incomingContent);
+
+        // 2. Fallback: comparação por startsWith (Chatwoot pode truncar o final)
+        if (matchIndex === -1 && incomingContent.length >= 50) {
+          const incoming80 = incomingContent.substring(0, 80);
+          matchIndex = recentAI.contents.findIndex(c => c.startsWith(incoming80) || incomingContent.startsWith(c.substring(0, 80)));
+        }
+
+        // 3. Fallback: comparação por similaridade (Chatwoot pode adicionar/remover caracteres)
+        if (matchIndex === -1 && incomingContent.length >= 30) {
+          matchIndex = recentAI.contents.findIndex(c => {
+            // Se um contém o outro (parcial), considerar eco
+            if (c.length > 30 && incomingContent.includes(c.substring(0, 60))) return true;
+            if (incomingContent.length > 30 && c.includes(incomingContent.substring(0, 60))) return true;
+            return false;
+          });
+        }
+
         if (matchIndex !== -1) {
-          console.log('🤖 [CHATWOOT WEBHOOK] ⚠️ ECO DETECTADO: Esta mensagem é a resposta da AI ecoada pelo Chatwoot');
-          console.log('🤖 [CHATWOOT WEBHOOK] Conteúdo Chatwoot:', incomingContent.substring(0, 80) + '...');
+          console.log('🤖 [CHATWOOT WEBHOOK] ECO DETECTADO: Esta mensagem é a resposta da AI ecoada pelo Chatwoot');
+          console.log('🤖 [CHATWOOT WEBHOOK] Conteúdo Chatwoot:', (payload.content || '').substring(0, 80) + '...');
           console.log(`✅ [CHATWOOT WEBHOOK] Human takeover NÃO ativado - mensagem é eco da AI (match ${matchIndex + 1}/${recentAI.contents.length})`);
           console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
           // Remover apenas a entrada que deu match (outras podem ainda ser ecoadas)
@@ -9022,11 +9055,19 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
             recentAISentMessages.delete(matchingConversation.id);
           }
           return res.status(200).json({ received: true, ignored: true, reason: 'AI echo detected - not a real human agent message' });
+        } else {
+          // Log detalhado para debug quando não encontra match
+          console.log('🔍 [CHATWOOT WEBHOOK] Echo check: NO MATCH found');
+          console.log('🔍 [CHATWOOT WEBHOOK] Incoming (normalized):', incomingContent.substring(0, 100));
+          console.log('🔍 [CHATWOOT WEBHOOK] Cached entries:', recentAI.contents.length);
+          recentAI.contents.forEach((c, i) => {
+            console.log(`🔍 [CHATWOOT WEBHOOK] Cache[${i}]:`, c.substring(0, 100));
+          });
         }
       }
 
-      // Limpar cache para esta conversa (já foi verificado, sem match)
-      recentAISentMessages.delete(matchingConversation.id);
+      // NÃO deletar o cache aqui - deixar expirar naturalmente (120s)
+      // Deletar causava perda de cache quando webhooks não-relacionados chegavam primeiro
 
       // Activate human takeover mode
       await storage.updateConversation(matchingConversation.id, {
