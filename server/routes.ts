@@ -9220,6 +9220,63 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
         }
       }
 
+      // ===== Meta Cloud API (oficial) format detection =====
+      // Quando a Meta envia diretamente para este sistema (sem intermediário UAZAPI),
+      // o payload tem format: {object: "whatsapp_business_account", entry: [...]}
+      // Precisamos converter para o formato UAZAPI que o handler abaixo entende.
+      if (webhookData.object === 'whatsapp_business_account') {
+        const parsedMsgs = MetaWhatsAppService.parseWebhookPayload(webhookData);
+        if (parsedMsgs.length > 0) {
+          console.log(`📨 [Meta Cloud API] ${parsedMsgs.length} mensagem(ns) recebida(s)`);
+          for (const parsed of parsedMsgs) {
+            // Encontrar instância pelo phone_number_id que veio no payload
+            let resolvedInstanceName = instanceName;
+            if (parsed.phoneNumberId) {
+              const inst = await storage.findInstanceByMetaPhoneNumberId(parsed.phoneNumberId);
+              if (inst) resolvedInstanceName = inst.instanceName;
+            }
+            // Converter para formato UAZAPI
+            const converted = {
+              EventType: 'messages',
+              message: {
+                chatid: parsed.from,
+                sender: parsed.from,
+                sender_pn: parsed.from,
+                text: parsed.text || '',
+                fromMe: false,
+                senderName: parsed.contactName || parsed.from,
+                messageType: parsed.type,
+                type: parsed.type,
+                id: parsed.messageId,
+                messageid: parsed.messageId,
+                content: parsed.text ? { text: parsed.text } : {},
+              },
+              chat: {
+                wa_chatid: parsed.from,
+                phone: parsed.from,
+                name: parsed.contactName || parsed.from,
+              },
+            };
+            // Reprocessar via fetch interno para o handler abaixo
+            console.log(`🔄 [Meta Cloud API] Convertendo mensagem de ${parsed.from} para UAZAPI format e reprocessando via ${resolvedInstanceName}`);
+            try {
+              const baseUrl = req.protocol + '://' + req.get('host');
+              await fetch(`${baseUrl}/api/webhook/whatsapp/${encodeURIComponent(resolvedInstanceName)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(converted),
+              });
+            } catch (innerErr: any) {
+              console.error('❌ [Meta Cloud API] Erro ao reprocessar mensagem:', innerErr.message);
+            }
+          }
+          return res.status(200).json({ received: true, processed: true, type: 'meta_cloud_api', count: parsedMsgs.length });
+        }
+
+        // Pode ser só status (delivery) - já tratado abaixo via metaStatuses
+        console.log('📋 [Meta Cloud API] Payload sem mensagens (possível status event)');
+      }
+
       // Meta API uses "EventType" (PascalCase), normalize to a single variable
       const eventType = webhookData.EventType || webhookData.event || '';
 
