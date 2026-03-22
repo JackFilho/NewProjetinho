@@ -167,7 +167,7 @@ export async function syncMessageToChatwoot(
   contactName: string,
   content: string,
   messageType: 'incoming' | 'outgoing',
-  audioBuffer?: Buffer
+  mediaAttachment?: { buffer: Buffer; mimeType: string; filename: string }
 ): Promise<void> {
   try {
     // Verificar configuração mínima (baseUrl + token + accountId)
@@ -242,15 +242,15 @@ export async function syncMessageToChatwoot(
       }
     }
 
-    // Enviar mensagem (com áudio como attachment se disponível)
-    if (audioBuffer) {
+    // Enviar mensagem (com mídia como attachment se disponível)
+    if (mediaAttachment) {
       try {
         const apiUrl = `${chatwootBase.replace(/\/+$/, '')}/api/v1/accounts/${Number(chatwootAccount)}/conversations/${cwConversationId}/messages`;
         const formData = new FormData();
         formData.append('content', content);
         formData.append('message_type', messageType);
         formData.append('private', 'false');
-        formData.append('attachments[]', new Blob([audioBuffer], { type: 'audio/ogg' }), `audio_${Date.now()}.ogg`);
+        formData.append('attachments[]', new Blob([mediaAttachment.buffer], { type: mediaAttachment.mimeType }), mediaAttachment.filename);
 
         const uploadResponse = await fetch(apiUrl, {
           method: 'POST',
@@ -259,16 +259,15 @@ export async function syncMessageToChatwoot(
         });
 
         if (uploadResponse.ok) {
-          console.log(`✅ [CW-SYNC] Mensagem ${messageType} + áudio sincronizada → Chatwoot conv ${cwConversationId}`);
+          console.log(`✅ [CW-SYNC] Mensagem ${messageType} + mídia (${mediaAttachment.mimeType}) sincronizada → Chatwoot conv ${cwConversationId}`);
         } else {
           const errData = await uploadResponse.text().catch(() => '');
-          console.warn(`⚠️ [CW-SYNC] Erro no upload de áudio (${uploadResponse.status}): ${errData.substring(0, 200)}`);
-          // Fallback: enviar só texto
+          console.warn(`⚠️ [CW-SYNC] Erro no upload de mídia (${uploadResponse.status}): ${errData.substring(0, 200)}`);
           await cwService.sendMessage(cwConversationId, content, messageType);
           console.log(`✅ [CW-SYNC] Fallback: mensagem texto enviada → Chatwoot conv ${cwConversationId}`);
         }
-      } catch (audioErr: any) {
-        console.warn(`⚠️ [CW-SYNC] Erro ao enviar áudio, fallback para texto: ${audioErr.message}`);
+      } catch (mediaErr: any) {
+        console.warn(`⚠️ [CW-SYNC] Erro ao enviar mídia, fallback para texto: ${mediaErr.message}`);
         await cwService.sendMessage(cwConversationId, content, messageType);
       }
     } else {
@@ -10105,9 +10104,19 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
         || uazAudioTypes.includes(uazRawMediaType)
         || uazRawMimetype.startsWith('audio/')
         || (message?._metaRaw?.fileURL && /\.(ogg|opus|mp3|m4a|oga|wav|aac)/i.test(message._metaRaw.fileURL));
+      // Detectar mídia do cliente (imagem, vídeo, documento, sticker) para sincronizar ao Chatwoot
+      const mediaTypes = ['image', 'video', 'document', 'sticker'];
+      const hasMediaContent = !hasAudioContent && (
+        mediaTypes.includes(uazRawType)
+        || mediaTypes.includes(uazRawMessageType)
+        || mediaTypes.includes(uazRawMediaType)
+        || !!message?._metaRaw?.fileId
+      );
+
       // Accept both client messages (fromMe=false) and human messages (fromMe=true)
       const isTextMessage = hasTextContent;
       const isAudioMessage = hasAudioContent;
+      const isMediaMessage = hasMediaContent && !isTextMessage && !isAudioMessage;
 
       console.log('🎵 Audio message detected:', !!hasAudioContent, '| uazRawType:', uazRawType, '| uazRawMessageType:', uazRawMessageType, '| mediaType:', uazRawMediaType, '| mimetype:', uazRawMimetype);
       console.log('💬 Text message detected:', !!hasTextContent);
@@ -10122,7 +10131,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 
         // Include fromMe media messages (images, videos, docs, stickers) so they trigger human takeover
         const isFromMeMedia = message?.key?.fromMe === true && !isTextMessage && !isAudioMessage;
-        if (isTextMessage || isAudioMessage || isFromMeMedia) {
+        if (isTextMessage || isAudioMessage || isFromMeMedia || isMediaMessage) {
           // Extract phone number - always get the REAL number (not @lid)
           let rawPhoneNumber = '';
           const remoteJid = message?.key?.remoteJid || '';
@@ -10998,8 +11007,10 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
           // Continue with normal AI processing below
           // ========================================
 
-          // Buffer de áudio para enviar ao Chatwoot como attachment
-          let audioBufferForChatwoot: Buffer | undefined;
+          // Buffer de mídia (áudio, imagem, vídeo, doc) para enviar ao Chatwoot como attachment
+          let mediaBufferForChatwoot: Buffer | undefined;
+          let mediaMimeForChatwoot: string = 'audio/ogg';
+          let mediaFilenameForChatwoot: string = 'media';
 
           // Process audio message if present
           if (isAudioMessage) {
@@ -11163,7 +11174,9 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 console.log('✅ Audio transcribed successfully:', messageText);
                 // Guardar buffer para enviar áudio ao Chatwoot
                 if (audioBase64) {
-                  audioBufferForChatwoot = Buffer.from(audioBase64, 'base64');
+                  mediaBufferForChatwoot = Buffer.from(audioBase64, 'base64');
+                  mediaMimeForChatwoot = 'audio/ogg';
+                  mediaFilenameForChatwoot = `audio_${Date.now()}.ogg`;
                 }
               } else {
                 console.log('❌ Failed to transcribe audio, sending fallback response');
@@ -11209,6 +11222,51 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
             }
           }
           
+          // ========================================
+          // 📷 PROCESSAR MÍDIA (imagem, vídeo, documento, sticker) — baixar para Chatwoot
+          // ========================================
+          if (isMediaMessage && !mediaBufferForChatwoot) {
+            const metaFileId = message?._metaRaw?.fileId;
+            const metaMime = message?._metaRaw?.mimetype || 'application/octet-stream';
+            const metaMediaType = uazRawType || uazRawMediaType || 'image';
+            console.log(`📷 [MEDIA] Mídia detectada do cliente: tipo=${metaMediaType}, mime=${metaMime}, fileId=${metaFileId || 'none'}`);
+
+            if (metaFileId) {
+              try {
+                const mediaInstance = await storage.getWhatsappInstanceByNameOnly(instanceName);
+                if (mediaInstance?.metaAccessToken && mediaInstance?.metaPhoneNumberId) {
+                  const metaService = createMetaWhatsAppService({
+                    phoneNumberId: mediaInstance.metaPhoneNumberId,
+                    wabaId: mediaInstance.metaWabaId || '',
+                    accessToken: mediaInstance.metaAccessToken,
+                  });
+                  const mediaInfo = await metaService.getMediaUrl(metaFileId);
+                  const downloadedBuffer = await metaService.downloadMedia(mediaInfo.url);
+                  mediaBufferForChatwoot = downloadedBuffer;
+                  mediaMimeForChatwoot = mediaInfo.mime_type || metaMime;
+
+                  const extMap: Record<string, string> = {
+                    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+                    'video/mp4': 'mp4', 'video/3gpp': '3gp', 'application/pdf': 'pdf',
+                  };
+                  const ext = extMap[mediaMimeForChatwoot] || mediaMimeForChatwoot.split('/')[1] || 'bin';
+                  mediaFilenameForChatwoot = `${metaMediaType}_${Date.now()}.${ext}`;
+
+                  console.log(`✅ [MEDIA] Mídia baixada: ${mediaBufferForChatwoot.length} bytes, ${mediaMimeForChatwoot}`);
+
+                  if (!messageText) {
+                    const caption = message?._metaRaw?.text || message?.message?.conversation || '';
+                    messageText = caption || `[${metaMediaType === 'sticker' ? 'Figurinha' : metaMediaType === 'image' ? 'Imagem' : metaMediaType === 'video' ? 'Vídeo' : 'Documento'} enviado pelo cliente]`;
+                  }
+                } else {
+                  console.log('⚠️ [MEDIA] Instance sem credenciais Meta para download');
+                }
+              } catch (mediaErr: any) {
+                console.warn('⚠️ [MEDIA] Erro ao baixar mídia:', mediaErr.message);
+              }
+            }
+          }
+
           console.log('💬 Message text:', messageText);
           console.log('🔍 DEBUG - Checking if message is SIM/OK:', {
             message: messageText,
@@ -11599,7 +11657,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 });
 
                 // Sincronizar com Chatwoot (mensagem enfileirada durante debounce)
-                syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming', audioBufferForChatwoot);
+                syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming', mediaBufferForChatwoot ? { buffer: mediaBufferForChatwoot, mimeType: mediaMimeForChatwoot, filename: mediaFilenameForChatwoot } : undefined);
 
                 lastMessageTime.set(lockKey, Date.now());
                 console.log('✅ Mensagem salva (aguardando agrupamento)');
@@ -11634,7 +11692,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               });
 
               // Sincronizar mensagem do cliente com Chatwoot (monitoramento)
-              syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming', audioBufferForChatwoot);
+              syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming', mediaBufferForChatwoot ? { buffer: mediaBufferForChatwoot, mimeType: mediaMimeForChatwoot, filename: mediaFilenameForChatwoot } : undefined);
 
               // ========================================
               // 📨 DEBOUNCE: Aguardar até que o cliente pare de enviar mensagens
