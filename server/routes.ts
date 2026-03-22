@@ -146,11 +146,18 @@ export async function syncMessageToChatwoot(
     const chatwootAccount = company.chatwootAccountId;
 
     if (!chatwootBase || !chatwootToken || !chatwootAccount) {
-      // Log detalhado para diagnóstico
-      if (company.chatwootEnabled) {
-        console.warn(`⚠️ [CW-SYNC] Chatwoot habilitado mas incompleto — base:${!!chatwootBase} token:${!!chatwootToken} account:${!!chatwootAccount}`);
-      }
+      // Log sempre visível para facilitar diagnóstico
+      const missing = [
+        !chatwootBase && 'chatwootBaseUrl',
+        !chatwootToken && 'chatwootApiToken',
+        !chatwootAccount && 'chatwootAccountId',
+      ].filter(Boolean).join(', ');
+      console.warn(`⚠️ [CW-SYNC] Chatwoot não configurado para empresa ${company.id} — campos faltando: ${missing}. Configure em Configurações → Chatwoot.`);
       return;
+    }
+
+    if (!company.chatwootInboxId) {
+      console.warn(`⚠️ [CW-SYNC] chatwootInboxId não configurado para empresa ${company.id}. Mensagens serão enviadas sem inbox específica.`);
     }
 
     const cwService = new ChatwootService({
@@ -7005,6 +7012,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error testing Chatwoot connection:", error);
       res.status(500).json({ message: "Falha ao conectar: " + error.message });
+    }
+  });
+
+  // Diagnóstico: testa push de mensagem de teste para o Chatwoot
+  app.post('/api/company/chatwoot-config/test-push', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const company = await storage.getCompanyById(companyId);
+
+      if (!company?.chatwootBaseUrl || !company?.chatwootApiToken || !company?.chatwootAccountId) {
+        return res.status(400).json({ message: "Configure a URL, Token e Account ID do Chatwoot primeiro" });
+      }
+
+      const testPhone = req.body.phone || '5511999999999';
+      const testName = req.body.name || 'Teste';
+      await syncMessageToChatwoot(
+        company,
+        testPhone,
+        testName,
+        `[TESTE] Mensagem de diagnóstico Chatwoot — ${new Date().toLocaleString('pt-BR')}`,
+        'incoming'
+      );
+
+      res.json({ message: 'Push de teste enviado. Verifique o Chatwoot.' });
+    } catch (error: any) {
+      console.error("Error testing Chatwoot push:", error);
+      res.status(500).json({ message: "Erro ao fazer push: " + error.message });
     }
   });
 
