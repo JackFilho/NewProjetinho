@@ -132,6 +132,13 @@ async function metaSendTyping(instanceName: string, phoneNumber: string, duratio
 // Cache de conversationId do Chatwoot para evitar buscas repetidas
 const chatwootConversationCache = new Map<string, { cwConversationId: number; timestamp: number }>();
 
+// 🔄 ANTI-LOOP: Cache de mensagens sincronizadas pelo syncMessageToChatwoot
+// Quando sincronizamos uma mensagem incoming do cliente para o Chatwoot, o Chatwoot
+// dispara um webhook message_created de volta. Sem esse cache, o handler CHATWOOT INBOUND
+// processaria essa mensagem como nova, fazendo a IA responder duplicado.
+// Key: normalized content substring, Value: timestamp
+const recentSyncedIncomingMessages = new Map<string, number>();
+
 export async function syncMessageToChatwoot(
   company: any,
   customerPhone: string,
@@ -200,6 +207,16 @@ export async function syncMessageToChatwoot(
       // Cachear
       chatwootConversationCache.set(cacheKey, { cwConversationId, timestamp: Date.now() });
       console.log(`📤 [CW-SYNC] Conversa Chatwoot: ${cwConversationId}`);
+    }
+
+    // Registrar no cache anti-loop ANTES de enviar (evitar race condition)
+    if (messageType === 'incoming') {
+      const syncKey = content.replace(/\s+/g, ' ').trim().substring(0, 200);
+      recentSyncedIncomingMessages.set(syncKey, Date.now());
+      // Limpar entradas antigas (> 60s)
+      for (const [k, ts] of recentSyncedIncomingMessages) {
+        if (Date.now() - ts > 60000) recentSyncedIncomingMessages.delete(k);
+      }
     }
 
     // Enviar mensagem
@@ -7619,7 +7636,20 @@ if (ignoredNumbers !== undefined) {
         && cwSenderType !== 'user';
 
       if (isIncomingCustomerMessage) {
-        let messageContent = (payload.content || '').trim();
+        // 🔄 ANTI-LOOP: Verificar se esta mensagem foi sincronizada pelo nosso syncMessageToChatwoot
+        // Quando o WhatsApp webhook recebe uma mensagem do cliente e sincroniza pro Chatwoot,
+        // o Chatwoot dispara message_created de volta. Devemos ignorar para não processar 2x.
+        const incomingContentRaw = (payload.content || '').trim();
+        const syncCheckKey = incomingContentRaw.replace(/\s+/g, ' ').trim().substring(0, 200);
+        const syncedAt = recentSyncedIncomingMessages.get(syncCheckKey);
+        if (syncedAt && (Date.now() - syncedAt) < 60000) {
+          console.log('🔄 [CHATWOOT INBOUND] ANTI-LOOP: Mensagem ignorada — foi sincronizada pelo syncMessageToChatwoot');
+          console.log('🔄 [CHATWOOT INBOUND] Conteúdo:', syncCheckKey.substring(0, 80));
+          recentSyncedIncomingMessages.delete(syncCheckKey);
+          return res.status(200).json({ received: true, ignored: true, reason: 'Message already processed via WhatsApp webhook (anti-loop)' });
+        }
+
+        let messageContent = incomingContentRaw;
 
         // Detectar attachments de áudio do Chatwoot (webhook pode incluir no payload)
         const cwAttachments = payload.attachments
