@@ -66,7 +66,7 @@ setInterval(() => {
 }, 2 * 60 * 1000);
 
 // Helper para obter o provider Meta de uma instância pelo nome
-async function getMetaProvider(instanceName: string): Promise<IWhatsAppProvider | null> {
+export async function getMetaProvider(instanceName: string): Promise<IWhatsAppProvider | null> {
   const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
   if (!instance?.metaAccessToken || !instance?.metaPhoneNumberId || !instance?.metaWabaId) {
     console.error('❌ Configuração Meta incompleta para instância:', instanceName);
@@ -96,7 +96,7 @@ function cleanWhatsAppNumber(phone: string): string {
 }
 
 // Helpers de envio via Meta Cloud API (compatíveis com a assinatura anterior)
-async function metaSendText(instanceName: string, phoneNumber: string, text: string): Promise<{ ok: boolean; status: number }> {
+export async function metaSendText(instanceName: string, phoneNumber: string, text: string): Promise<{ ok: boolean; status: number }> {
   try {
     const provider = await getMetaProvider(instanceName);
     if (!provider) return { ok: false, status: 404 };
@@ -219,7 +219,7 @@ function normalizeForEchoComparison(text: string): string {
 }
 
 // Helper para registrar resposta da AI no cache
-function cacheAIResponse(conversationId: number, content: string) {
+export function cacheAIResponse(conversationId: number, content: string) {
   const existing = recentAISentMessages.get(conversationId);
   const normalized = normalizeForEchoComparison(content);
   if (existing && (Date.now() - existing.timestamp) < 120000) {
@@ -244,7 +244,7 @@ const chatwootPendingMessages = new Map<string, string[]>();
  * Verifica se o cliente tem agendamento futuro ativo (consulta direta ao banco).
  * Usado para suprimir follow-up de inatividade após o cliente já ter agendado.
  */
-async function clientHasFutureAppointment(companyId: number, phoneNumber: string): Promise<boolean> {
+export async function clientHasFutureAppointment(companyId: number, phoneNumber: string): Promise<boolean> {
   try {
     const cleanPhone = phoneNumber.replace(/\D/g, '');
     const nowBrasilia = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
@@ -281,7 +281,7 @@ async function clientHasFutureAppointment(companyId: number, phoneNumber: string
  * Verifica se uma resposta da IA é um resumo de confirmação de agendamento.
  * Usa os mesmos padrões da detecção em PRÉ-VALIDAÇÃO (linhas 8489-8503).
  */
-function isConfirmationSummary(text: string): boolean {
+export function isConfirmationSummary(text: string): boolean {
   const hasConfirmationPrompt =
     text.includes('Está tudo correto?') ||
     text.includes('Responda SIM para confirmar') ||
@@ -301,7 +301,7 @@ function isConfirmationSummary(text: string): boolean {
  * Usado para NÃO agendar follow-up de 30 min quando a conversa já terminou.
  * Cobre: agendamento confirmado/cancelado/remarcado, despedidas e agradecimentos.
  */
-function isConversationConcluded(text: string): boolean {
+export function isConversationConcluded(text: string): boolean {
   const lowerText = text.toLowerCase();
 
   // Palavras-chave de conclusão de agendamento
@@ -445,7 +445,7 @@ function formatDateLocal(date: Date): string {
 }
 
 // Utility function to get current date/time in Brazil timezone (America/Sao_Paulo)
-function getBrazilDate(): Date {
+export function getBrazilDate(): Date {
   // Get current date and convert to Brazil timezone
   const nowStr = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' });
   return new Date(nowStr);
@@ -727,7 +727,7 @@ async function sendAppointmentErrorWebhook(
 }
 
 // Helper function to list client's future appointments
-async function listClientAppointments(clientPhone: string, companyId: number): Promise<string> {
+export async function listClientAppointments(clientPhone: string, companyId: number): Promise<string> {
   try {
     const allAppointments = await storage.getAppointmentsByCompany(companyId);
     const now = new Date();
@@ -779,7 +779,7 @@ async function listClientAppointments(clientPhone: string, companyId: number): P
 
 // Helper function to list client's future appointments with numbers (for cancel/reschedule)
 // OTIMIZADO: Consulta direta no banco com filtros (não carrega todos na memória)
-async function listClientAppointmentsNumbered(clientPhone: string, companyId: number, action: 'cancelar' | 'remarcar'): Promise<string> {
+export async function listClientAppointmentsNumbered(clientPhone: string, companyId: number, action: 'cancelar' | 'remarcar'): Promise<string> {
   try {
     const cleanClientPhone = clientPhone.replace(/\D/g, '');
 
@@ -986,7 +986,7 @@ function needsAvailabilityInfo(messageText: string, conversationHistory: any[]):
  * Obtém informações de disponibilidade com cache inteligente
  * MODO NOVO: Usa horários pré-calculados para evitar erros de cálculo do agente
  */
-async function getAvailabilityInfoSmart(
+export async function getAvailabilityInfoSmart(
   messageText: string,
   conversationHistory: any[],
   professionals: any[],
@@ -1821,7 +1821,7 @@ async function getSpecificDateAvailability(
  * Verifica se precisa buscar disponibilidade de data específica
  * Retorna informações adicionais se necessário
  */
-async function checkSpecificDateAvailability(
+export async function checkSpecificDateAvailability(
   messageText: string,
   conversationHistory: any[],
   professionals: any[],
@@ -1873,7 +1873,7 @@ async function checkSpecificDateAvailability(
  * Verifica se um horário específico está disponível em algum dia da semana
  * Retorna os dias que têm esse horário disponível
  */
-async function checkSpecificTimeAvailability(
+export async function checkSpecificTimeAvailability(
   companyId: number,
   professionalId: number,
   targetTime: string, // formato HH:MM
@@ -2136,7 +2136,7 @@ async function validateAvailabilityInResponse(
  * Calcula e retorna horários disponíveis para um serviço específico em uma data
  * Considera a duração do serviço para evitar conflitos
  */
-async function getAvailableTimesForService(
+export async function getAvailableTimesForService(
   companyId: number,
   serviceId: number,
   professionalId: number,
@@ -2393,7 +2393,7 @@ async function getAvailableTimesForService(
 // ==================== FIM DO CÁLCULO DE HORÁRIOS DISPONÍVEIS PARA SERVIÇO ====================
 
 // ==================== CÁLCULO DE HORÁRIOS DISPONÍVEIS PARA MÚLTIPLOS SERVIÇOS ====================
-async function getAvailableTimesForMultipleServices(
+export async function getAvailableTimesForMultipleServices(
   companyId: number,
   serviceIds: number[],
   professionalId: number,

@@ -5,6 +5,7 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { ensureConversationTables, ensureProfessionalPasswordColumn, storage } from "./storage";
 import { createMetaWebhookRouter } from "./services/meta-webhook-handler";
+import { handleAIAgentResponse } from "./services/ai-agent-handler";
 import { ensureReviewTables } from "./create-reviews-tables";
 import { startCampaignScheduler } from "./campaign-scheduler";
 import { ensureSmtpColumns } from "./ensure-smtp-columns";
@@ -69,6 +70,13 @@ try {
         providerMessageId: messageId,
         messageType,
       });
+    },
+    onMessageReceived: async ({ message, company, instance, conversation }) => {
+      try {
+        await handleAIAgentResponse({ message, company, instance, conversation });
+      } catch (err) {
+        console.error('[meta-webhook] AI agent handler error:', err);
+      }
     },
   });
   app.use(metaWebhookRouter);
