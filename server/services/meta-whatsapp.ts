@@ -9,7 +9,7 @@
 
 import crypto from 'crypto';
 
-const META_GRAPH_API_VERSION = 'v22.0';
+const META_GRAPH_API_VERSION = 'v25.0';
 const META_GRAPH_API_BASE = `https://graph.facebook.com/${META_GRAPH_API_VERSION}`;
 
 // ===== Interfaces =====
