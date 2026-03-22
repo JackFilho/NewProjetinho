@@ -140,15 +140,24 @@ async function syncMessageToChatwoot(
   messageType: 'incoming' | 'outgoing'
 ): Promise<void> {
   try {
-    if (!company.chatwootEnabled || !company.chatwootBaseUrl || !company.chatwootApiToken || !company.chatwootAccountId) {
-      return; // Chatwoot não configurado, skip silencioso
+    // Verificar configuração mínima (baseUrl + token + accountId)
+    const chatwootBase = company.chatwootBaseUrl;
+    const chatwootToken = company.chatwootApiToken;
+    const chatwootAccount = company.chatwootAccountId;
+
+    if (!chatwootBase || !chatwootToken || !chatwootAccount) {
+      // Log detalhado para diagnóstico
+      if (company.chatwootEnabled) {
+        console.warn(`⚠️ [CW-SYNC] Chatwoot habilitado mas incompleto — base:${!!chatwootBase} token:${!!chatwootToken} account:${!!chatwootAccount}`);
+      }
+      return;
     }
 
     const cwService = new ChatwootService({
-      baseUrl: company.chatwootBaseUrl,
-      apiAccessToken: company.chatwootApiToken,
-      accountId: company.chatwootAccountId,
-      inboxId: company.chatwootInboxId,
+      baseUrl: chatwootBase,
+      apiAccessToken: chatwootToken,
+      accountId: Number(chatwootAccount),
+      inboxId: company.chatwootInboxId ? Number(company.chatwootInboxId) : undefined,
     });
 
     const cacheKey = `${company.id}:${customerPhone}`;
@@ -158,11 +167,14 @@ async function syncMessageToChatwoot(
     const cached = chatwootConversationCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < 30 * 60 * 1000) {
       cwConversationId = cached.cwConversationId;
+      console.log(`📤 [CW-SYNC] Usando conversa cacheada: ${cwConversationId}`);
     }
 
     if (!cwConversationId) {
       // Encontrar ou criar contato e conversa no Chatwoot
       const phoneFormatted = customerPhone.replace(/\D/g, '');
+      console.log(`📤 [CW-SYNC] Buscando/criando contato para ${phoneFormatted} em ${chatwootBase}`);
+
       const contact = await cwService.findOrCreateContact(
         contactName || phoneFormatted,
         phoneFormatted
@@ -173,19 +185,23 @@ async function syncMessageToChatwoot(
         return;
       }
 
-      const cwConversation = await cwService.findOrCreateConversation(contact.id);
+      console.log(`📤 [CW-SYNC] Contato Chatwoot: ${contact.id} (${contact.name})`);
+
+      const cwConversation = await cwService.findOrCreateConversation(contact.id, company.chatwootInboxId ? Number(company.chatwootInboxId) : undefined);
       cwConversationId = cwConversation.id;
 
       // Cachear
       chatwootConversationCache.set(cacheKey, { cwConversationId, timestamp: Date.now() });
+      console.log(`📤 [CW-SYNC] Conversa Chatwoot: ${cwConversationId}`);
     }
 
     // Enviar mensagem
     await cwService.sendMessage(cwConversationId, content, messageType);
-    console.log(`📤 [CW-SYNC] ${messageType} message synced to Chatwoot conv ${cwConversationId}`);
+    console.log(`✅ [CW-SYNC] Mensagem ${messageType} sincronizada → Chatwoot conv ${cwConversationId}`);
   } catch (err: any) {
     // Não falhar o fluxo principal por erro de sync
-    console.warn(`⚠️ [CW-SYNC] Erro ao sincronizar com Chatwoot: ${err.message}`);
+    console.error(`❌ [CW-SYNC] Erro ao sincronizar com Chatwoot: ${err.message}`);
+    if (err.stack) console.error(`❌ [CW-SYNC] Stack:`, err.stack.split('\n').slice(0, 3).join('\n'));
   }
 }
 
@@ -11388,6 +11404,9 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                   timestamp: messageTimestamp,
                 });
 
+                // Sincronizar com Chatwoot (mensagem enfileirada durante debounce)
+                syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming');
+
                 lastMessageTime.set(lockKey, Date.now());
                 console.log('✅ Mensagem salva (aguardando agrupamento)');
                 return res.status(200).json({ received: true, queued: true });
@@ -11421,7 +11440,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               });
 
               // Sincronizar mensagem do cliente com Chatwoot (monitoramento)
-              syncMessageToChatwoot(company, phoneNumber, pushName || phoneNumber, messageText, 'incoming');
+              syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming');
 
               // ========================================
               // 📨 DEBOUNCE: Aguardar até que o cliente pare de enviar mensagens
