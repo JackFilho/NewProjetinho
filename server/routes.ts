@@ -275,6 +275,26 @@ export async function syncMessageToChatwoot(
       console.log(`✅ [CW-SYNC] Mensagem ${messageType} sincronizada → Chatwoot conv ${cwConversationId}`);
     }
   } catch (err: any) {
+    // Se a conversa/contato foi deletado no Chatwoot, limpar cache e tentar recriar
+    const isNotFound = err.message?.includes('not be found') || err.message?.includes('not found') || err.statusCode === 404;
+    if (isNotFound && chatwootConversationCache.has(`${company.id}:${customerPhone}`)) {
+      console.warn(`⚠️ [CW-SYNC] Conversa não encontrada no Chatwoot — limpando cache e recriando...`);
+      chatwootConversationCache.delete(`${company.id}:${customerPhone}`);
+      try {
+        // Recriar contato e conversa
+        const phoneFormatted = customerPhone.replace(/\D/g, '');
+        const contact = await cwService.findOrCreateContact(contactName || phoneFormatted, phoneFormatted);
+        if (contact?.id) {
+          const cwConv = await cwService.findOrCreateConversation(contact.id, company.chatwootInboxId ? Number(company.chatwootInboxId) : undefined);
+          chatwootConversationCache.set(`${company.id}:${customerPhone}`, { cwConversationId: cwConv.id, timestamp: Date.now() });
+          await cwService.sendMessage(cwConv.id, content, messageType);
+          console.log(`✅ [CW-SYNC] Retry OK — mensagem sincronizada → Chatwoot conv ${cwConv.id}`);
+          return;
+        }
+      } catch (retryErr: any) {
+        console.error(`❌ [CW-SYNC] Retry falhou: ${retryErr.message}`);
+      }
+    }
     // Não falhar o fluxo principal por erro de sync
     console.error(`❌ [CW-SYNC] Erro ao sincronizar com Chatwoot: ${err.message}`);
     if (err.stack) console.error(`❌ [CW-SYNC] Stack:`, err.stack.split('\n').slice(0, 3).join('\n'));
