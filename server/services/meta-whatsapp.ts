@@ -379,6 +379,24 @@ export class MetaWhatsAppService {
     );
   }
 
+  /** Enviar typing indicator (digitando...) — requer message_id da mensagem recebida */
+  async sendTypingIndicator(messageId: string): Promise<any> {
+    const payload = {
+      messaging_product: 'whatsapp',
+      status: 'read',
+      message_id: messageId,
+      typing_indicator: {
+        type: 'text',
+      },
+    };
+
+    return this.request(
+      `/${this.config.phoneNumberId}/messages`,
+      'POST',
+      payload
+    );
+  }
+
   // === Gerenciamento de Mídia ===
 
   /** Upload de mídia para o servidor da Meta */

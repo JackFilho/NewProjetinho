@@ -122,8 +122,25 @@ async function metaSendMedia(instanceName: string, phoneNumber: string, mediaTyp
   }
 }
 
-async function metaSendTyping(instanceName: string, phoneNumber: string, durationMs: number = 2000): Promise<void> {
-  // Meta Cloud API não tem endpoint de typing indicator — no-op
+async function metaSendTyping(instanceName: string, phoneNumber: string, durationMs: number = 2000, messageId?: string): Promise<void> {
+  try {
+    if (!messageId) return; // Typing indicator requer o messageId da mensagem recebida
+    const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
+    if (!instance?.metaAccessToken || !instance?.metaPhoneNumberId) return;
+    const metaService = createMetaWhatsAppService({
+      phoneNumberId: instance.metaPhoneNumberId,
+      wabaId: instance.metaWabaId || '',
+      accessToken: instance.metaAccessToken,
+    });
+    await metaService.sendTypingIndicator(messageId);
+    // Esperar a duração solicitada para simular tempo de digitação
+    if (durationMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, durationMs));
+    }
+  } catch (error) {
+    // Não falhar o fluxo principal por erro de typing
+    console.warn('⚠️ [TYPING] Erro ao enviar typing indicator:', error);
+  }
 }
 
 // ===== Chatwoot Sync: sincronizar mensagens do handler WhatsApp para o Chatwoot =====
@@ -10004,6 +10021,9 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
         return res.status(200).json({ received: true, processed: false, reason: 'Message object is null' });
       }
 
+      // Guardar messageId (wamid) para usar no typing indicator
+      const incomingMessageId = message.key?.id || message._metaRaw?.messageid || message._metaRaw?.id || '';
+
       // ===== Idempotency: skip already-processed messages =====
       const webhookMsgId = message?.key?.id;
       if (webhookMsgId) {
@@ -10642,7 +10662,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                     console.log('📤 [HUMAN-REQUEST] Sending confirmation to client:', formattedClientPhone);
 
                     // Send "typing" presence and wait 2 seconds
-                    await metaSendTyping(instanceName, formattedClientPhone, 2000);
+                    await metaSendTyping(instanceName, formattedClientPhone, 2000, incomingMessageId);
                     console.log('⏳ [HUMAN-REQUEST] Aguardando 2 segundos (mostrando digitando...)');
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     console.log('✅ [HUMAN-REQUEST] Delay concluído, enviando confirmação agora');
@@ -11109,7 +11129,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                     formattedPhoneForFallback = '55' + formattedPhoneForFallback;
                   }
 
-                  await metaSendTyping(instanceName, formattedPhoneForFallback, 2000);
+                  await metaSendTyping(instanceName, formattedPhoneForFallback, 2000, incomingMessageId);
                   await new Promise(resolve => setTimeout(resolve, 2000));
                   const fallbackMetaAPIResponse = await metaSendText(instanceName, formattedPhoneForFallback, fallbackResponse);
 
@@ -12305,7 +12325,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 }
 
                 // Enviar presença "digitando" e aguardar
-                await metaSendTyping(instanceName, formattedPhoneIntercept, 2000);
+                await metaSendTyping(instanceName, formattedPhoneIntercept, 2000, incomingMessageId);
                 await new Promise(resolve => setTimeout(resolve, 2000));
 
                 try {
@@ -12490,7 +12510,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 }
 
                 // Enviar via Meta API
-                await metaSendTyping(instanceName, formattedPhoneReschedule, 2000);
+                await metaSendTyping(instanceName, formattedPhoneReschedule, 2000, incomingMessageId);
                 await new Promise(resolve => setTimeout(resolve, 2000));
 
                 try {
@@ -14021,7 +14041,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
 
                         const paymentQuestionMsg = `💳 *Forma de Pagamento*\n\nPara confirmar seu agendamento, como você prefere pagar?\n\n1️⃣ *PIX* - Pagamento instantâneo\n2️⃣ *Cartão de Crédito* - Parcele em até 12x\n\n💰 Valor: R$ ${Number(serviceAsaas.price).toFixed(2)}\n\n_Digite 1 para PIX ou 2 para Cartão_`;
 
-                        await metaSendTyping(instanceName, phoneForPayment, 1500);
+                        await metaSendTyping(instanceName, phoneForPayment, 1500, incomingMessageId);
 
                         await metaSendText(instanceName, phoneForPayment, paymentQuestionMsg);
                         // Registrar no cache para detectar eco no Chatwoot
@@ -14081,7 +14101,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 console.log('📞 Formatted phone for Meta API:', formattedPhoneForApi);
 
                 // Send "typing" presence and wait 2 seconds
-                await metaSendTyping(instanceName, formattedPhoneForApi, 2000);
+                await metaSendTyping(instanceName, formattedPhoneForApi, 2000, incomingMessageId);
                 console.log('⏳ Aguardando 2 segundos (mostrando digitando...)');
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 console.log('✅ Delay concluído, enviando mensagem agora');
@@ -15018,7 +15038,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             if (pixPaymentWithCpf && pixPaymentWithCpf.pixQrCode) {
                               console.log('✅ PIX com CPF criado com sucesso!');
 
-                              await metaSendTyping(instanceName, formattedPhoneForCpf, 2000);
+                              await metaSendTyping(instanceName, formattedPhoneForCpf, 2000, incomingMessageId);
 
                               // Enviar QR Code
                               const pixCaptionCpf = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${pendingPixData.servicePrice.toFixed(2)}\n⏰ Válido por 10 minutos`;
@@ -15206,7 +15226,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                               if (pixPayment && pixPayment.pixQrCode) {
                                 console.log('✅ PIX criado com sucesso!');
 
-                                await metaSendTyping(instanceName, formattedPhoneForPaymentMsg, 2000);
+                                await metaSendTyping(instanceName, formattedPhoneForPaymentMsg, 2000, incomingMessageId);
 
                                 // Enviar QR Code como imagem
                                 const pixCaption = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n⏰ Válido por 10 minutos`;
@@ -15279,7 +15299,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                                 // Agendamento será criado pelo webhook após confirmação do pagamento
 
                                 // Enviar link de pagamento
-                                await metaSendTyping(instanceName, formattedPhoneForPaymentMsg, 2000);
+                                await metaSendTyping(instanceName, formattedPhoneForPaymentMsg, 2000, incomingMessageId);
 
                                 const cardMessage = `💳 *Pagamento com Cartão de Crédito*\n\nClique no link abaixo para pagar de forma segura:\n\n🔗 ${cardPayment.invoiceUrl}\n\n💰 Valor: R$ ${serviceForPayment.price.toFixed(2)}\n✅ Parcele em até 12x\n🔒 Ambiente 100% seguro\n\n_Após o pagamento, seu agendamento será confirmado automaticamente!_`;
 
@@ -15704,7 +15724,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                           if (pixPaymentResult && pixPaymentResult.pixQrCode) {
                             console.log('✅ PIX criado com sucesso!');
 
-                            await metaSendTyping(instanceName, formattedPhoneForPaymentProcess, 2000);
+                            await metaSendTyping(instanceName, formattedPhoneForPaymentProcess, 2000, incomingMessageId);
 
                             const pixCaptionProcess = `📱 *Pagamento via PIX*\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n⏰ Válido por 10 minutos`;
                             await metaSendMedia(instanceName, formattedPhoneForPaymentProcess, 'image', pixPaymentResult.pixQrCode.encodedImage, pixCaptionProcess);
@@ -15775,7 +15795,7 @@ Por favor, escolha um dos horários disponíveis acima.`;
                             console.log('📋 Payment ID:', cardPaymentResult.id);
 
                             // Send payment link
-                            await metaSendTyping(instanceName, formattedPhoneForPaymentProcess, 2000);
+                            await metaSendTyping(instanceName, formattedPhoneForPaymentProcess, 2000, incomingMessageId);
 
                             const cardMessageResult = `💳 *Pagamento com Cartão de Crédito*\n\nClique no link abaixo para pagar de forma segura:\n\n🔗 ${cardPaymentResult.invoiceUrl}\n\n💰 Valor: R$ ${Number(serviceForPaymentProcess.price).toFixed(2)}\n✅ Parcele em até 12x\n🔒 Ambiente 100% seguro\n\n_Após o pagamento, seu agendamento será confirmado automaticamente!_`;
 
@@ -15861,7 +15881,7 @@ Obrigado pela preferência! 🙏`;
                 }
 
                 // Send "typing" presence and wait 2 seconds
-                await metaSendTyping(instanceName, formattedPhoneForError, 2000);
+                await metaSendTyping(instanceName, formattedPhoneForError, 2000, incomingMessageId);
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 const metaResponse = await metaSendText(instanceName, formattedPhoneForError, fallbackMessage);
 
