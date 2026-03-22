@@ -9,7 +9,7 @@
 
 import crypto from 'crypto';
 
-const META_GRAPH_API_VERSION = 'v21.0';
+const META_GRAPH_API_VERSION = 'v22.0';
 const META_GRAPH_API_BASE = `https://graph.facebook.com/${META_GRAPH_API_VERSION}`;
 
 // ===== Interfaces =====
@@ -390,11 +390,13 @@ export class MetaWhatsAppService {
       },
     };
 
-    return this.request(
+    const result = await this.request(
       `/${this.config.phoneNumberId}/messages`,
       'POST',
       payload
     );
+    console.log('⌨️ [TYPING] Meta API response:', JSON.stringify(result));
+    return result;
   }
 
   // === Gerenciamento de Mídia ===
