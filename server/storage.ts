@@ -502,6 +502,11 @@ export class DatabaseStorage implements IStorage {
       financialPassword: companies.financialPassword,
       logoUrl: companies.logoUrl,
       primaryColor: companies.primaryColor,
+      chatwootEnabled: companies.chatwootEnabled,
+      chatwootBaseUrl: companies.chatwootBaseUrl,
+      chatwootApiToken: companies.chatwootApiToken,
+      chatwootAccountId: companies.chatwootAccountId,
+      chatwootInboxId: companies.chatwootInboxId,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt
     }).from(companies).where(eq(companies.id, id));
