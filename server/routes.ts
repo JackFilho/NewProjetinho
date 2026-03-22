@@ -166,7 +166,8 @@ export async function syncMessageToChatwoot(
   customerPhone: string,
   contactName: string,
   content: string,
-  messageType: 'incoming' | 'outgoing'
+  messageType: 'incoming' | 'outgoing',
+  audioBuffer?: Buffer
 ): Promise<void> {
   try {
     // Verificar configuração mínima (baseUrl + token + accountId)
@@ -241,9 +242,14 @@ export async function syncMessageToChatwoot(
       }
     }
 
-    // Enviar mensagem
-    await cwService.sendMessage(cwConversationId, content, messageType);
-    console.log(`✅ [CW-SYNC] Mensagem ${messageType} sincronizada → Chatwoot conv ${cwConversationId}`);
+    // Enviar mensagem (com áudio como attachment se disponível)
+    if (audioBuffer) {
+      await cwService.sendMessageWithFile(cwConversationId, content, audioBuffer, `audio_${Date.now()}.ogg`, 'audio/ogg', messageType);
+      console.log(`✅ [CW-SYNC] Mensagem ${messageType} + áudio sincronizada → Chatwoot conv ${cwConversationId}`);
+    } else {
+      await cwService.sendMessage(cwConversationId, content, messageType);
+      console.log(`✅ [CW-SYNC] Mensagem ${messageType} sincronizada → Chatwoot conv ${cwConversationId}`);
+    }
   } catch (err: any) {
     // Não falhar o fluxo principal por erro de sync
     console.error(`❌ [CW-SYNC] Erro ao sincronizar com Chatwoot: ${err.message}`);
@@ -10967,6 +10973,9 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
           // Continue with normal AI processing below
           // ========================================
 
+          // Buffer de áudio para enviar ao Chatwoot como attachment
+          let audioBufferForChatwoot: Buffer | undefined;
+
           // Process audio message if present
           if (isAudioMessage) {
             console.log('🎵 Processing audio message...');
@@ -11127,6 +11136,10 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               if (transcriptionText) {
                 messageText = transcriptionText;
                 console.log('✅ Audio transcribed successfully:', messageText);
+                // Guardar buffer para enviar áudio ao Chatwoot
+                if (audioBase64) {
+                  audioBufferForChatwoot = Buffer.from(audioBase64, 'base64');
+                }
               } else {
                 console.log('❌ Failed to transcribe audio, sending fallback response');
                 const fallbackResponse = "Desculpe, não consegui entender o áudio que você enviou. Pode escrever sua mensagem por texto, por favor? 📝";
@@ -11561,7 +11574,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 });
 
                 // Sincronizar com Chatwoot (mensagem enfileirada durante debounce)
-                syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming');
+                syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming', audioBufferForChatwoot);
 
                 lastMessageTime.set(lockKey, Date.now());
                 console.log('✅ Mensagem salva (aguardando agrupamento)');
@@ -11596,7 +11609,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               });
 
               // Sincronizar mensagem do cliente com Chatwoot (monitoramento)
-              syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming');
+              syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming', audioBufferForChatwoot);
 
               // ========================================
               // 📨 DEBOUNCE: Aguardar até que o cliente pare de enviar mensagens
