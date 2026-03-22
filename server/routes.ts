@@ -23144,6 +23144,34 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     }
   });
 
+  // Admin: buscar instância WhatsApp por phone_number_id (para diagnóstico)
+  app.get('/api/admin/whatsapp/find-by-phone-number-id/:phoneNumberId', isAuthenticated, async (req, res) => {
+    try {
+      const instance = await storage.findInstanceByMetaPhoneNumberId(req.params.phoneNumberId) as any;
+      if (!instance) {
+        return res.status(404).json({ message: 'Nenhuma instância encontrada com esse phone_number_id' });
+      }
+      res.json(instance);
+    } catch (error: any) {
+      res.status(500).json({ message: 'Erro ao buscar instância' });
+    }
+  });
+
+  // Admin: forçar liberação de phone_number_id (remover vínculo com outra empresa)
+  app.delete('/api/admin/whatsapp/release/:phoneNumberId', isAuthenticated, async (req, res) => {
+    try {
+      const instance = await storage.findInstanceByMetaPhoneNumberId(req.params.phoneNumberId) as any;
+      if (!instance) {
+        return res.status(404).json({ message: 'Nenhuma instância encontrada com esse phone_number_id' });
+      }
+      await storage.deleteWhatsappInstance(instance.id);
+      console.log(`🔓 Admin liberou phone_number_id ${req.params.phoneNumberId} (instância ${instance.instanceName}, empresa ${instance.companyId})`);
+      res.json({ message: 'Instância liberada com sucesso', deletedInstance: { id: instance.id, instanceName: instance.instanceName, companyId: instance.companyId } });
+    } catch (error: any) {
+      res.status(500).json({ message: 'Erro ao liberar instância' });
+    }
+  });
+
   // ============ FINANCIAL PASSWORD ENDPOINTS ============
 
   // Admin: Reset financial password for a company
