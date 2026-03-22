@@ -124,7 +124,11 @@ async function metaSendMedia(instanceName: string, phoneNumber: string, mediaTyp
 
 async function metaSendTyping(instanceName: string, phoneNumber: string, durationMs: number = 2000, messageId?: string): Promise<void> {
   try {
-    if (!messageId) return; // Typing indicator requer o messageId da mensagem recebida
+    if (!messageId) {
+      console.log('⌨️ [TYPING] Skipped — no messageId available');
+      return;
+    }
+    console.log(`⌨️ [TYPING] Sending typing indicator for messageId: ${messageId}`);
     const [instance] = await db.select().from(whatsappInstances).where(eq(whatsappInstances.instanceName, instanceName)).limit(1);
     if (!instance?.metaAccessToken || !instance?.metaPhoneNumberId) return;
     const metaService = createMetaWhatsAppService({
@@ -133,6 +137,7 @@ async function metaSendTyping(instanceName: string, phoneNumber: string, duratio
       accessToken: instance.metaAccessToken,
     });
     await metaService.sendTypingIndicator(messageId);
+    console.log('⌨️ [TYPING] Typing indicator sent successfully');
     // Esperar a duração solicitada para simular tempo de digitação
     if (durationMs > 0) {
       await new Promise(resolve => setTimeout(resolve, durationMs));
@@ -10022,7 +10027,10 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
       }
 
       // Guardar messageId (wamid) para usar no typing indicator
-      const incomingMessageId = message.key?.id || message._metaRaw?.messageid || message._metaRaw?.id || '';
+      // Meta Cloud API normalizada: message.id / message.messageid
+      // UAZAPI/Baileys: message.key.id
+      // Meta raw: message._metaRaw.messageid
+      const incomingMessageId = message.key?.id || message.id || message.messageid || message._metaRaw?.messageid || message._metaRaw?.id || '';
 
       // ===== Idempotency: skip already-processed messages =====
       const webhookMsgId = message?.key?.id;
