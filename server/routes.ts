@@ -10468,6 +10468,11 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
           // Try to find existing conversation
           let conversation = await storage.getConversation(whatsappInstance.companyId, whatsappInstance.id, phoneNumber);
 
+          // Buffer de mídia para enviar ao Chatwoot (declarado cedo para estar disponível no takeover)
+          let mediaBufferForChatwoot: Buffer | undefined;
+          let mediaMimeForChatwoot: string = 'audio/ogg';
+          let mediaFilenameForChatwoot: string = 'media';
+
           // ========================================
           // 🎓 COURSE NOTIFICATION - CHECK FIRST (before timeout check)
           // ========================================
@@ -11021,11 +11026,6 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
           // ========================================
           // Continue with normal AI processing below
           // ========================================
-
-          // Buffer de mídia (áudio, imagem, vídeo, doc) para enviar ao Chatwoot como attachment
-          let mediaBufferForChatwoot: Buffer | undefined;
-          let mediaMimeForChatwoot: string = 'audio/ogg';
-          let mediaFilenameForChatwoot: string = 'media';
 
           // Process audio message if present
           if (isAudioMessage) {
