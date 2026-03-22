@@ -186,6 +186,9 @@ export default function CompanySettings() {
   const [qrCodeData, setQrCodeData] = useState<string>("");
   const [showQrDialog, setShowQrDialog] = useState(false);
   const [showWebhookDialog, setShowWebhookDialog] = useState(false);
+  const [showTokenDialog, setShowTokenDialog] = useState(false);
+  const [tokenInstance, setTokenInstance] = useState<any>(null);
+  const [newToken, setNewToken] = useState("");
   const [fetchingModels, setFetchingModels] = useState(false);
   const [numberToRemove, setNumberToRemove] = useState<string | null>(null);
   const [showRemoveDialog, setShowRemoveDialog] = useState(false);
@@ -625,6 +628,22 @@ export default function CompanySettings() {
         description: error.message || "Erro ao excluir instância",
         variant: "destructive",
       });
+    },
+  });
+
+  const updateTokenMutation = useMutation({
+    mutationFn: async ({ instanceId, accessToken }: { instanceId: number; accessToken: string }) => {
+      return await apiRequest(`/api/company/whatsapp/instances/${instanceId}/token`, "PATCH", { accessToken });
+    },
+    onSuccess: () => {
+      toast({ title: "Token atualizado", description: "Token do WhatsApp renovado com sucesso." });
+      setShowTokenDialog(false);
+      setNewToken("");
+      setTokenInstance(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/company/whatsapp/instances"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro", description: error.message || "Token inválido", variant: "destructive" });
     },
   });
 
@@ -2280,6 +2299,22 @@ export default function CompanySettings() {
                                 </Button>
                               )}
                               
+                              {isConnected && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setTokenInstance(instance);
+                                    setNewToken("");
+                                    setShowTokenDialog(true);
+                                  }}
+                                  className="flex items-center gap-2 text-orange-600 hover:text-orange-700 border-orange-300"
+                                >
+                                  <Key className="w-4 h-4" />
+                                  Renovar Token
+                                </Button>
+                              )}
+
                               {isConnected && (
                                 <Button
                                   variant="outline"
@@ -4054,6 +4089,52 @@ export default function CompanySettings() {
                 )}
               </div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Renovar Token Dialog */}
+        <Dialog open={showTokenDialog} onOpenChange={(open) => { setShowTokenDialog(open); if (!open) setNewToken(""); }}>
+          <DialogContent className="sm:max-w-[450px]">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Key className="w-5 h-5 text-orange-600" />
+                Renovar Token do WhatsApp
+              </DialogTitle>
+              <DialogDescription>
+                Informe o novo Access Token para a instância <strong>{tokenInstance?.instanceName}</strong>.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="new-token">Novo Access Token *</Label>
+                <Input
+                  id="new-token"
+                  type="password"
+                  placeholder="Cole o novo token aqui"
+                  value={newToken}
+                  onChange={(e) => setNewToken(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Gere em Business Manager &gt; Configurações &gt; Usuários do sistema &gt; Gerar token
+                </p>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" onClick={() => setShowTokenDialog(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (tokenInstance && newToken.trim()) {
+                      updateTokenMutation.mutate({ instanceId: tokenInstance.id, accessToken: newToken.trim() });
+                    }
+                  }}
+                  disabled={!newToken.trim() || updateTokenMutation.isPending}
+                  className="bg-orange-600 hover:bg-orange-700 text-white"
+                >
+                  {updateTokenMutation.isPending ? "Validando..." : "Salvar Token"}
+                </Button>
+              </div>
+            </div>
           </DialogContent>
         </Dialog>
 

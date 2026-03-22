@@ -20996,6 +20996,46 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     }
   });
 
+  app.patch('/api/company/whatsapp/instances/:id/token', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      const instanceId = parseInt(req.params.id);
+      const { accessToken } = req.body;
+
+      if (!accessToken) {
+        return res.status(400).json({ message: "accessToken é obrigatório" });
+      }
+
+      const instance = await storage.getWhatsappInstance(instanceId) as any;
+      if (!instance || instance.companyId !== companyId) {
+        return res.status(404).json({ message: "Instância não encontrada" });
+      }
+
+      // Validar novo token com a Meta API
+      try {
+        const metaService = createMetaWhatsAppService({
+          phoneNumberId: instance.metaPhoneNumberId,
+          wabaId: instance.metaWabaId,
+          accessToken,
+        });
+        await metaService.listPhoneNumbers();
+      } catch (metaErr: any) {
+        return res.status(400).json({
+          message: "Token inválido. Verifique e tente novamente.",
+          details: metaErr.message,
+        });
+      }
+
+      await storage.updateWhatsappInstance(instanceId, { metaAccessToken: accessToken });
+      console.log(`✅ Token atualizado para instância ${instance.instanceName}`);
+
+      res.json({ message: "Token atualizado com sucesso" });
+    } catch (error: any) {
+      console.error("Error updating WhatsApp token:", error);
+      res.status(500).json({ message: "Erro ao atualizar token" });
+    }
+  });
+
   app.delete('/api/company/whatsapp/instances/:id', async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
