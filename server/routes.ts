@@ -7656,6 +7656,33 @@ if (ignoredNumbers !== undefined) {
 
         console.log('📞 [CHATWOOT INBOUND] Customer phone:', customerPhone);
 
+        // 1.5. Verificar se o número está na lista de ignorados (mesma lógica do handler WhatsApp)
+        if (company.ignoredNumbers) {
+          const ignoredNumbersList = company.ignoredNumbers
+            .split('\n')
+            .map((num: string) => num.trim().replace(/\D/g, ''))
+            .filter((num: string) => num.length >= 10);
+
+          const normalizedPhone = customerPhone.replace(/\D/g, '');
+          let phoneToCheck = normalizedPhone;
+          if (!phoneToCheck.startsWith('55') && phoneToCheck.length >= 10) {
+            phoneToCheck = '55' + phoneToCheck;
+          }
+
+          const isIgnored = ignoredNumbersList.some((ignoredNum: string) => {
+            let ignoredToCheck = ignoredNum;
+            if (!ignoredToCheck.startsWith('55') && ignoredToCheck.length >= 10) {
+              ignoredToCheck = '55' + ignoredToCheck;
+            }
+            return phoneToCheck === ignoredToCheck;
+          });
+
+          if (isIgnored) {
+            console.log('🚫 [CHATWOOT INBOUND] Número na lista de ignorados:', customerPhone);
+            return res.status(200).json({ received: true, ignored: true, reason: 'Number in ignored list' });
+          }
+        }
+
         // 2. Encontrar ou criar instância WhatsApp para esta empresa
         const instances = await storage.getWhatsappInstancesByCompany(company.id);
         const whatsappInstance = instances.find((i: any) => i.status === 'connected') || instances[0];
@@ -8611,6 +8638,114 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
             delivered: true,
             timestamp: new Date(),
           });
+
+          // ========================================
+          // 13.5. FOLLOW-UP TIMER POR INATIVIDADE (30 min)
+          // Mesma lógica do handler WhatsApp - envia mensagem contextual se cliente não responder
+          // ========================================
+          {
+            const followUpKeyCW = `cw:${company.id}:${customerPhone}`;
+
+            // Cancelar timer anterior se existir
+            if (conversationFollowUpTimers.has(followUpKeyCW)) {
+              const existingTimer = conversationFollowUpTimers.get(followUpKeyCW)!;
+              clearTimeout(existingTimer.timer);
+              conversationFollowUpTimers.delete(followUpKeyCW);
+            }
+
+            // Não agendar se follow-up já foi enviado para esta conversa
+            if (!conversationFollowUpSent.has(followUpKeyCW)) {
+              // Verificar se cliente tem agendamento futuro (não precisa de follow-up)
+              const hasUpcoming = await (async () => {
+                try {
+                  const cleanPhone = customerPhone.replace(/\D/g, '');
+                  const todayStr = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })).toISOString().split('T')[0];
+                  const [rows] = await pool.execute(
+                    `SELECT id FROM appointments a LEFT JOIN professionals p ON a.professional_id = p.id WHERE REPLACE(REPLACE(a.client_phone, '-', ''), ' ', '') LIKE ? AND a.appointment_date >= ? AND a.status IN ('Pendente','Confirmado','confirmado','agendado','Agendado') AND p.company_id = ? LIMIT 1`,
+                    [`%${cleanPhone}%`, todayStr, company.id]
+                  );
+                  return (rows as any[]).length > 0;
+                } catch { return false; }
+              })();
+
+              if (!hasUpcoming) {
+                const followUpConvId = conversation.id;
+                const followUpCompanyId = company.id;
+                const followUpApiKey = company.openaiApiKey;
+                const followUpModel = company.openaiModel || 'gpt-4o-mini';
+                const followUpCwBaseUrl = company.chatwootBaseUrl;
+                const followUpCwToken = company.chatwootApiToken;
+                const followUpCwAccountId = company.chatwootAccountId;
+                const followUpCwInboxId = company.chatwootInboxId;
+                const followUpCwConvId = chatwootConversationId;
+
+                const followUpTimer = setTimeout(async () => {
+                  try {
+                    conversationFollowUpSent.add(followUpKeyCW);
+
+                    // Verificar se conversa não foi assumida por humano
+                    const currentConv = await storage.getConversation(followUpCompanyId, instanceId, customerPhone);
+                    if (currentConv?.takeoverMode === 'human') {
+                      conversationFollowUpTimers.delete(followUpKeyCW);
+                      return;
+                    }
+
+                    // Gerar follow-up contextual via IA
+                    const recentMsgs = await storage.getRecentMessages(followUpConvId, 10);
+                    const lastMessages = recentMsgs.reverse()
+                      .filter((msg: any) => msg.role === 'user' || msg.role === 'assistant')
+                      .map((msg: any) => ({ role: msg.role as 'user' | 'assistant', content: msg.content }));
+
+                    const OpenAIFU = (await import('openai')).default;
+                    const fuClient = new OpenAIFU({ apiKey: followUpApiKey });
+                    const fuCompletion = await fuClient.chat.completions.create({
+                      model: followUpModel,
+                      messages: [
+                        { role: 'system', content: 'Você é um assistente de atendimento via WhatsApp. O cliente parou de responder há 30 minutos. Gere UMA mensagem curta e amigável (máximo 2 frases) pedindo para o cliente continuar. Use tom amigável e informal. Não use markdown. Não mencione o tempo que passou. NÃO use nomes. Comece de forma genérica (ex: "Oi!", "Olá!").' },
+                        ...lastMessages,
+                        { role: 'user', content: '[SISTEMA: Cliente não respondeu há 30 min. Gere follow-up contextual.]' }
+                      ],
+                      temperature: 0.7,
+                      max_tokens: 100,
+                    });
+
+                    const fuMessage = fuCompletion.choices[0]?.message?.content || 'Oi! Estou por aqui caso precise de algo. Posso te ajudar?';
+
+                    // Enviar via Chatwoot API
+                    cacheAIResponse(followUpConvId, fuMessage);
+                    const fuCwService = new ChatwootService({
+                      baseUrl: followUpCwBaseUrl,
+                      apiAccessToken: followUpCwToken,
+                      accountId: followUpCwAccountId,
+                      inboxId: followUpCwInboxId,
+                    });
+                    await fuCwService.sendMessage(followUpCwConvId, fuMessage, 'outgoing');
+                    await storage.createMessage({
+                      conversationId: followUpConvId,
+                      content: fuMessage,
+                      role: 'assistant',
+                      messageType: 'text',
+                      delivered: true,
+                      timestamp: new Date(),
+                    });
+                    console.log(`✅ [CHATWOOT] Follow-up enviado para ${customerPhone}`);
+                  } catch (err) {
+                    console.error('❌ [CHATWOOT] Erro no follow-up:', err);
+                  } finally {
+                    conversationFollowUpTimers.delete(followUpKeyCW);
+                  }
+                }, 30 * 60 * 1000); // 30 minutos
+
+                conversationFollowUpTimers.set(followUpKeyCW, {
+                  timer: followUpTimer,
+                  conversationId: followUpConvId,
+                  instanceName: `chatwoot-${company.id}`,
+                  companyId: followUpCompanyId,
+                  phoneNumber: customerPhone,
+                });
+              }
+            }
+          }
 
           // ========================================
           // 14. DETECÇÃO DE CONFIRMAÇÃO E CRIAÇÃO DE AGENDAMENTO
