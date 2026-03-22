@@ -11043,6 +11043,38 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
               }
 
               // ============================================
+              // Method 4: Meta Cloud API — download via Graph API using fileId (media ID)
+              // Quando o webhook vem direto da Meta Cloud API, o media ID está em message.fileId
+              // ============================================
+              if (!transcriptionText && !audioBase64) {
+                const metaFileId = uazRaw.fileId || message?.message?.audioMessage?.fileId;
+                if (metaFileId) {
+                  try {
+                    console.log('🔄 Method 4: Meta Graph API download using fileId:', metaFileId);
+                    const audioInstance = await storage.getWhatsappInstanceByNameOnly(instanceName);
+                    if (audioInstance?.metaAccessToken && audioInstance?.metaPhoneNumberId) {
+                      const metaService = createMetaWhatsAppService({
+                        phoneNumberId: audioInstance.metaPhoneNumberId,
+                        wabaId: audioInstance.metaWabaId || '',
+                        accessToken: audioInstance.metaAccessToken,
+                      });
+                      const mediaInfo = await metaService.getMediaUrl(metaFileId);
+                      console.log('📥 Method 4: Media URL obtained, mime:', mediaInfo.mime_type, 'size:', mediaInfo.file_size);
+                      const audioBuffer = await metaService.downloadMedia(mediaInfo.url);
+                      audioBase64 = audioBuffer.toString('base64');
+                      console.log('✅ Method 4 succeeded - Audio downloaded via Graph API, length:', audioBase64.length);
+                    } else {
+                      console.log('⚠️ Method 4 skipped - instance missing Meta credentials');
+                    }
+                  } catch (error) {
+                    console.log('⚠️ Method 4 error:', error);
+                  }
+                } else {
+                  console.log('⚠️ Method 4 skipped - no fileId available in message');
+                }
+              }
+
+              // ============================================
               // Transcribe with OpenAI Whisper if we have base64 but no transcription yet
               // ============================================
               if (!transcriptionText && audioBase64) {
