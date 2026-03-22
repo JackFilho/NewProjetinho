@@ -15891,6 +15891,71 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
+  // ⚠️ Retrocompatibilidade: /api/webhook/meta-whatsapp (URL configurada em instâncias legadas)
+  // Alias exato das rotas acima — mesmo comportamento
+  app.get('/api/webhook/meta-whatsapp', async (req: any, res) => {
+    const mode = req.query['hub.mode'] as string;
+    const token = req.query['hub.verify_token'] as string;
+    const challenge = req.query['hub.challenge'] as string;
+    try {
+      const globalSettings = await storage.getGlobalSettings();
+      const verifyToken = globalSettings?.metaWebhookVerifyToken || process.env.META_WEBHOOK_VERIFY_TOKEN || '';
+      if (mode === 'subscribe' && token === verifyToken && challenge) {
+        console.log('[meta-bridge] GET verification OK (/api/webhook/meta-whatsapp)');
+        return res.status(200).type('text/plain').send(challenge);
+      }
+    } catch (e) {
+      console.error('[meta-bridge] Verification error:', e);
+    }
+    return res.status(403).send('Forbidden');
+  });
+
+  app.post('/api/webhook/meta-whatsapp', async (req: any, res) => {
+    // Responder 200 imediatamente (Meta exige < 20s)
+    res.status(200).send('EVENT_RECEIVED');
+
+    try {
+      let phoneNumberId: string | null = null;
+      for (const entry of req.body?.entry || []) {
+        for (const change of entry?.changes || []) {
+          if (change?.value?.metadata?.phone_number_id) {
+            phoneNumberId = change.value.metadata.phone_number_id;
+            break;
+          }
+        }
+        if (phoneNumberId) break;
+      }
+
+      if (!phoneNumberId) {
+        console.warn('[meta-bridge] No phone_number_id in payload (/api/webhook/meta-whatsapp)');
+        return;
+      }
+
+      const instance = await storage.findInstanceByMetaPhoneNumberId(phoneNumberId);
+      if (!instance) {
+        console.warn('[meta-bridge] No instance found for phone_number_id:', phoneNumberId);
+        return;
+      }
+
+      console.log('[meta-bridge] /api/webhook/meta-whatsapp → routing to instance:', instance.instanceName);
+
+      req.params = { ...req.params, instanceName: instance.instanceName };
+
+      const noopRes: any = new Proxy({}, {
+        get: (_t, prop) => {
+          if (prop === 'headersSent') return true;
+          return (..._args: any[]) => noopRes;
+        },
+        set: () => true,
+      });
+
+      await whatsappWebhookHandler(req, noopRes);
+
+    } catch (err) {
+      console.error('[meta-bridge] Error processing webhook (/api/webhook/meta-whatsapp):', err);
+    }
+  });
+
   // GET endpoint for webhook verification (Meta hub.verify_token challenge)
   app.get('/api/webhook/whatsapp/:instanceName', async (req, res) => {
     const { instanceName } = req.params;
