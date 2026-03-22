@@ -244,8 +244,33 @@ export async function syncMessageToChatwoot(
 
     // Enviar mensagem (com áudio como attachment se disponível)
     if (audioBuffer) {
-      await cwService.sendMessageWithFile(cwConversationId, content, audioBuffer, `audio_${Date.now()}.ogg`, 'audio/ogg', messageType);
-      console.log(`✅ [CW-SYNC] Mensagem ${messageType} + áudio sincronizada → Chatwoot conv ${cwConversationId}`);
+      try {
+        const apiUrl = `${chatwootBase.replace(/\/+$/, '')}/api/v1/accounts/${Number(chatwootAccount)}/conversations/${cwConversationId}/messages`;
+        const formData = new FormData();
+        formData.append('content', content);
+        formData.append('message_type', messageType);
+        formData.append('private', 'false');
+        formData.append('attachments[]', new Blob([audioBuffer], { type: 'audio/ogg' }), `audio_${Date.now()}.ogg`);
+
+        const uploadResponse = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'api_access_token': chatwootToken },
+          body: formData,
+        });
+
+        if (uploadResponse.ok) {
+          console.log(`✅ [CW-SYNC] Mensagem ${messageType} + áudio sincronizada → Chatwoot conv ${cwConversationId}`);
+        } else {
+          const errData = await uploadResponse.text().catch(() => '');
+          console.warn(`⚠️ [CW-SYNC] Erro no upload de áudio (${uploadResponse.status}): ${errData.substring(0, 200)}`);
+          // Fallback: enviar só texto
+          await cwService.sendMessage(cwConversationId, content, messageType);
+          console.log(`✅ [CW-SYNC] Fallback: mensagem texto enviada → Chatwoot conv ${cwConversationId}`);
+        }
+      } catch (audioErr: any) {
+        console.warn(`⚠️ [CW-SYNC] Erro ao enviar áudio, fallback para texto: ${audioErr.message}`);
+        await cwService.sendMessage(cwConversationId, content, messageType);
+      }
     } else {
       await cwService.sendMessage(cwConversationId, content, messageType);
       console.log(`✅ [CW-SYNC] Mensagem ${messageType} sincronizada → Chatwoot conv ${cwConversationId}`);
