@@ -2899,8 +2899,29 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
 
     // Proceed if: asking for confirmation with summary, OR AI is confirming, OR has appointment data
     if (!((hasSummaryFormat && isAskingConfirmation) || isAIConfirmingAppointment || hasAppointmentData)) {
-      console.log('❌ Mensagem não contém dados de agendamento válidos. Não criando agendamento.');
-      return null;
+      // Fallback: buscar mensagem de resumo no histórico da conversa antes de desistir
+      console.log('⚠️ Texto passado não contém dados de agendamento, buscando no histórico...');
+      const fallbackMsgs = await storage.getMessagesByConversation(conversationId);
+      const fallbackSummary = fallbackMsgs
+        .filter((m: any) => m.role === 'assistant')
+        .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        .slice(0, 10)
+        .find((m: any) =>
+          !m.content.includes('Agendamento Confirmado!') &&
+          !m.content.includes('Agendamento realizado com sucesso') &&
+          !m.content.includes('Nos vemos no dia') &&
+          (m.content.includes('👤') || m.content.includes('Nome:')) &&
+          (m.content.includes('📅') || m.content.includes('Data:')) &&
+          (m.content.includes('🕐') || m.content.includes('Horário:'))
+        );
+
+      if (fallbackSummary) {
+        console.log('✅ Resumo encontrado no histórico! Usando para extração.');
+        aiResponse = fallbackSummary.content;
+      } else {
+        console.log('❌ Nenhum resumo encontrado. Não criando agendamento.');
+        return null;
+      }
     }
     console.log('✅ Resumo de agendamento encontrado, processando extração de dados');
 
@@ -8595,6 +8616,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
           // 14. DETECÇÃO DE CONFIRMAÇÃO E CRIAÇÃO DE AGENDAMENTO
           // (mesma lógica completa do fluxo WhatsApp)
           // ========================================
+          // Detecção de confirmação: regex + fallback com IA (mesma lógica do fluxo WhatsApp)
           const confirmationPatternsCW = [
             /^(sim|sin|sím|sii|s|ok|confirmo|confirmar|confirmado)[!.?]*$/i,
             /^(sim|sin|sím|ok)[!.?]?,?\s*(pode|por favor|obrigado|está correto|confirmo)?[!.?]*$/i,
@@ -8602,13 +8624,51 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
             /^(sim|sin)[!.?]?,?\s*(tudo correto|tudo certo|tudo)[!.?]*$/i,
             /^tudo\s*(ok|certo|correto)[!.?]*$/i
           ];
+          // Detecção ampla (inclui frases no meio do texto)
+          const broadConfirmationCW = /\b(sim|sin|sím|sii|ok|confirmo|confirma|confirmar|confirmado|combinado|pode ser|tudo certo|tudo correto|tá bom|ta bom|com certeza|claro|positivo|afirmativo)\b/i;
 
           const messageLinesCW = messageText.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
-          const isUserConfirmingCW = confirmationPatternsCW.some(pattern =>
+          let isUserConfirmingCW = confirmationPatternsCW.some(pattern =>
             pattern.test(messageText.toLowerCase().trim())
           ) || (messageLinesCW.length > 1 && messageLinesCW.some((line: string) =>
             confirmationPatternsCW.some(pattern => pattern.test(line.toLowerCase()))
           ));
+
+          // Fallback: detecção ampla + IA para classificação (mesmo padrão do fluxo WhatsApp)
+          if (!isUserConfirmingCW && broadConfirmationCW.test(messageText)) {
+            // Verificar se há mensagem de resumo pendente antes de usar IA
+            const lastBotMsgForConfirm = conversationHistory.filter((m: any) => m.role === 'assistant').slice(-1)[0]?.content || '';
+            const hasPendingSummary = (lastBotMsgForConfirm.includes('Está tudo correto') ||
+              lastBotMsgForConfirm.includes('Responda SIM') ||
+              lastBotMsgForConfirm.includes('confirmar seu agendamento') ||
+              lastBotMsgForConfirm.includes('Vou confirmar')) &&
+              (lastBotMsgForConfirm.includes('👤') || lastBotMsgForConfirm.includes('Nome:'));
+
+            if (hasPendingSummary) {
+              try {
+                const OpenAIConfirm = (await import('openai')).default;
+                const openaiConfirm = new OpenAIConfirm({ apiKey: company.openaiApiKey });
+                const confirmationCheck = await openaiConfirm.chat.completions.create({
+                  model: 'gpt-4o-mini',
+                  messages: [
+                    { role: 'system', content: 'Você é um classificador de intenção. Responda APENAS "SIM" ou "NAO". Nada mais.' },
+                    { role: 'user', content: `A seguinte mensagem de um cliente é uma confirmação/concordância com algo que foi proposto? Mensagem: "${messageText}"` }
+                  ],
+                  max_tokens: 5,
+                  temperature: 0,
+                });
+                const classificationCW = confirmationCheck?.choices?.[0]?.message?.content?.trim().toUpperCase() || '';
+                if (classificationCW === 'SIM') {
+                  isUserConfirmingCW = true;
+                  console.log('✅ [CHATWOOT INBOUND] Confirmação detectada via IA fallback');
+                }
+              } catch (aiClassErr) {
+                console.warn('⚠️ [CHATWOOT INBOUND] Erro na classificação de confirmação via IA:', aiClassErr);
+              }
+            }
+          }
+
+          console.log(`🔍 [CHATWOOT INBOUND] Confirmação detectada: ${isUserConfirmingCW} | Mensagem: "${messageText.substring(0, 50)}"`);
 
           if (isUserConfirmingCW) {
             const lastAssistantMsgCW = conversationHistory.filter((m: any) => m.role === 'assistant').slice(-1)[0]?.content || '';
@@ -8804,10 +8864,14 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 
                   // Função auxiliar para criar agendamento
                   async function createAppointmentCW() {
+                    // IMPORTANTE: usar o conteúdo da mensagem de RESUMO (com dados do agendamento),
+                    // não a resposta atual da IA ao "SIM" (que pode ser apenas "Confirmado!" sem dados)
+                    const textForExtraction = summaryMessageCW?.content || aiResponse;
+                    console.log('📋 [CHATWOOT INBOUND] Texto usado para extração de agendamento:', textForExtraction.substring(0, 200));
                     const appointmentIdCW = await createAppointmentFromAIConfirmation(
                       conversation.id,
                       company.id,
-                      aiResponse,
+                      textForExtraction,
                       customerPhone,
                       'agendado',
                       conversation.contactName || undefined
@@ -9221,63 +9285,66 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
       }
 
       // ===== Meta Cloud API (oficial) format detection =====
-      // Quando a Meta envia diretamente para este sistema (sem intermediário UAZAPI),
-      // o payload tem format: {object: "whatsapp_business_account", entry: [...]}
-      // Precisamos converter para o formato UAZAPI que o handler abaixo entende.
+      // Quando a Meta envia diretamente (formato padrão Cloud API):
+      // {object: "whatsapp_business_account", entry: [{changes: [{value: {messages: [...]}}]}]}
+      // Normalizamos o payload in-place para o formato interno que o handler abaixo espera.
       if (webhookData.object === 'whatsapp_business_account') {
         const parsedMsgs = MetaWhatsAppService.parseWebhookPayload(webhookData);
         if (parsedMsgs.length > 0) {
-          console.log(`📨 [Meta Cloud API] ${parsedMsgs.length} mensagem(ns) recebida(s)`);
-          for (const parsed of parsedMsgs) {
-            // Encontrar instância pelo phone_number_id que veio no payload
-            let resolvedInstanceName = instanceName;
-            if (parsed.phoneNumberId) {
-              const inst = await storage.findInstanceByMetaPhoneNumberId(parsed.phoneNumberId);
-              if (inst) resolvedInstanceName = inst.instanceName;
-            }
-            // Converter para formato UAZAPI
-            const converted = {
-              EventType: 'messages',
-              message: {
-                chatid: parsed.from,
-                sender: parsed.from,
-                sender_pn: parsed.from,
-                text: parsed.text || '',
-                fromMe: false,
-                senderName: parsed.contactName || parsed.from,
-                messageType: parsed.type,
-                type: parsed.type,
-                id: parsed.messageId,
-                messageid: parsed.messageId,
-                content: parsed.text ? { text: parsed.text } : {},
-              },
-              chat: {
-                wa_chatid: parsed.from,
-                phone: parsed.from,
-                name: parsed.contactName || parsed.from,
-              },
-            };
-            // Reprocessar via fetch interno para o handler abaixo
-            console.log(`🔄 [Meta Cloud API] Convertendo mensagem de ${parsed.from} para UAZAPI format e reprocessando via ${resolvedInstanceName}`);
-            try {
-              const baseUrl = req.protocol + '://' + req.get('host');
-              await fetch(`${baseUrl}/api/webhook/whatsapp/${encodeURIComponent(resolvedInstanceName)}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(converted),
-              });
-            } catch (innerErr: any) {
-              console.error('❌ [Meta Cloud API] Erro ao reprocessar mensagem:', innerErr.message);
+          const parsed = parsedMsgs[0]; // processar primeira mensagem
+          console.log(`📨 [Meta Cloud API] Mensagem recebida de ${parsed.from} (${parsed.contactName})`);
+
+          // Resolver instanceName real pelo phone_number_id
+          if (parsed.phoneNumberId) {
+            const inst = await storage.findInstanceByMetaPhoneNumberId(parsed.phoneNumberId);
+            if (inst) {
+              (req.params as any).instanceName = inst.instanceName;
+              console.log(`📋 [Meta Cloud API] Instância resolvida: ${inst.instanceName}`);
             }
           }
-          return res.status(200).json({ received: true, processed: true, type: 'meta_cloud_api', count: parsedMsgs.length });
-        }
 
-        // Pode ser só status (delivery) - já tratado abaixo via metaStatuses
-        console.log('📋 [Meta Cloud API] Payload sem mensagens (possível status event)');
+          // Normalizar payload in-place para formato interno
+          webhookData.EventType = 'messages';
+          webhookData.event = 'messages';
+          webhookData.message = {
+            chatid: parsed.from,
+            sender: parsed.from,
+            sender_pn: parsed.from,
+            from: parsed.from,
+            text: parsed.text || '',
+            fromMe: false,
+            senderName: parsed.contactName || parsed.from,
+            messageType: parsed.type,
+            type: parsed.type,
+            id: parsed.messageId,
+            messageid: parsed.messageId,
+            content: parsed.text ? { text: parsed.text } : {},
+          };
+          webhookData.chat = {
+            wa_chatid: parsed.from,
+            phone: parsed.from,
+            name: parsed.contactName || parsed.from,
+          };
+
+          // Manter media/audio se presente
+          if (parsed.media) {
+            webhookData.message.mediaType = parsed.type;
+            webhookData.message.mimetype = parsed.media.mimeType;
+            webhookData.message.fileId = parsed.media.id;
+            if (parsed.type === 'audio' || parsed.type === 'ptt') {
+              webhookData.message.messageType = 'audioMessage';
+            }
+          }
+
+          console.log(`✅ [Meta Cloud API] Payload normalizado, continuando processamento...`);
+          // Continuar para o handler normal abaixo (não retornar)
+        } else {
+          // Pode ser só status (delivery) - já tratado abaixo via metaStatuses
+          console.log('📋 [Meta Cloud API] Payload sem mensagens (possível status event)');
+        }
       }
 
-      // Meta API uses "EventType" (PascalCase), normalize to a single variable
+      // Normalizar eventType para variável única
       const eventType = webhookData.EventType || webhookData.event || '';
 
       console.log('🔔 WhatsApp webhook received');
@@ -18412,8 +18479,29 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
 
     // Proceed if: asking for confirmation with summary, OR AI is confirming, OR has appointment data
     if (!((hasSummaryFormat && isAskingConfirmation) || isAIConfirmingAppointment || hasAppointmentData)) {
-      console.log('❌ Mensagem não contém dados de agendamento válidos. Não criando agendamento.');
-      return null;
+      // Fallback: buscar mensagem de resumo no histórico da conversa antes de desistir
+      console.log('⚠️ Texto passado não contém dados de agendamento, buscando no histórico...');
+      const fallbackMsgs = await storage.getMessagesByConversation(conversationId);
+      const fallbackSummary = fallbackMsgs
+        .filter((m: any) => m.role === 'assistant')
+        .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        .slice(0, 10)
+        .find((m: any) =>
+          !m.content.includes('Agendamento Confirmado!') &&
+          !m.content.includes('Agendamento realizado com sucesso') &&
+          !m.content.includes('Nos vemos no dia') &&
+          (m.content.includes('👤') || m.content.includes('Nome:')) &&
+          (m.content.includes('📅') || m.content.includes('Data:')) &&
+          (m.content.includes('🕐') || m.content.includes('Horário:'))
+        );
+
+      if (fallbackSummary) {
+        console.log('✅ Resumo encontrado no histórico! Usando para extração.');
+        aiResponse = fallbackSummary.content;
+      } else {
+        console.log('❌ Nenhum resumo encontrado. Não criando agendamento.');
+        return null;
+      }
     }
     console.log('✅ Resumo de agendamento encontrado, processando extração de dados');
 
