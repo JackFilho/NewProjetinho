@@ -10578,6 +10578,21 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 console.log(`⏰ Time remaining: ${(effectiveTimeout - minutesSinceLastMessage).toFixed(2)} minutes`);
                 console.log('👤 Human is still in control of this conversation');
 
+                // Sincronizar mensagem do cliente com Chatwoot para o agente humano ver
+                syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText || '[Mídia enviada pelo cliente]', 'incoming', mediaBufferForChatwoot ? { buffer: mediaBufferForChatwoot, mimeType: mediaMimeForChatwoot, filename: mediaFilenameForChatwoot } : undefined);
+
+                // Salvar mensagem no histórico
+                if (messageText && conversation) {
+                  await storage.createMessage({
+                    conversationId: conversation.id,
+                    messageId: message.key?.id || message.id || `msg_${Date.now()}`,
+                    content: messageText,
+                    role: 'user',
+                    messageType: 'text',
+                    timestamp: new Date(),
+                  });
+                }
+
                 earlyWebhookLocks.delete(earlyLockKey);
                 return res.status(200).json({
                   received: true,
