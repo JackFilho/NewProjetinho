@@ -7003,7 +7003,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const chatwootInboxId = cwRow?.chatwoot_inbox_id;
 
       if (!chatwootBaseUrl || !chatwootApiToken || !chatwootAccountId) {
-        return res.status(400).json({ message: "Configure a URL, Token e Account ID do Chatwoot primeiro" });
+        return res.status(400).json({
+          message: "Configure a URL, Token e Account ID do Chatwoot primeiro",
+          debug: {
+            companyId,
+            hasUrl: !!chatwootBaseUrl,
+            hasToken: !!chatwootApiToken,
+            hasAccountId: !!chatwootAccountId,
+          }
+        });
       }
 
       const chatwootService = new ChatwootService({
