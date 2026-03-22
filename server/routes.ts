@@ -10579,7 +10579,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 console.log('👤 Human is still in control of this conversation');
 
                 // Sincronizar mensagem do cliente com Chatwoot para o agente humano ver
-                syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText || '[Mídia enviada pelo cliente]', 'incoming', mediaBufferForChatwoot ? { buffer: mediaBufferForChatwoot, mimeType: mediaMimeForChatwoot, filename: mediaFilenameForChatwoot } : undefined);
+                syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText || '[Mídia enviada pelo cliente]', 'incoming');
 
                 // Salvar mensagem no histórico
                 if (messageText && conversation) {
