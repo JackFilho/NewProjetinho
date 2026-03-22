@@ -126,6 +126,69 @@ async function metaSendTyping(instanceName: string, phoneNumber: string, duratio
   // Meta Cloud API não tem endpoint de typing indicator — no-op
 }
 
+// ===== Chatwoot Sync: sincronizar mensagens do handler WhatsApp para o Chatwoot =====
+// Quando Meta envia webhooks direto pro nosso sistema (sem intermediário),
+// sincronizamos as mensagens para o Chatwoot aparecer como painel de monitoramento.
+// Cache de conversationId do Chatwoot para evitar buscas repetidas
+const chatwootConversationCache = new Map<string, { cwConversationId: number; timestamp: number }>();
+
+async function syncMessageToChatwoot(
+  company: any,
+  customerPhone: string,
+  contactName: string,
+  content: string,
+  messageType: 'incoming' | 'outgoing'
+): Promise<void> {
+  try {
+    if (!company.chatwootEnabled || !company.chatwootBaseUrl || !company.chatwootApiToken || !company.chatwootAccountId) {
+      return; // Chatwoot não configurado, skip silencioso
+    }
+
+    const cwService = new ChatwootService({
+      baseUrl: company.chatwootBaseUrl,
+      apiAccessToken: company.chatwootApiToken,
+      accountId: company.chatwootAccountId,
+      inboxId: company.chatwootInboxId,
+    });
+
+    const cacheKey = `${company.id}:${customerPhone}`;
+    let cwConversationId: number | null = null;
+
+    // Verificar cache (válido por 30 min)
+    const cached = chatwootConversationCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 30 * 60 * 1000) {
+      cwConversationId = cached.cwConversationId;
+    }
+
+    if (!cwConversationId) {
+      // Encontrar ou criar contato e conversa no Chatwoot
+      const phoneFormatted = customerPhone.replace(/\D/g, '');
+      const contact = await cwService.findOrCreateContact(
+        contactName || phoneFormatted,
+        phoneFormatted
+      );
+
+      if (!contact?.id) {
+        console.warn('⚠️ [CW-SYNC] Não conseguiu criar/encontrar contato no Chatwoot');
+        return;
+      }
+
+      const cwConversation = await cwService.findOrCreateConversation(contact.id);
+      cwConversationId = cwConversation.id;
+
+      // Cachear
+      chatwootConversationCache.set(cacheKey, { cwConversationId, timestamp: Date.now() });
+    }
+
+    // Enviar mensagem
+    await cwService.sendMessage(cwConversationId, content, messageType);
+    console.log(`📤 [CW-SYNC] ${messageType} message synced to Chatwoot conv ${cwConversationId}`);
+  } catch (err: any) {
+    // Não falhar o fluxo principal por erro de sync
+    console.warn(`⚠️ [CW-SYNC] Erro ao sincronizar com Chatwoot: ${err.message}`);
+  }
+}
+
 // Rate limiters para proteção contra brute force
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
@@ -11357,6 +11420,9 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 timestamp: messageTimestamp,
               });
 
+              // Sincronizar mensagem do cliente com Chatwoot (monitoramento)
+              syncMessageToChatwoot(company, phoneNumber, pushName || phoneNumber, messageText, 'incoming');
+
               // ========================================
               // 📨 DEBOUNCE: Aguardar até que o cliente pare de enviar mensagens
               // Reseta o timer a cada nova mensagem (máximo 60s de espera total)
@@ -13890,12 +13956,9 @@ Por favor, escolha um dos horários disponíveis acima.`;
                 });
                 console.log('✅ AI response saved to conversation history');
 
-                // 🤖 Registrar resposta da AI no cache para detectar eco no Chatwoot
-                // Quando o Chatwoot sincroniza esta resposta, o webhook message_created
-                // a identifica incorretamente como "mensagem de agente humano" e ativa o human takeover.
-                // Este cache permite que o handler do Chatwoot reconheça e ignore esses ecos.
+                // Sincronizar resposta da IA com Chatwoot (monitoramento)
                 cacheAIResponse(conversation.id, aiResponse);
-                console.log('🤖 [AI-CACHE] Resposta registrada no cache para detecção de eco no Chatwoot');
+                syncMessageToChatwoot(company, phoneNumber, 'Bot', aiResponse, 'outgoing');
 
                 // ========================================
                 // ⏰ AGENDAR LEMBRETE DE CONFIRMAÇÃO (10 MINUTOS)
