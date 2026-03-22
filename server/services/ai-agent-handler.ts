@@ -19,6 +19,7 @@ import {
   getAvailableTimesForMultipleServices,
   getAvailabilityInfoSmart,
   checkSpecificDateAvailability,
+  createAppointmentFromAIConfirmation,
 } from '../routes';
 
 // ==================== TIPOS ====================
@@ -426,6 +427,33 @@ Quando o cliente mencionar "remarcar", "reagendar", etc:
 
       // Cache for Chatwoot echo detection
       cacheAIResponse(conversation.id, aiResponse);
+
+      // 14. Create appointment if AI confirmed one
+      const isAppointmentConfirmation =
+        aiResponse.includes('Agendamento realizado com sucesso') ||
+        (aiResponse.includes('Nos vemos') && /\d{1,2}:\d{2}/.test(aiResponse)) ||
+        (aiResponse.includes('confirmado') && /\d{1,2}:\d{2}/.test(aiResponse));
+
+      if (isAppointmentConfirmation) {
+        console.log('📅 [AI-AGENT] AI confirmed appointment — creating in DB...');
+        try {
+          const appointmentId = await createAppointmentFromAIConfirmation(
+            conversation.id,
+            company.id,
+            aiResponse,
+            phoneNumber,
+            'agendado',
+            conversation.contactName || undefined
+          );
+          if (appointmentId) {
+            console.log('✅ [AI-AGENT] Appointment created with ID:', appointmentId);
+          } else {
+            console.log('⚠️ [AI-AGENT] Appointment not created (conflict or missing data)');
+          }
+        } catch (apptErr) {
+          console.error('❌ [AI-AGENT] Error creating appointment:', apptErr);
+        }
+      }
     } else {
       console.error('❌ [AI-AGENT] Failed to send response:', sendResult.error);
     }

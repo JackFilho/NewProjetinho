@@ -2912,7 +2912,7 @@ function extractDataFromAppointmentBlock(blockText: string): any {
   return data;
 }
 
-async function createAppointmentFromAIConfirmation(conversationId: number, companyId: number, aiResponse: string, phoneNumber: string, initialStatus: string = 'agendado', contactName?: string): Promise<number | null> {
+export async function createAppointmentFromAIConfirmation(conversationId: number, companyId: number, aiResponse: string, phoneNumber: string, initialStatus: string = 'agendado', contactName?: string): Promise<number | null> {
   try {
     console.log('==================================================');
     console.log('🎯 INICIANDO CRIAÇÃO DE AGENDAMENTO VIA CONFIRMAÇÃO');
