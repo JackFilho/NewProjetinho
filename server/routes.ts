@@ -6991,16 +6991,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
-      const company = await storage.getCompanyById(companyId);
-      if (!company?.chatwootBaseUrl || !company?.chatwootApiToken || !company?.chatwootAccountId) {
+      // Busca direta no banco — getCompanyById não inclui campos Chatwoot no SELECT
+      const [cwRows] = await pool.execute(
+        `SELECT chatwoot_base_url, chatwoot_api_token, chatwoot_account_id, chatwoot_inbox_id FROM companies WHERE id = ? LIMIT 1`,
+        [companyId]
+      );
+      const cwRow = (cwRows as any[])[0];
+      const chatwootBaseUrl = cwRow?.chatwoot_base_url;
+      const chatwootApiToken = cwRow?.chatwoot_api_token;
+      const chatwootAccountId = cwRow?.chatwoot_account_id;
+      const chatwootInboxId = cwRow?.chatwoot_inbox_id;
+
+      if (!chatwootBaseUrl || !chatwootApiToken || !chatwootAccountId) {
         return res.status(400).json({ message: "Configure a URL, Token e Account ID do Chatwoot primeiro" });
       }
 
       const chatwootService = new ChatwootService({
-        baseUrl: company.chatwootBaseUrl,
-        apiAccessToken: company.chatwootApiToken,
-        accountId: company.chatwootAccountId,
-        inboxId: company.chatwootInboxId || undefined,
+        baseUrl: chatwootBaseUrl,
+        apiAccessToken: chatwootApiToken,
+        accountId: Number(chatwootAccountId),
+        inboxId: chatwootInboxId ? Number(chatwootInboxId) : undefined,
       });
 
       // Test connection by listing inboxes
@@ -7019,7 +7029,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/company/chatwoot-config/test-push', isCompanyAuthenticated, async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
-      const company = await storage.getCompanyById(companyId);
+
+      // Busca direta no banco — getCompanyById não inclui campos Chatwoot no SELECT
+      const [cwPushRows] = await pool.execute(
+        `SELECT chatwoot_base_url, chatwoot_api_token, chatwoot_account_id, chatwoot_inbox_id FROM companies WHERE id = ? LIMIT 1`,
+        [companyId]
+      );
+      const cwPushRow = (cwPushRows as any[])[0];
+      const company = cwPushRow ? {
+        id: companyId,
+        chatwootBaseUrl: cwPushRow.chatwoot_base_url,
+        chatwootApiToken: cwPushRow.chatwoot_api_token,
+        chatwootAccountId: cwPushRow.chatwoot_account_id ? Number(cwPushRow.chatwoot_account_id) : null,
+        chatwootInboxId: cwPushRow.chatwoot_inbox_id ? Number(cwPushRow.chatwoot_inbox_id) : null,
+      } : null;
 
       if (!company?.chatwootBaseUrl || !company?.chatwootApiToken || !company?.chatwootAccountId) {
         return res.status(400).json({ message: "Configure a URL, Token e Account ID do Chatwoot primeiro" });
