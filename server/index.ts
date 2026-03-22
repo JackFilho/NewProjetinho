@@ -4,8 +4,6 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { ensureConversationTables, ensureProfessionalPasswordColumn, storage } from "./storage";
-import { createMetaWebhookRouter } from "./services/meta-webhook-handler";
-import { handleAIAgentResponse } from "./services/ai-agent-handler";
 import { ensureReviewTables } from "./create-reviews-tables";
 import { startCampaignScheduler } from "./campaign-scheduler";
 import { ensureSmtpColumns } from "./ensure-smtp-columns";
@@ -27,7 +25,7 @@ app.use(express.json({
   limit: '50mb',
   verify: (req: any, _res, buf) => {
     // Preserve raw body for webhook signature validation (X-Hub-Signature-256)
-    if (req.url?.includes('/webhooks/meta/') || req.url?.includes('/api/webhook/meta')) {
+    if (req.url?.includes('/webhooks/meta/') || req.url?.includes('/api/webhook/meta') || req.url?.includes('/api/webhook/whatsapp/')) {
       req.rawBody = buf.toString('utf8');
     }
   },
@@ -42,48 +40,9 @@ app.get('/webhooks/meta/health', (_req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// === Meta webhook router (BEFORE session — webhooks don't need sessions) ===
-try {
-  const metaWebhookRouter = createMetaWebhookRouter({
-    getGlobalSettings: () => storage.getGlobalSettings(),
-    findInstanceByMetaPhoneNumberId: (phoneNumberId: string) => storage.findInstanceByMetaPhoneNumberId(phoneNumberId),
-    getCompany: (companyId: number) => storage.getCompany(companyId),
-    findOrCreateConversation: async (companyId, instanceId, phone, contactName, providerType) => {
-      let conv = await storage.getConversation(companyId, instanceId, phone);
-      if (!conv) {
-        conv = await storage.createConversation({
-          companyId,
-          whatsappInstanceId: instanceId,
-          phoneNumber: phone,
-          contactName,
-          providerType,
-          status: 'active',
-        });
-      }
-      return conv;
-    },
-    saveMessage: async (conversationId, role, content, messageId, messageType) => {
-      return storage.createMessage({
-        conversationId,
-        role,
-        content,
-        providerMessageId: messageId,
-        messageType,
-      });
-    },
-    onMessageReceived: async ({ message, company, instance, conversation }) => {
-      try {
-        await handleAIAgentResponse({ message, company, instance, conversation });
-      } catch (err) {
-        console.error('[meta-webhook] AI agent handler error:', err);
-      }
-    },
-  });
-  app.use(metaWebhookRouter);
-  console.log('[meta-webhook] Router registered successfully on /webhooks/meta/whatsapp');
-} catch (err) {
-  console.error('[meta-webhook] FAILED to register router:', err);
-}
+// As rotas /webhooks/meta/whatsapp (GET verification + POST bridge) estão registradas
+// diretamente em registerRoutes (routes.ts) junto com o handler completo.
+// Não é mais necessário o meta-webhook-handler.ts nem o ai-agent-handler.ts.
 
 app.use((req, res, next) => {
   const start = Date.now();

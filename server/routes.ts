@@ -132,7 +132,7 @@ async function metaSendTyping(instanceName: string, phoneNumber: string, duratio
 // Cache de conversationId do Chatwoot para evitar buscas repetidas
 const chatwootConversationCache = new Map<string, { cwConversationId: number; timestamp: number }>();
 
-async function syncMessageToChatwoot(
+export async function syncMessageToChatwoot(
   company: any,
   customerPhone: string,
   contactName: string,
@@ -9466,7 +9466,8 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
   });
 
   // Webhook endpoint for WhatsApp integration with AI agent
-  app.post('/api/webhook/whatsapp/:instanceName', async (req: any, res) => {
+  // Handler extraído para função nomeada, permitindo reutilização em múltiplas rotas
+  const whatsappWebhookHandler = async (req: any, res: any) => {
     try {
       const { instanceName } = req.params;
       const webhookData = req.body;
@@ -15807,6 +15808,86 @@ Obrigado pela preferência! 🙏`;
       }
 
       res.status(500).json({ error: 'Internal server error' });
+    }
+  };
+
+  // Registrar rota original (UAZAPI / chamadas diretas com instanceName na URL)
+  app.post('/api/webhook/whatsapp/:instanceName', whatsappWebhookHandler);
+
+  // ========================================
+  // 🌉 BRIDGE: /webhooks/meta/whatsapp → reutiliza o handler completo acima
+  // Recebe webhooks direto da Meta Cloud API, resolve o instanceName pelo phone_number_id
+  // e chama o mesmo handler com todos os recursos (debounce, timers, pagamentos, etc.)
+  // ========================================
+
+  // GET verification para o painel Meta
+  app.get('/webhooks/meta/whatsapp', async (req: any, res) => {
+    const mode = req.query['hub.mode'] as string;
+    const token = req.query['hub.verify_token'] as string;
+    const challenge = req.query['hub.challenge'] as string;
+    try {
+      let verifyToken = '';
+      const globalSettings = await storage.getGlobalSettings();
+      verifyToken = globalSettings?.metaWebhookVerifyToken || process.env.META_WEBHOOK_VERIFY_TOKEN || '';
+      if (mode === 'subscribe' && token === verifyToken && challenge) {
+        console.log('[meta-bridge] GET verification OK');
+        return res.status(200).type('text/plain').send(challenge);
+      }
+    } catch (e) {
+      console.error('[meta-bridge] Verification error:', e);
+    }
+    return res.status(403).send('Forbidden');
+  });
+
+  // POST: recebe evento Meta, resolve instanceName e delega ao handler completo
+  app.post('/webhooks/meta/whatsapp', async (req: any, res) => {
+    // 1. Responder 200 IMEDIATAMENTE (Meta exige resposta em até 20s)
+    res.status(200).send('EVENT_RECEIVED');
+
+    try {
+      // 2. Extrair phone_number_id do payload para identificar a instância
+      let phoneNumberId: string | null = null;
+      for (const entry of req.body?.entry || []) {
+        for (const change of entry?.changes || []) {
+          if (change?.value?.metadata?.phone_number_id) {
+            phoneNumberId = change.value.metadata.phone_number_id;
+            break;
+          }
+        }
+        if (phoneNumberId) break;
+      }
+
+      if (!phoneNumberId) {
+        console.warn('[meta-bridge] No phone_number_id in payload');
+        return;
+      }
+
+      // 3. Resolver instanceName a partir do phone_number_id
+      const instance = await storage.findInstanceByMetaPhoneNumberId(phoneNumberId);
+      if (!instance) {
+        console.warn('[meta-bridge] No instance found for phone_number_id:', phoneNumberId);
+        return;
+      }
+
+      console.log('[meta-bridge] Routing to instance:', instance.instanceName);
+
+      // 4. Injetar instanceName no req.params e chamar o handler completo
+      req.params = { ...req.params, instanceName: instance.instanceName };
+
+      // 5. Criar res no-op (já respondemos 200 acima — evita "headers already sent")
+      const noopRes: any = new Proxy({}, {
+        get: (_t, prop) => {
+          if (prop === 'headersSent') return true;
+          return (..._args: any[]) => noopRes;
+        },
+        set: () => true,
+      });
+
+      // 6. Delegar ao handler completo (com debounce, timers, Chatwoot, pagamentos, etc.)
+      await whatsappWebhookHandler(req, noopRes);
+
+    } catch (err) {
+      console.error('[meta-bridge] Error processing webhook:', err);
     }
   });
 
