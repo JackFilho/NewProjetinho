@@ -194,6 +194,7 @@ export function handleInstagramEvents(deps: InstagramWebhookDeps) {
     res.status(200).send('EVENT_RECEIVED');
 
     const body = req.body;
+    console.log('[ig-webhook] payload received:', JSON.stringify(body).substring(0, 500));
 
     // Validar objeto
     if (body?.object !== 'instagram') {

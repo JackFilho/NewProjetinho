@@ -326,7 +326,26 @@ export class MetaInstagramService {
     if (body.object !== 'instagram') return parsedMessages;
 
     for (const entry of body.entry || []) {
-      for (const event of entry.messaging || []) {
+      // Instagram pode enviar 'messaging' ou 'changes' dependendo do tipo de evento
+      const events = entry.messaging || [];
+
+      // Se não tem messaging, tentar extrair de changes (format usado pela Instagram API com Business Login)
+      if (events.length === 0 && entry.changes) {
+        for (const change of entry.changes) {
+          if (change.field === 'messages' && change.value) {
+            const val = change.value;
+            if (val.sender && val.recipient) {
+              events.push(val);
+            }
+          }
+        }
+      }
+
+      for (const event of events) {
+        if (!event.sender?.id || !event.recipient?.id) {
+          console.warn('[instagram] skipping event without sender/recipient:', JSON.stringify(event).substring(0, 200));
+          continue;
+        }
         const parsed: any = {
           senderId: event.sender.id,
           recipientId: event.recipient.id,
