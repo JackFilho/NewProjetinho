@@ -9553,8 +9553,28 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 
       // ────────────────────────────────────────────────
       // OUTBOUND: Enviar mensagem do agente para WhatsApp ou Instagram
+      // Suporta: texto, áudio, imagens, vídeos, documentos e stickers
       // ────────────────────────────────────────────────
-      if (agentContent) {
+
+      // Detectar attachments de mídia no payload do Chatwoot
+      const outboundAttachments = payload.attachments
+        || payload.content_attributes?.attachments
+        || payload.message?.attachments
+        || [];
+      const hasOutboundAttachments = Array.isArray(outboundAttachments) && outboundAttachments.length > 0;
+
+      if (hasOutboundAttachments) {
+        console.log('📎 [CHATWOOT OUTBOUND] Attachments detectados:', outboundAttachments.length);
+        outboundAttachments.forEach((att: any, idx: number) => {
+          console.log(`📎 [CHATWOOT OUTBOUND] Attachment[${idx}]:`, JSON.stringify({
+            file_type: att.file_type,
+            content_type: att.content_type,
+            data_url: att.data_url?.substring(0, 100),
+          }));
+        });
+      }
+
+      if (agentContent || hasOutboundAttachments) {
         const isInstagramConversation = matchingConversation.providerType === 'instagram' ||
           matchingConversation.phoneNumber.startsWith('ig:');
 
@@ -9577,7 +9597,7 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
 
               const result = await igService.sendText({
                 recipientId,
-                text: agentContent,
+                text: agentContent || '[Mídia]',
               });
 
               console.log('[CHATWOOT OUTBOUND] Message sent to Instagram | recipient:', recipientId, '| msg ID:', result?.message_id || 'unknown');
@@ -9606,13 +9626,87 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                 accessToken: instance.metaAccessToken,
               });
 
-              const result = await metaService.sendText({
-                to: recipientPhone,
-                text: agentContent,
-              });
+              // 1. Enviar texto (se houver)
+              if (agentContent) {
+                const result = await metaService.sendText({
+                  to: recipientPhone,
+                  text: agentContent,
+                });
+                console.log('[CHATWOOT OUTBOUND] Text sent to WhatsApp via Meta API');
+                console.log('[CHATWOOT OUTBOUND] Recipient:', recipientPhone, '| Meta msg ID:', result?.messages?.[0]?.id || 'unknown');
+              }
 
-              console.log('[CHATWOOT OUTBOUND] Message sent to WhatsApp via Meta API');
-              console.log('[CHATWOOT OUTBOUND] Recipient:', recipientPhone, '| Meta msg ID:', result?.messages?.[0]?.id || 'unknown');
+              // 2. Enviar attachments (áudio, imagem, vídeo, documento)
+              if (hasOutboundAttachments) {
+                for (const attachment of outboundAttachments) {
+                  try {
+                    const fileUrl = attachment.data_url || attachment.external_url || attachment.file_url || attachment.thumb_url;
+                    if (!fileUrl) {
+                      console.warn('📎 [CHATWOOT OUTBOUND] Attachment sem URL, ignorando');
+                      continue;
+                    }
+
+                    // Determinar tipo de mídia pelo file_type ou content_type do Chatwoot
+                    const cwFileType = attachment.file_type || '';
+                    const cwContentType = attachment.content_type || attachment.file?.content_type || '';
+                    let metaMediaType: 'audio' | 'image' | 'video' | 'document' | 'sticker' = 'document';
+
+                    if (cwFileType === 'audio' || cwContentType.startsWith('audio/')) {
+                      metaMediaType = 'audio';
+                    } else if (cwFileType === 'image' || cwContentType.startsWith('image/')) {
+                      // Sticker = imagem webp
+                      if (cwContentType === 'image/webp') {
+                        metaMediaType = 'sticker';
+                      } else {
+                        metaMediaType = 'image';
+                      }
+                    } else if (cwFileType === 'video' || cwContentType.startsWith('video/')) {
+                      metaMediaType = 'video';
+                    } else {
+                      metaMediaType = 'document';
+                    }
+
+                    console.log(`📎 [CHATWOOT OUTBOUND] Enviando ${metaMediaType} para WhatsApp: ${fileUrl.substring(0, 100)}`);
+
+                    // Baixar o arquivo do Chatwoot
+                    const mediaResponse = await fetch(fileUrl);
+                    if (!mediaResponse.ok) {
+                      console.error(`📎 [CHATWOOT OUTBOUND] Erro ao baixar mídia do Chatwoot: ${mediaResponse.status}`);
+                      continue;
+                    }
+                    const mediaArrayBuffer = await mediaResponse.arrayBuffer();
+                    const mediaBuffer = Buffer.from(mediaArrayBuffer);
+
+                    // Determinar extensão e mime type
+                    const mimeType = cwContentType || mediaResponse.headers.get('content-type') || 'application/octet-stream';
+                    const extMap: Record<string, string> = {
+                      'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'mp4', 'audio/amr': 'amr',
+                      'audio/aac': 'aac', 'audio/opus': 'ogg',
+                      'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+                      'video/mp4': 'mp4', 'video/3gpp': '3gp',
+                      'application/pdf': 'pdf',
+                    };
+                    const ext = extMap[mimeType] || 'bin';
+                    const filename = attachment.file_name || `${metaMediaType}_${Date.now()}.${ext}`;
+
+                    // Upload para Meta e enviar
+                    const uploadResult = await metaService.uploadMedia(mediaBuffer, mimeType, filename);
+                    console.log(`📎 [CHATWOOT OUTBOUND] Mídia uploaded para Meta, ID: ${uploadResult.id}`);
+
+                    const sendResult = await metaService.sendMedia({
+                      to: recipientPhone,
+                      type: metaMediaType,
+                      mediaId: uploadResult.id,
+                      caption: metaMediaType !== 'audio' && metaMediaType !== 'sticker' ? (attachment.caption || undefined) : undefined,
+                      filename: metaMediaType === 'document' ? filename : undefined,
+                    });
+
+                    console.log(`📎 [CHATWOOT OUTBOUND] ${metaMediaType} enviado via Meta API | msg ID: ${sendResult?.messages?.[0]?.id || 'unknown'}`);
+                  } catch (attErr: any) {
+                    console.error(`📎 [CHATWOOT OUTBOUND] Erro ao enviar attachment:`, attErr.message);
+                  }
+                }
+              }
             }
           } catch (outboundErr: any) {
             console.error('[CHATWOOT OUTBOUND] Failed to send message to WhatsApp:', outboundErr.message);
