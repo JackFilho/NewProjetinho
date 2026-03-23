@@ -36,6 +36,7 @@ import { createWhatsAppProvider } from './services/whatsapp-provider.js';
 // Import Meta webhook handlers
 import { createMetaWebhookRouter } from './services/meta-webhook-handler.js';
 import { createInstagramWebhookRouter } from './services/meta-instagram-webhook-handler.js';
+import { handleInstagramAIMessage } from './services/instagram-ai-handler.js';
 
 // Import bcrypt for password hashing
 import bcrypt from 'bcrypt';
@@ -120,6 +121,13 @@ const instagramWebhookRouter = createInstagramWebhookRouter({
       providerMessageId: messageId,
       messageType,
     });
+  },
+  onMessageReceived: async ({ message, company, instance, conversation }) => {
+    try {
+      await handleInstagramAIMessage({ message, company, instance, conversation });
+    } catch (err) {
+      console.error('[ig-webhook] AI handler error:', err);
+    }
   },
 });
 app.use(instagramWebhookRouter);

@@ -122,7 +122,7 @@ async function metaSendMedia(instanceName: string, phoneNumber: string, mediaTyp
   }
 }
 
-async function metaSendTyping(instanceName: string, phoneNumber: string, durationMs: number = 2000, messageId?: string): Promise<void> {
+export async function metaSendTyping(instanceName: string, phoneNumber: string, durationMs: number = 2000, messageId?: string): Promise<void> {
   try {
     if (!messageId) {
       console.log('⌨️ [TYPING] Skipped — no messageId available');
@@ -827,7 +827,7 @@ async function generateWebhookUrl(req: any, instanceName: string): Promise<strin
  * - AI_ERROR: Erro na chamada da IA (OpenAI)
  * - UNKNOWN: Erro desconhecido
  */
-async function sendAppointmentErrorWebhook(
+export async function sendAppointmentErrorWebhook(
   companyId: number,
   errorType: string,
   errorMessage: string,
@@ -1024,7 +1024,7 @@ export async function listClientAppointmentsNumbered(clientPhone: string, compan
 }
 
 // Helper function to cancel an appointment
-async function cancelAppointmentById(appointmentId: number, companyId: number): Promise<{ success: boolean; message: string }> {
+export async function cancelAppointmentById(appointmentId: number, companyId: number): Promise<{ success: boolean; message: string }> {
   try {
     const appointment = await storage.getAppointment(appointmentId);
 
@@ -2179,7 +2179,7 @@ export async function checkSpecificTimeAvailability(
  * Se a IA sugerir uma data indisponível, corrige automaticamente usando checkSpecificTimeAvailability.
  * Isso garante robustez mesmo quando a IA ignora as instruções do prompt.
  */
-async function validateAvailabilityInResponse(
+export async function validateAvailabilityInResponse(
   aiResponse: string,
   companyId: number,
   activeProfessionals: any[]
