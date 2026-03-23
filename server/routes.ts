@@ -22842,7 +22842,12 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
   app.post('/api/company/instagram/instances', async (req: any, res) => {
     try {
       const companyId = req.session.companyId;
-      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+      console.log('[instagram] POST /api/company/instagram/instances | companyId=%s | body=%s', companyId, JSON.stringify(req.body, null, 2));
+
+      if (!companyId) {
+        console.error('[instagram] Não autenticado - sem companyId na sessão');
+        return res.status(401).json({ message: "Não autenticado" });
+      }
 
       const {
         instanceName,
@@ -22855,6 +22860,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       } = req.body;
 
       if (!instanceName || !igBusinessAccountId || !pageAccessToken) {
+        console.error('[instagram] Campos obrigatórios faltando | instanceName=%s igBusinessAccountId=%s hasToken=%s', instanceName, igBusinessAccountId, !!pageAccessToken);
         return res.status(400).json({ message: "Campos obrigatórios: instanceName, igBusinessAccountId, pageAccessToken" });
       }
 
@@ -22862,24 +22868,21 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
       let igUsername: string | undefined;
       let igProfilePictureUrl: string | undefined;
       try {
-        const { createMetaInstagramService } = await import('./services/meta-instagram.js');
-        const igService = createMetaInstagramService({
-          igBusinessAccountId,
-          facebookPageId,
-          pageAccessToken,
-        });
-        // Buscar informações do perfil IG via Graph API
+        console.log('[instagram] Buscando perfil IG via Graph API para igBusinessAccountId=%s', igBusinessAccountId);
         const profileResponse = await fetch(
           `https://graph.facebook.com/v21.0/${igBusinessAccountId}?fields=username,profile_picture_url&access_token=${pageAccessToken}`
         );
+        const profileData = await profileResponse.json() as any;
+        console.log('[instagram] Graph API response status=%d data=%s', profileResponse.status, JSON.stringify(profileData));
         if (profileResponse.ok) {
-          const profileData = await profileResponse.json() as any;
           igUsername = profileData.username;
           igProfilePictureUrl = profileData.profile_picture_url;
         }
       } catch (profileErr) {
         console.warn('[instagram] Could not fetch IG profile:', profileErr);
       }
+
+      console.log('[instagram] Criando instância no banco... instanceName=%s igUsername=%s', instanceName, igUsername || req.body.igUsername);
 
       const instance = await storage.createInstagramInstance({
         companyId,
@@ -22895,7 +22898,10 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         igProfilePictureUrl: igProfilePictureUrl || null,
       });
 
+      console.log('[instagram] Instância criada com sucesso | id=%d', instance.id);
+
       // Atualizar empresa com Instagram habilitado
+      console.log('[instagram] Atualizando empresa companyId=%d com Instagram habilitado...', companyId);
       await storage.updateCompany(companyId, {
         instagramEnabled: 1,
         instagramPageId: facebookPageId || null,
@@ -22903,10 +22909,11 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         instagramBusinessAccountId: igBusinessAccountId,
       });
 
-      console.log(`[instagram] Instance created: ${instanceName} for company ${companyId}`);
+      console.log(`[instagram] ✅ Instance created: ${instanceName} for company ${companyId}`);
       res.json(instance);
     } catch (error: any) {
-      console.error("Error creating Instagram instance:", error);
+      console.error("[instagram] ❌ ERRO ao criar instância:", error);
+      console.error("[instagram] Stack:", error.stack);
       res.status(500).json({ message: "Erro ao criar instância do Instagram", details: error.message });
     }
   });

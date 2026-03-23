@@ -1429,8 +1429,9 @@ export default function CompanySettings() {
           const data = await res.json();
           toast({ title: "Erro", description: data.message || "Erro ao criar instância", variant: "destructive" });
         }
-      } catch (err) {
-        toast({ title: "Erro", description: "Erro ao conectar Instagram", variant: "destructive" });
+      } catch (err: any) {
+        console.error('[instagram-form] Erro:', err);
+        toast({ title: "Erro", description: err?.message || "Erro ao conectar Instagram", variant: "destructive" });
       } finally {
         setIsCreating(false);
       }
