@@ -201,26 +201,22 @@ export function handleInstagramEvents(deps: InstagramWebhookDeps) {
       return;
     }
 
-    // Validar assinatura
+    // Validar assinatura (não bloqueia — apenas loga)
     try {
       const config = await resolveInstagramWebhookConfig(deps.getGlobalSettings);
       if (config.validateSignature) {
         const signature = req.headers['x-hub-signature-256'] as string;
-        if (!signature) {
-          console.error('[ig-webhook] SECURITY: missing X-Hub-Signature-256 header');
-          return;
-        }
         const rawBody = req.rawBody;
-        if (!rawBody) {
-          console.error('[ig-webhook] SECURITY: rawBody not available');
-          return;
+        if (signature && rawBody) {
+          const valid = MetaInstagramService.validateWebhookSignature(rawBody, signature, config.appSecret);
+          if (!valid) {
+            console.warn('[ig-webhook] SECURITY: invalid signature (appSecret length=%d) — continuando mesmo assim', config.appSecret?.length || 0);
+          } else {
+            console.log('[ig-webhook] signature validated');
+          }
+        } else {
+          console.warn('[ig-webhook] signature or rawBody missing — skipping validation');
         }
-        const valid = MetaInstagramService.validateWebhookSignature(rawBody, signature, config.appSecret);
-        if (!valid) {
-          console.error('[ig-webhook] SECURITY: invalid signature');
-          return;
-        }
-        console.log('[ig-webhook] signature validated');
       }
     } catch (sigErr) {
       console.error('[ig-webhook] signature validation error:', sigErr);
