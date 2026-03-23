@@ -1392,6 +1392,190 @@ export default function CompanySettings() {
     );
   }
 
+  // ========== INSTAGRAM SUB-COMPONENTS ==========
+
+  function InstagramConnectionForm() {
+    const [igInstanceName, setIgInstanceName] = useState('');
+    const [igBusinessAccountId, setIgBusinessAccountId] = useState('');
+    const [igFacebookPageId, setIgFacebookPageId] = useState('');
+    const [igPageAccessToken, setIgPageAccessToken] = useState('');
+    const [igUsername, setIgUsername] = useState('');
+    const [isCreating, setIsCreating] = useState(false);
+
+    const handleCreateInstance = async () => {
+      if (!igInstanceName || !igBusinessAccountId || !igPageAccessToken) {
+        toast({ title: "Erro", description: "Preencha os campos obrigatórios: Nome, ID da Conta e Token de Acesso.", variant: "destructive" });
+        return;
+      }
+      setIsCreating(true);
+      try {
+        const res = await apiRequest('POST', '/api/company/instagram/instances', {
+          instanceName: igInstanceName,
+          igBusinessAccountId,
+          facebookPageId: igFacebookPageId || undefined,
+          pageAccessToken: igPageAccessToken,
+          igUsername: igUsername || undefined,
+          status: 'connected',
+        });
+        if (res.ok) {
+          toast({ title: "Sucesso", description: "Instância do Instagram conectada com sucesso!" });
+          queryClient.invalidateQueries({ queryKey: ['/api/company/instagram/instances'] });
+          setIgInstanceName('');
+          setIgBusinessAccountId('');
+          setIgFacebookPageId('');
+          setIgPageAccessToken('');
+          setIgUsername('');
+        } else {
+          const data = await res.json();
+          toast({ title: "Erro", description: data.message || "Erro ao criar instância", variant: "destructive" });
+        }
+      } catch (err) {
+        toast({ title: "Erro", description: "Erro ao conectar Instagram", variant: "destructive" });
+      } finally {
+        setIsCreating(false);
+      }
+    };
+
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Nome da Instância *</Label>
+            <Input placeholder="Ex: Instagram Principal" value={igInstanceName} onChange={(e) => setIgInstanceName(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>Username do Instagram</Label>
+            <Input placeholder="Ex: @inhousecompanyofc" value={igUsername} onChange={(e) => setIgUsername(e.target.value)} />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label>ID da Conta Business do Instagram *</Label>
+          <Input placeholder="Ex: 17841459280321034" value={igBusinessAccountId} onChange={(e) => setIgBusinessAccountId(e.target.value)} />
+          <p className="text-xs text-muted-foreground">Encontre este ID na Etapa 2 do painel de API do Instagram no Meta Developer Portal.</p>
+        </div>
+        <div className="space-y-2">
+          <Label>Facebook Page ID</Label>
+          <Input placeholder="ID da página do Facebook vinculada" value={igFacebookPageId} onChange={(e) => setIgFacebookPageId(e.target.value)} />
+          <p className="text-xs text-muted-foreground">Opcional — ID da página do Facebook conectada à conta do Instagram.</p>
+        </div>
+        <div className="space-y-2">
+          <Label>Token de Acesso da Página *</Label>
+          <Input type="password" placeholder="Token gerado na Etapa 2 do Meta Developer Portal" value={igPageAccessToken} onChange={(e) => setIgPageAccessToken(e.target.value)} />
+          <p className="text-xs text-muted-foreground">Gere o token na Etapa 2 ("Gerar token") do painel do Instagram no Meta Developer Portal.</p>
+        </div>
+        <Button onClick={handleCreateInstance} disabled={isCreating} className="flex items-center gap-2">
+          {isCreating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+          {isCreating ? 'Conectando...' : 'Conectar Instagram'}
+        </Button>
+      </div>
+    );
+  }
+
+  function ChatwootInstagramInboxForm() {
+    const [inboxId, setInboxId] = useState<string>(String(company?.chatwootInstagramInboxId || ''));
+    const [isSaving, setIsSaving] = useState(false);
+
+    const handleSave = async () => {
+      setIsSaving(true);
+      try {
+        const res = await apiRequest('PATCH', '/api/company/profile', {
+          chatwootInstagramInboxId: inboxId ? parseInt(inboxId) : null,
+        });
+        if (res.ok) {
+          toast({ title: "Sucesso", description: "Inbox ID do Instagram no Chatwoot salvo!" });
+          queryClient.invalidateQueries({ queryKey: ['/api/company/profile'] });
+        } else {
+          toast({ title: "Erro", description: "Erro ao salvar Inbox ID", variant: "destructive" });
+        }
+      } catch (err) {
+        toast({ title: "Erro", description: "Erro ao salvar configuração", variant: "destructive" });
+      } finally {
+        setIsSaving(false);
+      }
+    };
+
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label>Inbox ID do Instagram no Chatwoot</Label>
+          <Input type="number" placeholder="Ex: 5" value={inboxId} onChange={(e) => setInboxId(e.target.value)} />
+          <p className="text-xs text-muted-foreground">
+            No Chatwoot, vá em Configurações → Caixas de entrada → crie uma inbox do tipo "API" para o Instagram → copie o ID.
+          </p>
+        </div>
+        <Button onClick={handleSave} disabled={isSaving} className="flex items-center gap-2">
+          {isSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+          {isSaving ? 'Salvando...' : 'Salvar Inbox ID'}
+        </Button>
+      </div>
+    );
+  }
+
+  function InstagramInstancesList() {
+    const { data: instances, isLoading } = useQuery<any[]>({
+      queryKey: ['/api/company/instagram/instances'],
+      queryFn: async () => {
+        const res = await apiRequest('GET', '/api/company/instagram/instances');
+        if (!res.ok) throw new Error('Erro ao carregar instâncias');
+        return res.json();
+      },
+    });
+
+    const handleDelete = async (id: number) => {
+      if (!confirm('Tem certeza que deseja remover esta instância do Instagram?')) return;
+      try {
+        const res = await apiRequest('DELETE', `/api/company/instagram/instances/${id}`);
+        if (res.ok) {
+          toast({ title: "Removida", description: "Instância do Instagram removida." });
+          queryClient.invalidateQueries({ queryKey: ['/api/company/instagram/instances'] });
+        } else {
+          toast({ title: "Erro", description: "Erro ao remover instância", variant: "destructive" });
+        }
+      } catch (err) {
+        toast({ title: "Erro", description: "Erro ao remover", variant: "destructive" });
+      }
+    };
+
+    if (isLoading) return <p className="text-muted-foreground">Carregando instâncias...</p>;
+    if (!instances || instances.length === 0) {
+      return (
+        <div className="text-center py-8 text-muted-foreground">
+          <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-50" />
+          <p>Nenhuma instância do Instagram configurada.</p>
+          <p className="text-sm">Use o formulário acima para conectar sua conta.</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        {instances.map((inst: any) => (
+          <div key={inst.id} className="flex items-center justify-between p-4 border rounded-lg">
+            <div className="flex items-center gap-3">
+              <MessageSquare className="w-8 h-8 text-purple-500" />
+              <div>
+                <p className="font-medium">{inst.instanceName}</p>
+                <p className="text-sm text-muted-foreground">
+                  {inst.igUsername ? `@${inst.igUsername}` : `ID: ${inst.igBusinessAccountId}`}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Badge variant={inst.status === 'connected' ? 'default' : 'secondary'}>
+                {inst.status === 'connected' ? 'Conectado' : inst.status || 'Desconectado'}
+              </Badge>
+              <Button variant="destructive" size="sm" onClick={() => handleDelete(inst.id)}>
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // ========== FIM INSTAGRAM SUB-COMPONENTS ==========
+
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex items-center gap-2 mb-6 ml-16 sm:ml-0">
@@ -1400,7 +1584,7 @@ export default function CompanySettings() {
       </div>
 
         <Tabs defaultValue="profile" className="w-full">
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid w-full grid-cols-7">
             <TabsTrigger value="profile" className="flex items-center gap-2">
               <Building2 className="w-4 h-4" />
               Empresa
@@ -1408,6 +1592,10 @@ export default function CompanySettings() {
             <TabsTrigger value="whatsapp" className="flex items-center gap-2">
               <Smartphone className="w-4 h-4" />
               WhatsApp
+            </TabsTrigger>
+            <TabsTrigger value="instagram" className="flex items-center gap-2">
+              <MessageSquare className="w-4 h-4" />
+              Instagram
             </TabsTrigger>
             <TabsTrigger value="company-settings" className="flex items-center gap-2">
               <Settings className="w-4 h-4" />
@@ -3851,6 +4039,55 @@ export default function CompanySettings() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* ========== ABA INSTAGRAM ========== */}
+        <TabsContent value="instagram" className="space-y-6">
+          {/* Formulário para conectar Instagram */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5" />
+                Conectar Instagram
+              </CardTitle>
+              <CardDescription>
+                Conecte sua conta do Instagram Business para receber e responder DMs automaticamente via IA.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <InstagramConnectionForm />
+            </CardContent>
+          </Card>
+
+          {/* Chatwoot Instagram Inbox ID */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5" />
+                Chatwoot - Inbox do Instagram
+              </CardTitle>
+              <CardDescription>
+                Configure o Inbox ID do Instagram no Chatwoot para visualizar as mensagens recebidas.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ChatwootInstagramInboxForm />
+            </CardContent>
+          </Card>
+
+          {/* Instâncias configuradas */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CheckCircle className="w-5 h-5" />
+                Instâncias Instagram Configuradas
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <InstagramInstancesList />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         </Tabs>
 
         {/* QR Code / Pairing Code Dialog */}
