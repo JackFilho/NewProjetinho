@@ -66,6 +66,68 @@ type BirthdayMessageData = z.infer<typeof birthdayMessageSchema>;
 type CompanySettingsData = z.infer<typeof companySettingsSchema>;
 type AsaasConfigData = z.infer<typeof asaasConfigSchema>;
 
+// Componente de instância Instagram (fora do CompanySettings para preservar state)
+function IgInstanceCard({ inst, onDelete }: { inst: any; onDelete: (id: number) => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [appSecret, setAppSecret] = useState(inst.metaAppSecret || '');
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSaveAppSecret = async () => {
+    setIsSaving(true);
+    try {
+      await apiRequest(`/api/company/instagram/instances/${inst.id}`, 'PUT', {
+        metaAppSecret: appSecret,
+      });
+      toast({ title: "Sucesso", description: "App Secret salvo com sucesso!" });
+      queryClient.invalidateQueries({ queryKey: ['/api/company/instagram/instances'] });
+    } catch (err: any) {
+      toast({ title: "Erro", description: err?.message || "Erro ao salvar App Secret", variant: "destructive" });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="p-4 border rounded-lg space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <MessageSquare className="w-8 h-8 text-purple-500" />
+          <div>
+            <p className="font-medium">{inst.instanceName}</p>
+            <p className="text-sm text-muted-foreground">
+              {inst.igUsername ? `@${inst.igUsername}` : `ID: ${inst.igBusinessAccountId}`}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <Badge variant={inst.status === 'connected' ? 'default' : 'secondary'}>
+            {inst.status === 'connected' ? 'Conectado' : inst.status || 'Desconectado'}
+          </Badge>
+          <Button variant="destructive" size="sm" onClick={() => onDelete(inst.id)}>
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        </div>
+      </div>
+      <div className="flex items-end gap-2">
+        <div className="flex-1 space-y-1">
+          <Label className="text-xs">App Secret do Instagram</Label>
+          <Input
+            type="password"
+            placeholder="Chave secreta do app (Meta Developer Portal)"
+            value={appSecret}
+            onChange={(e) => setAppSecret(e.target.value)}
+          />
+        </div>
+        <Button size="sm" onClick={handleSaveAppSecret} disabled={isSaving} className="flex items-center gap-1">
+          {isSaving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Key className="w-3 h-3" />}
+          Salvar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function CompanySettings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -4026,25 +4088,7 @@ export default function CompanySettings() {
               ) : (
                 <div className="space-y-4">
                   {igInstances.map((inst: any) => (
-                    <div key={inst.id} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center gap-3">
-                        <MessageSquare className="w-8 h-8 text-purple-500" />
-                        <div>
-                          <p className="font-medium">{inst.instanceName}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {inst.igUsername ? `@${inst.igUsername}` : `ID: ${inst.igBusinessAccountId}`}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Badge variant={inst.status === 'connected' ? 'default' : 'secondary'}>
-                          {inst.status === 'connected' ? 'Conectado' : inst.status || 'Desconectado'}
-                        </Badge>
-                        <Button variant="destructive" size="sm" onClick={() => handleDeleteIgInstance(inst.id)}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
+                    <IgInstanceCard key={inst.id} inst={inst} onDelete={handleDeleteIgInstance} />
                   ))}
                 </div>
               )}
