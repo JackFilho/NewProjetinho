@@ -22839,6 +22839,27 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
     }
   });
 
+  // Salvar Chatwoot Instagram Inbox ID
+  app.put('/api/company/instagram/chatwoot-inbox', async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) return res.status(401).json({ message: "Não autenticado" });
+
+      const { chatwootInstagramInboxId } = req.body;
+      console.log('[instagram] Salvando chatwootInstagramInboxId=%s para company=%d', chatwootInstagramInboxId, companyId);
+
+      await storage.updateCompany(companyId, {
+        chatwootInstagramInboxId: chatwootInstagramInboxId ? Number(chatwootInstagramInboxId) : null,
+      });
+
+      console.log('[instagram] ✅ chatwootInstagramInboxId salvo com sucesso');
+      res.json({ success: true, chatwootInstagramInboxId });
+    } catch (error: any) {
+      console.error('[instagram] Erro ao salvar chatwootInstagramInboxId:', error);
+      res.status(500).json({ message: "Erro ao salvar configuração", details: error.message });
+    }
+  });
+
   app.post('/api/company/instagram/instances', async (req: any, res) => {
     try {
       const companyId = req.session.companyId;

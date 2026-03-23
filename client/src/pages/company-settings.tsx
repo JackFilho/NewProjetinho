@@ -1442,11 +1442,11 @@ export default function CompanySettings() {
   const handleSaveIgChatwootInbox = async () => {
     setIsSavingIgInbox(true);
     try {
-      await apiRequest('/api/company/profile', 'PATCH', {
+      await apiRequest('/api/company/instagram/chatwoot-inbox', 'PUT', {
         chatwootInstagramInboxId: igChatwootInboxId ? parseInt(igChatwootInboxId) : null,
       });
       toast({ title: "Sucesso", description: "Inbox ID do Instagram no Chatwoot salvo!" });
-      queryClient.invalidateQueries({ queryKey: ['/api/company/profile'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/company/instagram/instances'] });
     } catch (err) {
       toast({ title: "Erro", description: "Erro ao salvar configuração", variant: "destructive" });
     } finally {
