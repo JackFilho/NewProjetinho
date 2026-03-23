@@ -22854,8 +22854,8 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         webhookVerifyToken,
       } = req.body;
 
-      if (!instanceName || !igBusinessAccountId || !facebookPageId || !pageAccessToken) {
-        return res.status(400).json({ message: "Campos obrigatórios: instanceName, igBusinessAccountId, facebookPageId, pageAccessToken" });
+      if (!instanceName || !igBusinessAccountId || !pageAccessToken) {
+        return res.status(400).json({ message: "Campos obrigatórios: instanceName, igBusinessAccountId, pageAccessToken" });
       }
 
       // Buscar username e foto de perfil do Instagram
@@ -22886,19 +22886,19 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         instanceName,
         status: 'connected',
         igBusinessAccountId,
-        facebookPageId,
+        facebookPageId: facebookPageId || null,
         pageAccessToken,
         metaAppId: metaAppId || null,
         metaAppSecret: metaAppSecret || null,
         webhookVerifyToken: webhookVerifyToken || null,
-        igUsername: igUsername || null,
+        igUsername: igUsername || req.body.igUsername || null,
         igProfilePictureUrl: igProfilePictureUrl || null,
       });
 
       // Atualizar empresa com Instagram habilitado
       await storage.updateCompany(companyId, {
         instagramEnabled: 1,
-        instagramPageId: facebookPageId,
+        instagramPageId: facebookPageId || null,
         instagramAccessToken: pageAccessToken,
         instagramBusinessAccountId: igBusinessAccountId,
       });
