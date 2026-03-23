@@ -14,6 +14,7 @@ import { ensureSystemUrlColumn } from "./ensure-system-url-column";
 import { ensureAddressColumns } from "./ensure-address-columns";
 import { ensureAdminAlertsTables } from "./ensure-admin-alerts-tables";
 import { ensureSupportTables } from "./ensure-support-tables";
+import { createInstagramWebhookRouter } from "./services/meta-instagram-webhook-handler";
 import { db } from "./db";
 import path from "path";
 
@@ -43,6 +44,46 @@ app.get('/webhooks/meta/health', (_req, res) => {
 // As rotas /webhooks/meta/whatsapp (GET verification + POST bridge) estão registradas
 // diretamente em registerRoutes (routes.ts) junto com o handler completo.
 // Não é mais necessário o meta-webhook-handler.ts nem o ai-agent-handler.ts.
+
+// === Instagram webhook router (BEFORE session — webhooks don't need sessions) ===
+// O onMessageReceived chama a função processInstagramAIMessage exposta em routes.ts
+const instagramWebhookRouter = createInstagramWebhookRouter({
+  getGlobalSettings: () => storage.getGlobalSettings(),
+  findInstagramInstanceByIgAccountId: (igAccountId: string) => storage.findInstagramInstanceByIgAccountId(igAccountId),
+  getCompany: (companyId: number) => storage.getCompany(companyId),
+  findOrCreateConversation: async (companyId, instanceId, senderId, contactName, providerType) => {
+    let conv = await storage.getConversation(companyId, instanceId, senderId);
+    if (!conv) {
+      conv = await storage.createConversation({
+        companyId,
+        whatsappInstanceId: instanceId,
+        phoneNumber: senderId,
+        contactName,
+        providerType,
+      });
+    }
+    return conv;
+  },
+  saveMessage: async (conversationId, role, content, messageId, messageType) => {
+    return storage.createMessage({
+      conversationId,
+      role,
+      content,
+      messageId,
+      messageType,
+    });
+  },
+  onMessageReceived: async (params) => {
+    // Chama a função de IA do Instagram registrada em routes.ts
+    const handler = (app as any).handleInstagramAIMessage;
+    if (handler) {
+      await handler(params);
+    } else {
+      console.warn('[ig-webhook] handleInstagramAIMessage not yet registered (routes not loaded?)');
+    }
+  },
+});
+app.use(instagramWebhookRouter);
 
 app.use((req, res, next) => {
   const start = Date.now();

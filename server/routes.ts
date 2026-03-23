@@ -16336,6 +16336,570 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
+  // ========================================
+  // 📸 INSTAGRAM DM - AI AGENT (mesmo fluxo do WhatsApp)
+  // Recebe eventos do webhook Instagram (já registrado em server.ts via
+  // createInstagramWebhookRouter), e processa com o agente de IA.
+  // A callback onMessageReceived do router chama esta função.
+  // ========================================
+
+  // Instagram AI - debounce e locks (análogo ao WhatsApp)
+  const igMessageBuffers = new Map<string, { messages: string[]; timer: ReturnType<typeof setTimeout> }>();
+  const igProcessingLocks = new Map<string, boolean>();
+  const IG_DEBOUNCE_MS = 5000;
+
+  /**
+   * Processa mensagem do Instagram DM via IA (chamado pelo onMessageReceived do webhook)
+   * Replica o fluxo do WhatsApp: system prompt, OpenAI, comandos especiais,
+   * criação de agendamento, cancelamento, etc.
+   */
+  async function processInstagramAIMessage(params: {
+    message: any;
+    company: any;
+    instance: any;
+    conversation: any;
+  }): Promise<void> {
+    const { message, company, instance, conversation } = params;
+    const senderId = message.senderId;
+    const contactName = message.contactName || message.username || senderId;
+    const igPhoneIdentifier = `ig:${senderId}`;
+    const lockKey = `ig:${company.id}:${instance.id}:${senderId}`;
+
+    // Ignorar ecos, reactions, postbacks
+    if (message.isEcho || message.type === 'reaction' || message.type === 'postback') return;
+    if (!company.openaiApiKey) {
+      console.log('[ig-ai] Company does not have OpenAI API key configured');
+      return;
+    }
+
+    let messageText = message.text || '';
+    if (!messageText && message.media) messageText = `[${message.media.type}]`;
+    if (!messageText) return;
+
+    // ===== Debounce: agrupar mensagens rápidas (mesmo do WhatsApp) =====
+    await new Promise<void>((resolve) => {
+      const existing = igMessageBuffers.get(`${company.id}:${senderId}`);
+      if (existing) {
+        existing.messages.push(messageText);
+        clearTimeout(existing.timer);
+        existing.timer = setTimeout(() => {
+          igMessageBuffers.delete(`${company.id}:${senderId}`);
+          const grouped = existing.messages.join('\n');
+          doProcessInstagramAI({ ...params, messageText: grouped, igPhoneIdentifier, contactName, senderId, lockKey }).then(resolve).catch((err) => {
+            console.error('[ig-ai] Error:', err);
+            resolve();
+          });
+        }, IG_DEBOUNCE_MS);
+      } else {
+        const buffer = {
+          messages: [messageText],
+          timer: setTimeout(() => {
+            igMessageBuffers.delete(`${company.id}:${senderId}`);
+            doProcessInstagramAI({ ...params, messageText: buffer.messages.join('\n'), igPhoneIdentifier, contactName, senderId, lockKey }).then(resolve).catch((err) => {
+              console.error('[ig-ai] Error:', err);
+              resolve();
+            });
+          }, IG_DEBOUNCE_MS),
+        };
+        igMessageBuffers.set(`${company.id}:${senderId}`, buffer);
+      }
+    });
+  }
+
+  /**
+   * Core da IA do Instagram (pós-debounce) — MESMO FLUXO do WhatsApp
+   */
+  async function doProcessInstagramAI(params: {
+    company: any;
+    instance: any;
+    conversation: any;
+    messageText: string;
+    igPhoneIdentifier: string;
+    contactName: string;
+    senderId: string;
+    lockKey: string;
+  }): Promise<void> {
+    const { company, instance, conversation, messageText, igPhoneIdentifier, contactName, senderId, lockKey } = params;
+
+    if (igProcessingLocks.has(lockKey)) {
+      console.log('[ig-ai] Already processing, skipping');
+      return;
+    }
+    igProcessingLocks.set(lockKey, true);
+
+    try {
+      // Criar serviço Instagram para enviar respostas
+      const { createMetaInstagramService } = await import('./services/meta-instagram.js');
+      const igService = createMetaInstagramService({
+        igBusinessAccountId: instance.igBusinessAccountId,
+        facebookPageId: instance.facebookPageId,
+        pageAccessToken: instance.pageAccessToken,
+      });
+
+      // Helper para enviar resposta via Instagram
+      const igSendText = async (text: string) => {
+        await igService.sendTyping(senderId);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        await igService.sendText({ recipientId: senderId, text });
+      };
+
+      // ===== Human takeover check =====
+      if (conversation.takeoverMode === 'human') {
+        const timeoutMs = (company.agentInactivityTimeout || 30) * 60 * 1000;
+        const lastMsgTime = conversation.lastMessageAt ? new Date(conversation.lastMessageAt).getTime() : 0;
+        if (Date.now() - lastMsgTime < timeoutMs) {
+          console.log('[ig-ai] Conversation in human takeover mode, skipping');
+          return;
+        }
+        await storage.updateConversation(conversation.id, { takeoverMode: 'agent' });
+      }
+
+      // ===== Histórico da conversa =====
+      const allMessages = await storage.getMessagesByConversation(conversation.id);
+      const conversationHistory = allMessages
+        .filter((msg: any) => (msg.role === 'user' || msg.role === 'assistant'))
+        .filter((msg: any) => {
+          if (msg.role === 'assistant') {
+            if (msg.content.includes('Agendamento Confirmado!') || msg.content.includes('Obrigado por escolher nossos serviços')) return false;
+          }
+          return true;
+        })
+        .map((msg: any) => ({
+          role: msg.role as 'user' | 'assistant',
+          content: msg.content,
+        }));
+
+      // ===== Detecção de confirmação =====
+      const confirmationPatterns = [
+        /^(sim|sin|sím|sii|s|ok|confirmo|confirmar|confirmado)[!.?]*$/i,
+        /^(sim|sin|sím|ok)[!.?]?,?\s*(pode|por favor|obrigado|está correto|confirmo)?[!.?]*$/i,
+        /^(está correto|tudo certo|tudo correto|pode confirmar|confirmo sim)[!.?]*$/i,
+        /^tudo\s*(ok|certo|correto)[!.?]*$/i
+      ];
+      const isUserConfirming = confirmationPatterns.some(p => p.test(messageText.toLowerCase().trim()));
+
+      // ===== Interceptação de cancelamento/reagendamento =====
+      const lowerMsg = messageText.toLowerCase().trim();
+      const cancelKeywords = ['cancelar', 'desmarcar', 'não vou poder ir', 'preciso cancelar', 'não vou conseguir ir', 'não vou mais', 'quero desmarcar', 'preciso desmarcar'];
+      const rescheduleKeywords = ['remarcar', 'reagendar', 'alterar horário', 'alterar horario', 'mudar data', 'trocar horário', 'trocar horario', 'mudar horário', 'mudar horario', 'adiar'];
+      const hasCancelKeyword = cancelKeywords.some(kw => lowerMsg.includes(kw));
+      const hasRescheduleKeyword = rescheduleKeywords.some(kw => lowerMsg.includes(kw));
+
+      const lastBotMsg = conversationHistory.filter((m: any) => m.role === 'assistant').slice(-1)[0]?.content || '';
+      const isAlreadyInCancelConfirmation = lastBotMsg.includes('Confirma o cancelamento?') || lastBotMsg.includes('CANCELAR para confirmar');
+      const isCancelAsConfirmation = isAlreadyInCancelConfirmation && /^(cancelar|cancela|cancelamento)$/i.test(lowerMsg);
+
+      // Interceptar cancelamento
+      if (hasCancelKeyword && !hasRescheduleKeyword && !isCancelAsConfirmation) {
+        console.log('[ig-ai] Cancel keyword detected');
+        const list = await listClientAppointmentsNumbered(igPhoneIdentifier, company.id, 'cancelar');
+        await igSendText(list);
+        await storage.createMessage({ conversationId: conversation.id, role: 'assistant', content: list, messageType: 'text', delivered: 1 as any, timestamp: new Date() });
+        cacheAIResponse(conversation.id, list);
+        return;
+      }
+      if (hasRescheduleKeyword) {
+        console.log('[ig-ai] Reschedule keyword detected');
+        const list = await listClientAppointmentsNumbered(igPhoneIdentifier, company.id, 'cancelar');
+        const resp = `Para reagendar, é necessário cancelar o agendamento atual e fazer um novo.\n\n${list}`;
+        await igSendText(resp);
+        await storage.createMessage({ conversationId: conversation.id, role: 'assistant', content: resp, messageType: 'text', delivered: 1 as any, timestamp: new Date() });
+        cacheAIResponse(conversation.id, resp);
+        return;
+      }
+
+      // Verificar contextos especiais
+      const isCancelContext = lastBotMsg.includes('Confirma o cancelamento?') || lastBotMsg.includes('CANCELAR para confirmar') || lastBotMsg.includes('Qual agendamento você deseja cancelar');
+      const isConfirmingCancel = (isUserConfirming || /^(cancelar|cancela|cancelamento)$/i.test(lowerMsg)) && isCancelContext;
+      const isRescheduleContext = lastBotMsg.includes('Para reagendar') || lastBotMsg.includes('necessário cancelar o agendamento atual');
+      const isConfirmationReminderContext = (lastBotMsg.includes('Está tudo correto') && lastBotMsg.includes('confirmar')) ||
+        (lastBotMsg.includes('Responda') && lastBotMsg.includes('SIM') && lastBotMsg.includes('confirmar') && !lastBotMsg.includes('cancelar'));
+      const isPostConfirmationContext = lastBotMsg.includes('Agendamento realizado com sucesso') || lastBotMsg.includes('agendamento foi confirmado') || lastBotMsg.includes('Nos vemos no dia');
+
+      // Interceptar reagendamento com SIM
+      if (isRescheduleContext && isUserConfirming && !isConfirmationReminderContext) {
+        const list = await listClientAppointmentsNumbered(igPhoneIdentifier, company.id, 'cancelar');
+        const resp = `Para reagendar, primeiro vamos cancelar o agendamento atual.\n\n${list}`;
+        await igSendText(resp);
+        await storage.createMessage({ conversationId: conversation.id, role: 'assistant', content: resp, messageType: 'text', delivered: 1 as any, timestamp: new Date() });
+        cacheAIResponse(conversation.id, resp);
+        return;
+      }
+
+      // ===== Profissionais e serviços =====
+      const professionals = await storage.getProfessionalsByCompany(company.id);
+      const activeProfessionals = professionals.filter((p: any) => p.active && !p.archived);
+      const availableProfessionals = activeProfessionals.map((p: any) => `- ${p.name}`).join('\n');
+      const shouldAutoSelect = (company.autoSelectProfessional === 1) && (activeProfessionals.length === 1);
+
+      const services = await storage.getServicesByCompany(company.id);
+      let selectedProfessional: any = null;
+      if (shouldAutoSelect) {
+        selectedProfessional = activeProfessionals[0];
+      } else {
+        for (const prof of activeProfessionals) {
+          if (messageText.toLowerCase().includes(prof.name.toLowerCase())) { selectedProfessional = prof; break; }
+        }
+      }
+
+      let filteredServices = services.filter((s: any) => s.isActive !== false);
+      if (selectedProfessional) {
+        filteredServices = filteredServices.filter((s: any) => !s.professionalId || s.professionalId === selectedProfessional.id);
+      }
+
+      const formatDuration = (minutes: number) => {
+        const h = Math.floor(minutes / 60), m = minutes % 60;
+        return (h > 0 ? `${h}h` : '') + (m > 0 ? `${m}min` : '') || '0min';
+      };
+      const availableServices = filteredServices.map((s: any) => `- ${s.name} (${formatDuration(s.duration || 60)})`).join('\n');
+      const availableServicesWithPrices = filteredServices.map((s: any) => `- ${s.name} (${formatDuration(s.duration || 60)})${s.price ? ` - R$ ${s.price}` : ''}`).join('\n');
+
+      // ===== Disponibilidade =====
+      const existingAppointments = await storage.getAppointmentsByCompany(company.id);
+      const availabilityInfo = await getAvailabilityInfoSmart(messageText, conversationHistory, professionals, existingAppointments, company.id, false, filteredServices);
+      const specificDateInfo = await checkSpecificDateAvailability(messageText, conversationHistory, professionals, existingAppointments);
+
+      // ===== System Prompt (MESMO do WhatsApp, adaptado para Instagram DM) =====
+      const OpenAI = (await import('openai')).default;
+      const openai = new OpenAI({ apiKey: company.openaiApiKey });
+      const today = getBrazilDate();
+      const getNextWeekdayDateForAI = (dayName: string) => {
+        const dayMap: { [k: string]: number } = { 'domingo': 0, 'segunda': 1, 'terça': 2, 'quarta': 3, 'quinta': 4, 'sexta': 5, 'sábado': 6 };
+        const target = dayMap[dayName.toLowerCase()];
+        if (target === undefined) return '';
+        const date = new Date();
+        let diff = target - date.getDay();
+        if (diff <= 0) diff += 7;
+        date.setDate(date.getDate() + diff);
+        return date.toLocaleDateString('pt-BR');
+      };
+
+      const systemPrompt = `${company.aiAgentPrompt}
+
+Importante: Você está representando a empresa "${company.fantasyName}" via Instagram DM.
+
+⚠️ REGRAS DE FORMATAÇÃO DE MENSAGENS:
+- Envie APENAS texto simples, SEM formatação markdown
+- NÃO use *negrito*, _itálico_ ou ~tachado~
+- Envie URLs completas e diretas quando necessário
+- Use emojis quando apropriado para deixar a conversa mais amigável
+
+INFORMAÇÕES DA EMPRESA:
+- Nome: ${company.fantasyName}
+- Endereço: ${[company.address, company.number ? `nº ${company.number}` : null, company.neighborhood, company.city && company.state ? `${company.city}/${company.state}` : company.city || company.state].filter(Boolean).join(', ') || 'Não informado'}${company.googleMapsLocation ? `\n- Localização Google Maps: ${company.googleMapsLocation}` : ''}
+- Telefone: ${company.phone || 'Não informado'}
+- CEP: ${company.zipCode || 'Não informado'}${company.coursesDescription ? `\n\n🎓 INFORMAÇÕES SOBRE CURSOS:\n${company.coursesDescription}` : ''}
+
+HOJE É: ${today.toLocaleDateString('pt-BR')} (${['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'][today.getDay()]})
+HORÁRIO ATUAL: ${today.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+
+IMPORTANTE: NÃO aceite agendamentos para horários que já passaram!
+
+PRÓXIMOS DIAS DA SEMANA:
+- Domingo: ${getNextWeekdayDateForAI('domingo')}
+- Segunda-feira: ${getNextWeekdayDateForAI('segunda')}
+- Terça-feira: ${getNextWeekdayDateForAI('terça')}
+- Quarta-feira: ${getNextWeekdayDateForAI('quarta')}
+- Quinta-feira: ${getNextWeekdayDateForAI('quinta')}
+- Sexta-feira: ${getNextWeekdayDateForAI('sexta')}
+- Sábado: ${getNextWeekdayDateForAI('sábado')}
+
+PROFISSIONAIS DISPONÍVEIS PARA AGENDAMENTO:
+${availableProfessionals || 'Nenhum profissional cadastrado no momento'}
+
+SERVIÇOS DISPONÍVEIS:
+${availableServices || 'Nenhum serviço cadastrado no momento'}
+
+PREÇOS DOS SERVIÇOS (use apenas quando o cliente PERGUNTAR especificamente sobre valores):
+${availableServicesWithPrices || 'Nenhum serviço cadastrado no momento'}
+
+${availabilityInfo}
+${specificDateInfo}
+
+═══════════════════════════════════════════════════════════════════
+🚨 REGRA ABSOLUTAMENTE OBRIGATÓRIA - BUSCAR HORÁRIOS 🚨
+═══════════════════════════════════════════════════════════════════
+
+Quando o cliente informar a DATA desejada, você DEVE incluir na sua resposta o comando:
+[MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
+
+O sistema vai SUBSTITUIR esse comando pelos horários disponíveis automaticamente.
+
+⚠️ Use o NOME EXATO do serviço e profissional
+⚠️ A data DEVE estar no formato YYYY-MM-DD
+🚫 NUNCA invente horários
+
+🚨 REGRA CRÍTICA - MUDANÇA DE DATA:
+Quando o cliente perguntar sobre OUTRO DIA: SEMPRE use o comando novamente com a NOVA data
+
+🕐 COMANDO ESPECIAL - VERIFICAR HORÁRIO NA SEMANA:
+[VERIFICAR_HORARIO_SEMANA:NOME_PROFISSIONAL:HH:MM]
+
+Para múltiplos serviços: [MOSTRAR_HORARIOS_LIVRES_MULTI:SERVICO1,SERVICO2:PROFISSIONAL:YYYY-MM-DD]
+
+═══════════════════════════════════════════════════════════════════
+
+${shouldAutoSelect ?
+`ETAPA 1 - SERVIÇO (profissional único: ${activeProfessionals[0]?.name}):
+   → Mostre a lista de serviços IMEDIATAMENTE` :
+`ETAPA 1 - PROFISSIONAL → ETAPA 2 - SERVIÇO`}
+
+ETAPA ${shouldAutoSelect ? '2' : '3'} - DATA → ETAPA ${shouldAutoSelect ? '3' : '4'} - HORÁRIO (use [MOSTRAR_HORARIOS_LIVRES]) → ETAPA ${shouldAutoSelect ? '4' : '5'} - NOME → ETAPA ${shouldAutoSelect ? '5' : '6'} - CONFIRMAÇÃO
+
+⚠️ NUNCA pule etapas. NUNCA pergunte o NOME antes do HORÁRIO.
+- NÃO peça o telefone do cliente - use o identificador do Instagram automaticamente
+- REGRA DE RESUMO: Mostre o resumo completo com 👤 Nome, 🏢 Profissional, 💼 Serviço, 📅 Data, 🕐 Horário e peça "SIM" para confirmar
+- Use 1️⃣, 2️⃣, 3️⃣ para múltiplos agendamentos
+
+CANCELAMENTO: Responda "Vou verificar seus agendamentos... [LISTAR_AGENDAMENTOS_CANCELAR]"
+REAGENDAMENTO: "Para remarcar, primeiro preciso cancelar. [LISTAR_AGENDAMENTOS_CANCELAR]"
+
+- Mantenha respostas concisas (máximo 200 palavras)
+- Seja profissional mas amigável`;
+
+      // ===== Chamar OpenAI =====
+      const aiMessages = [
+        { role: 'system' as const, content: systemPrompt },
+        ...conversationHistory.slice(-15),
+        { role: 'user' as const, content: messageText }
+      ];
+
+      console.log('[ig-ai] Generating AI response with', conversationHistory.length, 'messages of context');
+
+      const completion = !isConfirmingCancel ? await openai.chat.completions.create({
+        model: company.openaiModel || 'gpt-4o-mini',
+        messages: aiMessages,
+        temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7,
+        max_tokens: company.openaiMaxTokens || 180,
+      }) : null;
+
+      let aiResponse = isConfirmingCancel ? '' : (completion?.choices[0]?.message?.content || 'Desculpe, não consegui processar sua mensagem.');
+
+      // ===== Processar comandos especiais (IDÊNTICO ao WhatsApp) =====
+
+      // [LISTAR_AGENDAMENTOS]
+      if (aiResponse.includes('[LISTAR_AGENDAMENTOS]')) {
+        aiResponse = aiResponse.replace('[LISTAR_AGENDAMENTOS]', await listClientAppointments(igPhoneIdentifier, company.id));
+      }
+
+      // [LISTAR_AGENDAMENTOS_CANCELAR]
+      if (aiResponse.includes('[LISTAR_AGENDAMENTOS_CANCELAR]')) {
+        const list = await listClientAppointmentsNumbered(igPhoneIdentifier, company.id, 'cancelar');
+        aiResponse = aiResponse.replace(/.*\[LISTAR_AGENDAMENTOS_CANCELAR\].*/g, list);
+      }
+
+      // [VERIFICAR_HORARIO_SEMANA:profissional:hora]
+      const verificarMatch = aiResponse.match(/\[VERIFICAR_HORARIO_SEMANA:([^:]+):(\d{1,2}:\d{2})\]/);
+      if (verificarMatch) {
+        const [fullMatch, profId, targetTime] = verificarMatch;
+        const companyProfs = await storage.getProfessionalsByCompany(company.id);
+        const profName = profId.trim().toLowerCase();
+        const foundProf = companyProfs.find((p: any) => p.name.toLowerCase() === profName) ||
+          companyProfs.find((p: any) => p.name.toLowerCase().includes(profName) || p.name.toLowerCase().split(' ')[0] === profName);
+        if (foundProf) {
+          aiResponse = aiResponse.replace(fullMatch, await checkSpecificTimeAvailability(company.id, foundProf.id, targetTime, 7));
+        } else {
+          aiResponse = aiResponse.replace(fullMatch, `Desculpe, não consegui identificar o profissional "${profId}".`);
+        }
+      }
+
+      // [MOSTRAR_HORARIOS_LIVRES_MULTI:serv1,serv2:prof:data]
+      {
+        let match;
+        let svcCache: any[] | null = null;
+        let profCache: any[] | null = null;
+        while ((match = aiResponse.match(/\[MOSTRAR_HORARIOS_LIVRES_MULTI:([^:]+):([^:]+):(\d{4}-\d{2}-\d{2})\]/)) !== null) {
+          const [fullMatch, servicesStr, profIdent, dateStr] = match;
+          if (!svcCache) svcCache = await storage.getServicesByCompany(company.id);
+          if (!profCache) profCache = await storage.getProfessionalsByCompany(company.id);
+          const serviceNames = servicesStr.split(',').map((s: string) => s.trim());
+          const ids: number[] = [];
+          let allFound = true;
+          for (const name of serviceNames) {
+            const found = svcCache.find((s: any) => s.name.toLowerCase() === name.toLowerCase()) ||
+              svcCache.find((s: any) => s.name.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(s.name.toLowerCase()));
+            if (found) ids.push(found.id); else allFound = false;
+          }
+          const prof = profCache.find((p: any) => p.name.toLowerCase() === profIdent.trim().toLowerCase()) ||
+            profCache.find((p: any) => p.name.toLowerCase().includes(profIdent.trim().toLowerCase()));
+          if (allFound && ids.length > 0 && prof) {
+            aiResponse = aiResponse.replace(fullMatch, await getAvailableTimesForMultipleServices(company.id, ids, prof.id, dateStr));
+          } else {
+            aiResponse = aiResponse.replace(fullMatch, 'Desculpe, não consegui identificar todos os serviços ou profissional.');
+          }
+        }
+      }
+
+      // [MOSTRAR_HORARIOS_LIVRES:serviço:profissional:data] - malformados
+      let malformed;
+      while ((malformed = aiResponse.match(/\[MOSTRAR_HORARIOS_LIVRES:([^\]]+)\]/)) !== null) {
+        if (/\d{4}-\d{2}-\d{2}/.test(malformed[1])) break;
+        aiResponse = aiResponse.replace(malformed[0], 'Em qual dia você gostaria de agendar? 😊');
+      }
+
+      // [MOSTRAR_HORARIOS_LIVRES:serviço:profissional:data] - com data
+      {
+        let match;
+        let svcCache: any[] | null = null;
+        let profCache: any[] | null = null;
+        while ((match = aiResponse.match(/\[MOSTRAR_HORARIOS_LIVRES:([^:]+):([^:]+):(\d{4}-\d{2}-\d{2})\]/)) !== null) {
+          const [fullMatch, svcIdent, profIdent, dateStr] = match;
+          if (!svcCache) svcCache = await storage.getServicesByCompany(company.id);
+          if (!profCache) profCache = await storage.getProfessionalsByCompany(company.id);
+
+          let serviceId: number | null = null;
+          if (/^\d+$/.test(svcIdent.trim())) { serviceId = parseInt(svcIdent.trim()); }
+          else {
+            const name = svcIdent.trim().toLowerCase();
+            let found = svcCache.find((s: any) => s.name.toLowerCase() === name);
+            if (!found) {
+              const matches = svcCache.filter((s: any) => s.name.toLowerCase().includes(name) || name.includes(s.name.toLowerCase()));
+              found = matches.length === 1 ? matches[0] : (matches.find((s: any) => s.name.toLowerCase().startsWith(name)) || matches.sort((a: any, b: any) => a.name.length - b.name.length)[0]);
+            }
+            if (found) serviceId = found.id;
+          }
+
+          let professionalId: number | null = null;
+          if (/^\d+$/.test(profIdent.trim())) { professionalId = parseInt(profIdent.trim()); }
+          else {
+            const name = profIdent.trim().toLowerCase();
+            let found = profCache.find((p: any) => p.name.toLowerCase() === name);
+            if (!found) {
+              const matches = profCache.filter((p: any) => p.name.toLowerCase().includes(name) || name.includes(p.name.toLowerCase()) || p.name.toLowerCase().split(' ')[0] === name);
+              found = matches.length === 1 ? matches[0] : (matches.find((p: any) => p.name.toLowerCase().startsWith(name)) || matches[0]);
+            }
+            if (found) professionalId = found.id;
+          }
+
+          if (serviceId && professionalId) {
+            aiResponse = aiResponse.replace(fullMatch, await getAvailableTimesForService(company.id, serviceId, professionalId, dateStr));
+          } else {
+            let err = !serviceId && !professionalId ? `Desculpe, não consegui identificar o serviço "${svcIdent}" nem o profissional "${profIdent}".` :
+              !serviceId ? `Desculpe, não consegui identificar o serviço "${svcIdent}".` :
+              `Desculpe, não consegui identificar o profissional "${profIdent}".`;
+            aiResponse = aiResponse.replace(fullMatch, err);
+          }
+        }
+      }
+
+      // Detectar escolha por número (cancelamento)
+      const wasListingForCancel = lastBotMsg.includes('Qual agendamento você deseja cancelar?');
+      if (wasListingForCancel) {
+        const directMatch = lowerMsg.match(/^[1-9]$|^10$/);
+        const selectedNumber = directMatch ? parseInt(directMatch[0]) : null;
+        if (selectedNumber) {
+          const nowBrasilia = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+          const todayStr = nowBrasilia.toISOString().split('T')[0];
+          const cleanId = senderId;
+          const [rows] = await pool.execute(`
+            SELECT a.id, a.appointment_date as appointmentDate, a.appointment_time as appointmentTime,
+                   a.professional_id as professionalId, a.service_id as serviceId
+            FROM appointments a LEFT JOIN professionals p ON a.professional_id = p.id
+            WHERE (a.client_phone LIKE ? OR a.client_phone LIKE ?)
+              AND a.appointment_date >= ? AND a.status IN ('Pendente','Confirmado','confirmado','pendente','agendado','Agendado','scheduled','confirmed')
+              AND p.company_id = ? ORDER BY a.appointment_date ASC, a.appointment_time ASC LIMIT 10
+          `, [`%${cleanId}%`, `%ig:${cleanId}%`, todayStr, company.id]);
+          const apts = rows as any[];
+          if (selectedNumber <= apts.length) {
+            const apt = apts[selectedNumber - 1];
+            const prof = await storage.getProfessional(apt.professionalId);
+            const svc = await storage.getService(apt.serviceId);
+            const d = new Date(apt.appointmentDate);
+            const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+            aiResponse = `✅ Agendamento selecionado:\n\n📅 ${dayNames[d.getDay()]}, ${d.toLocaleDateString('pt-BR')} às ${apt.appointmentTime}\n💼 ${svc?.name || 'Serviço'}\n👤 ${prof?.name || 'Profissional'}\n\nConfirma o cancelamento? Digite CANCELAR para confirmar ou NÃO para manter.`;
+            await pool.execute(`INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)`, [conversation.id, 'system', `[PENDING_CANCEL_ID:${apt.id}]`]);
+          } else {
+            aiResponse = `❌ Número inválido. Escolha entre 1 e ${apts.length}.`;
+          }
+        }
+      }
+
+      // Processar confirmação de cancelamento
+      if (isConfirmingCancel) {
+        const msgs = await storage.getMessagesByConversation(conversation.id);
+        const pending = msgs.find((m: any) => m.content.includes('[PENDING_CANCEL_ID:'));
+        if (pending) {
+          const idMatch = pending.content.match(/\[PENDING_CANCEL_ID:(\d+)\]/);
+          if (idMatch) {
+            const result = await cancelAppointmentById(parseInt(idMatch[1]), company.id);
+            if (result.success) {
+              await pool.execute(`DELETE FROM messages WHERE conversation_id = ? AND content LIKE '%[PENDING_CANCEL_ID:%'`, [conversation.id]);
+              aiResponse = '✅ Agendamento cancelado com sucesso!\n\nSeu agendamento foi removido da nossa agenda. Se precisar agendar novamente, é só me avisar! 😊';
+            } else {
+              aiResponse = `❌ ${result.message}`;
+            }
+          }
+        } else {
+          aiResponse = '❌ Ocorreu um erro ao processar o cancelamento. Por favor, tente novamente.';
+        }
+      }
+
+      // Validar disponibilidade na resposta
+      aiResponse = await validateAvailabilityInResponse(aiResponse, company.id, activeProfessionals);
+
+      // ===== Enviar resposta via Instagram =====
+      console.log('[ig-ai] Sending response:', aiResponse.substring(0, 200));
+      try {
+        await igSendText(aiResponse);
+
+        // Salvar resposta
+        await storage.createMessage({
+          conversationId: conversation.id,
+          content: aiResponse,
+          role: 'assistant',
+          messageType: 'text',
+          delivered: 1 as any,
+          timestamp: new Date(),
+        });
+        cacheAIResponse(conversation.id, aiResponse);
+        syncMessageToChatwoot(company, igPhoneIdentifier, 'Bot', aiResponse, 'outgoing');
+
+        // ===== Criar agendamento se for confirmação =====
+        const confirmKws = ['agendamento está confirmado', 'agendamento realizado com sucesso', 'realizado com sucesso', 'confirmado para', 'nos vemos', 'te aguardo'];
+        const isConfirmingAppointment = confirmKws.some(kw => aiResponse.toLowerCase().includes(kw));
+
+        if (isConfirmingAppointment && !isPostConfirmationContext) {
+          console.log('[ig-ai] AI confirmed appointment - creating');
+          const recentMsgs = await storage.getMessagesByConversation(conversation.id);
+          const summaryMsg = recentMsgs
+            .filter((m: any) => m.role === 'assistant')
+            .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+            .slice(0, 5)
+            .find((m: any) =>
+              !m.content.includes('Agendamento Confirmado!') && !m.content.includes('Agendamento realizado com sucesso') &&
+              (m.content.includes('Está tudo correto?') || m.content.includes('Responda SIM para confirmar') || m.content.includes('Vou confirmar')) &&
+              (m.content.includes('👤') || m.content.includes('Nome:')) &&
+              (m.content.includes('📅') || m.content.includes('Data:')) &&
+              (m.content.includes('🕐') || m.content.includes('Horário:'))
+            );
+
+          if (summaryMsg) {
+            const aptId = await createAppointmentFromAIConfirmation(conversation.id, company.id, summaryMsg.content, igPhoneIdentifier, 'agendado', contactName);
+            if (aptId) {
+              console.log('[ig-ai] Appointment created ID:', aptId);
+            } else {
+              const errMsg = '❌ Conflito de Horário Detectado\n\nDesculpe, mas não foi possível confirmar seu agendamento pois o horário já está ocupado.\n\nPor favor, escolha outro horário disponível.';
+              await igSendText(errMsg);
+              await storage.createMessage({ conversationId: conversation.id, content: errMsg, role: 'assistant', messageType: 'text', delivered: 1 as any, timestamp: new Date() });
+            }
+          }
+        }
+      } catch (sendError) {
+        console.error('[ig-ai] Error sending response:', sendError);
+        await storage.createMessage({ conversationId: conversation.id, content: aiResponse, role: 'assistant', messageType: 'text', delivered: 0 as any, timestamp: new Date() });
+      }
+
+    } catch (error) {
+      console.error('[ig-ai] Error processing message:', error);
+    } finally {
+      igProcessingLocks.delete(lockKey);
+    }
+  }
+
+  // Expor a função para ser chamada pelo onMessageReceived do webhook do Instagram
+  // Registramos via app.locals para que server.ts possa acessar
+  (app as any).handleInstagramAIMessage = processInstagramAIMessage;
+
   // GET endpoint for webhook verification (Meta hub.verify_token challenge)
   app.get('/api/webhook/whatsapp/:instanceName', async (req, res) => {
     const { instanceName } = req.params;
