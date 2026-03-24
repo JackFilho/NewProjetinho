@@ -203,7 +203,6 @@ export function handleInstagramEvents(deps: InstagramWebhookDeps) {
     res.status(200).send('EVENT_RECEIVED');
 
     const body = req.body;
-    console.log('[ig-webhook] payload received:', JSON.stringify(body).substring(0, 500));
 
     // Validar objeto
     if (body?.object !== 'instagram') {
@@ -254,71 +253,6 @@ export function handleInstagramEvents(deps: InstagramWebhookDeps) {
     // Processar mensagens
     try {
       const parsedMessages = MetaInstagramService.parseWebhookPayload(body);
-
-      // Se não conseguiu parsear nenhuma mensagem, verificar se tem message_edit
-      // (Instagram em modo Development envia message_edit com num_edit=0 para mensagens novas)
-      if (parsedMessages.length === 0) {
-        for (const entry of body.entry || []) {
-          const igAccountId = entry.id;
-          for (const event of entry.messaging || []) {
-            if (event.message_edit?.mid) {
-              console.log('[ig-webhook] message_edit detected (mid=%s) — fetching via API...', event.message_edit.mid);
-
-              // Buscar instância para ter o token
-              const instance = await deps.findInstagramInstanceByIgAccountId(igAccountId);
-              if (!instance) {
-                console.error('[ig-webhook] no instance for ig_account=%s', igAccountId);
-                continue;
-              }
-
-              try {
-                const { createMetaInstagramService } = await import('./meta-instagram.js');
-                const igService = createMetaInstagramService({
-                  igBusinessAccountId: instance.igBusinessAccountId,
-                  facebookPageId: instance.facebookPageId,
-                  pageAccessToken: instance.pageAccessToken,
-                });
-
-                // Buscar detalhes da mensagem pela API
-                const msgDetails = await igService.getMessage(event.message_edit.mid);
-                console.log('[ig-webhook] message details from API:', JSON.stringify(msgDetails).substring(0, 300));
-
-                if (msgDetails && msgDetails.from && msgDetails.message) {
-                  const senderId = msgDetails.from.id;
-                  // Se o remetente é a própria conta, é um echo - ignorar
-                  if (senderId === igAccountId) {
-                    console.log('[ig-webhook] ignoring echo (from self)');
-                    continue;
-                  }
-
-                  // Dedup
-                  if (isDuplicate(event.message_edit.mid)) {
-                    console.log('[ig-webhook] duplicate message_edit ignored');
-                    continue;
-                  }
-
-                  const syntheticMsg = {
-                    senderId: senderId,
-                    recipientId: igAccountId,
-                    messageId: msgDetails.id || event.message_edit.mid,
-                    timestamp: new Date(msgDetails.created_time).getTime(),
-                    text: msgDetails.message,
-                    isEcho: false,
-                    isDeleted: false,
-                    isReaction: false,
-                    isRead: false,
-                    isPostback: false,
-                  };
-
-                  await processIncomingInstagramMessage(syntheticMsg, body, deps);
-                }
-              } catch (apiErr) {
-                console.error('[ig-webhook] failed to fetch message via API:', apiErr);
-              }
-            }
-          }
-        }
-      }
 
       for (const msg of parsedMessages) {
         // Ignorar ecos, reads e reactions

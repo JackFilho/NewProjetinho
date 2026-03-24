@@ -253,22 +253,6 @@ export class MetaInstagramService {
     );
   }
 
-  // === Conversations API ===
-
-  /** Buscar conversas recentes do Instagram */
-  async getConversations(): Promise<any> {
-    return this.request(
-      `/${this.config.igBusinessAccountId}/conversations?platform=instagram&fields=participants,messages{id,created_time,from,to,message}`
-    );
-  }
-
-  /** Buscar uma mensagem específica pelo ID */
-  async getMessage(messageId: string): Promise<any> {
-    return this.request(
-      `/${messageId}?fields=id,created_time,from,to,message`
-    );
-  }
-
   // === Webhook Validation ===
 
   /** Validar assinatura de webhook (mesmo mecanismo do WhatsApp - HMAC SHA-256) */
@@ -342,24 +326,8 @@ export class MetaInstagramService {
     if (body.object !== 'instagram') return parsedMessages;
 
     for (const entry of body.entry || []) {
-      // Instagram pode enviar 'messaging' ou 'changes' dependendo do tipo de evento
-      const events = entry.messaging || [];
-
-      // Se não tem messaging, tentar extrair de changes (format usado pela Instagram API com Business Login)
-      if (events.length === 0 && entry.changes) {
-        for (const change of entry.changes) {
-          if (change.field === 'messages' && change.value) {
-            const val = change.value;
-            if (val.sender && val.recipient) {
-              events.push(val);
-            }
-          }
-        }
-      }
-
-      for (const event of events) {
+      for (const event of entry.messaging || []) {
         if (!event.sender?.id || !event.recipient?.id) {
-          console.warn('[instagram] skipping event without sender/recipient:', JSON.stringify(event).substring(0, 200));
           continue;
         }
         const parsed: any = {
