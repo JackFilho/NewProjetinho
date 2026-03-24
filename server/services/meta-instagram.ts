@@ -253,6 +253,22 @@ export class MetaInstagramService {
     );
   }
 
+  // === Conversations API ===
+
+  /** Buscar conversas recentes do Instagram */
+  async getConversations(): Promise<any> {
+    return this.request(
+      `/${this.config.igBusinessAccountId}/conversations?platform=instagram&fields=participants,messages{id,created_time,from,to,message}`
+    );
+  }
+
+  /** Buscar uma mensagem específica pelo ID */
+  async getMessage(messageId: string): Promise<any> {
+    return this.request(
+      `/${messageId}?fields=id,created_time,from,to,message`
+    );
+  }
+
   // === Webhook Validation ===
 
   /** Validar assinatura de webhook (mesmo mecanismo do WhatsApp - HMAC SHA-256) */
