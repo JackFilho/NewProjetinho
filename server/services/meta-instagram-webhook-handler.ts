@@ -14,7 +14,7 @@
 import { Router, Request, Response } from 'express';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
-import { webhookEvents } from '../../shared/schema';
+import { webhookEvents, instagramInstances } from '../../shared/schema';
 import { MetaInstagramService, InstagramWebhookMessage } from './meta-instagram';
 import { ChatwootService } from './chatwoot';
 
@@ -38,16 +38,25 @@ export async function resolveInstagramWebhookConfig(
     console.error('[ig-webhook] Failed to load global settings:', err);
   }
 
-  // Usa o mesmo App Secret e Verify Token do WhatsApp (mesmo Meta App)
   const verifyToken =
     settings?.metaWebhookVerifyToken ||
     process.env.META_WEBHOOK_VERIFY_TOKEN ||
     '';
 
-  const appSecret =
-    settings?.metaAppSecret ||
-    process.env.META_APP_SECRET ||
-    '';
+  // Buscar App Secret: 1) Instâncias Instagram (metaAppSecret), 2) Global Settings, 3) Env var
+  let appSecret = '';
+  try {
+    const instances = await db.select().from(instagramInstances).limit(1);
+    if (instances.length > 0 && instances[0].metaAppSecret) {
+      appSecret = instances[0].metaAppSecret;
+    }
+  } catch (e) {
+    // Tabela pode não existir ainda
+  }
+
+  if (!appSecret) {
+    appSecret = settings?.metaAppSecret || process.env.META_APP_SECRET || '';
+  }
 
   const validateSignature =
     process.env.META_WEBHOOK_VALIDATE_SIGNATURE !== 'false' && !!appSecret;
