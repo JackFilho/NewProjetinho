@@ -167,7 +167,8 @@ export async function syncMessageToChatwoot(
   contactName: string,
   content: string,
   messageType: 'incoming' | 'outgoing',
-  mediaAttachment?: { buffer: Buffer; mimeType: string; filename: string }
+  mediaAttachment?: { buffer: Buffer; mimeType: string; filename: string },
+  overrideInboxId?: number
 ): Promise<void> {
   try {
     // Verificar configuração mínima (baseUrl + token + accountId)
@@ -186,15 +187,16 @@ export async function syncMessageToChatwoot(
       return;
     }
 
-    if (!company.chatwootInboxId) {
-      console.warn(`⚠️ [CW-SYNC] chatwootInboxId não configurado para empresa ${company.id}. Mensagens serão enviadas sem inbox específica.`);
+    const effectiveInboxId = overrideInboxId || company.chatwootInboxId;
+    if (!effectiveInboxId) {
+      console.warn(`⚠️ [CW-SYNC] inboxId não configurado para empresa ${company.id}. Mensagens serão enviadas sem inbox específica.`);
     }
 
     const cwService = new ChatwootService({
       baseUrl: chatwootBase,
       apiAccessToken: chatwootToken,
       accountId: Number(chatwootAccount),
-      inboxId: company.chatwootInboxId ? Number(company.chatwootInboxId) : undefined,
+      inboxId: effectiveInboxId ? Number(effectiveInboxId) : undefined,
     });
 
     const cacheKey = `${company.id}:${customerPhone}`;
@@ -209,8 +211,10 @@ export async function syncMessageToChatwoot(
 
     if (!cwConversationId) {
       // Encontrar ou criar contato e conversa no Chatwoot
-      const phoneFormatted = customerPhone.replace(/\D/g, '');
-      console.log(`📤 [CW-SYNC] Buscando/criando contato para ${phoneFormatted} em ${chatwootBase}`);
+      // Para Instagram (ig:xxx), manter o identifier original; para telefone, formatar
+      const isInstagram = customerPhone.startsWith('ig:');
+      const phoneFormatted = isInstagram ? customerPhone : customerPhone.replace(/\D/g, '');
+      console.log(`📤 [CW-SYNC] Buscando/criando contato para ${phoneFormatted} (${isInstagram ? 'instagram' : 'phone'}) em ${chatwootBase}`);
 
       const contact = await cwService.findOrCreateContact(
         contactName || phoneFormatted,
@@ -224,7 +228,7 @@ export async function syncMessageToChatwoot(
 
       console.log(`📤 [CW-SYNC] Contato Chatwoot: ${contact.id} (${contact.name})`);
 
-      const cwConversation = await cwService.findOrCreateConversation(contact.id, company.chatwootInboxId ? Number(company.chatwootInboxId) : undefined);
+      const cwConversation = await cwService.findOrCreateConversation(contact.id, effectiveInboxId ? Number(effectiveInboxId) : undefined);
       cwConversationId = cwConversation.id;
 
       // Cachear
@@ -16852,7 +16856,7 @@ REAGENDAMENTO: "Para remarcar, primeiro preciso cancelar. [LISTAR_AGENDAMENTOS_C
           timestamp: new Date(),
         });
         cacheAIResponse(conversation.id, aiResponse);
-        syncMessageToChatwoot(company, igPhoneIdentifier, 'Bot', aiResponse, 'outgoing');
+        syncMessageToChatwoot(company, igPhoneIdentifier, 'Bot', aiResponse, 'outgoing', undefined, (company as any).chatwootInstagramInboxId);
 
         // ===== Criar agendamento se for confirmação =====
         const confirmKws = ['agendamento está confirmado', 'agendamento realizado com sucesso', 'realizado com sucesso', 'confirmado para', 'nos vemos', 'te aguardo'];

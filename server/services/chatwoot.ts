@@ -141,13 +141,19 @@ export class ChatwootService {
 
   // === Contatos ===
 
-  /** Buscar contato por número de telefone */
+  /** Buscar contato por número de telefone ou identifier (Instagram ig:xxx) */
   async findContactByPhone(phone: string): Promise<ChatwootContact | null> {
     try {
+      const isInstagram = phone.startsWith('ig:');
+      const searchQuery = isInstagram ? phone : phone.replace(/[^\d]/g, '');
       const result = await this.request<{ payload: ChatwootContact[] }>(
-        `/contacts/search?q=${encodeURIComponent(phone)}&include_contacts=true`
+        `/contacts/search?q=${encodeURIComponent(searchQuery)}&include_contacts=true`
       );
       const contacts = result.payload || [];
+      if (isInstagram) {
+        // Para Instagram, buscar pelo identifier
+        return contacts.find((c: any) => c.identifier === phone) || null;
+      }
       return contacts.find((c: any) =>
         c.phone_number?.replace(/[^\d]/g, '') === phone.replace(/[^\d]/g, '')
       ) || null;
@@ -189,9 +195,10 @@ export class ChatwootService {
       return existing;
     }
 
+    const isInstagram = phone.startsWith('ig:');
     return this.createContact({
       name,
-      phone_number: phone,
+      phone_number: isInstagram ? undefined : phone,
       identifier: phone,
     });
   }
