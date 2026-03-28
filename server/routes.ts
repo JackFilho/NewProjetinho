@@ -10579,6 +10579,55 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
             return res.status(404).json({ error: 'Company not found' });
           }
 
+          // ========================================
+          // 📋 QUICK REPLY (Template Buttons) Handler
+          // ========================================
+          // Quando o cliente clica em um botão Quick Reply de template,
+          // a Meta envia message.type = "button" com o texto do botão.
+          const rawMsgType = (message?.messageType || message?._metaRaw?.type || message?._metaRaw?.messageType || '').toLowerCase();
+          const isQuickReplyButton = rawMsgType === 'button' || rawMsgType === 'interactive';
+
+          if (isQuickReplyButton && messageText && !message?.key?.fromMe) {
+            const replyTextLower = messageText.trim().toLowerCase();
+            console.log(`📋 [QUICK-REPLY] Button detected: "${messageText}" | type: ${rawMsgType} | from: ${phoneNumber}`);
+
+            if (replyTextLower === 'confirmar') {
+              // Resposta automática de confirmação
+              try {
+                if (whatsappInstance.metaPhoneNumberId && whatsappInstance.metaAccessToken) {
+                  const metaService = new MetaWhatsAppService({
+                    phoneNumberId: whatsappInstance.metaPhoneNumberId,
+                    wabaId: whatsappInstance.metaWabaId || '',
+                    accessToken: whatsappInstance.metaAccessToken,
+                  });
+                  await metaService.sendText({
+                    to: phoneNumber,
+                    text: 'Agendamento confirmado com sucesso! ✅',
+                  });
+                  console.log('[QUICK-REPLY] Auto-response sent | button=confirmar to=%s', phoneNumber);
+                }
+
+                // Sincronizar ambas as mensagens ao Chatwoot
+                syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming');
+                syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, 'Agendamento confirmado com sucesso! ✅', 'outgoing');
+              } catch (autoReplyErr) {
+                console.warn('[QUICK-REPLY] Failed to send auto-response:', autoReplyErr);
+              }
+
+              earlyWebhookLocks.delete(earlyLockKey);
+              return res.status(200).json({ received: true, processed: true, reason: 'Quick reply: confirmar - auto response sent' });
+            }
+
+            if (replyTextLower === 'reagendar' || replyTextLower === 'remarcar') {
+              // Enviar para Chatwoot (atendente humano) - NÃO responder automaticamente
+              console.log('[QUICK-REPLY] Forwarding to human agent | button=%s from=%s', messageText, phoneNumber);
+              syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming');
+
+              earlyWebhookLocks.delete(earlyLockKey);
+              return res.status(200).json({ received: true, processed: true, reason: 'Quick reply: reagendar - forwarded to human' });
+            }
+          }
+
           // Get timeout from company settings (default: 30 minutes)
           // If human request feature is enabled, use humanRequestTimeout, otherwise use agentInactivityTimeout
           let timeoutMinutes = company.agentInactivityTimeout || 30;
