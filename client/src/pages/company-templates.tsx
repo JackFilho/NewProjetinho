@@ -52,12 +52,20 @@ interface MetaTemplateComponent {
 
 // Labels descritivos para as variaveis dos templates
 const VARIABLE_LABELS: { [key: string]: string } = {
+  // Variáveis numéricas (formato antigo)
   '{{1}}': 'Nome do cliente',
   '{{2}}': 'Data (ex: 20/03/2026)',
   '{{3}}': 'Horario (ex: 14:30)',
   '{{4}}': 'Nome do servico',
   '{{5}}': 'Nome do profissional',
   '{{6}}': 'Nome da empresa',
+  // Variáveis nomeadas (formato novo da Meta)
+  '{{customer_name}}': 'Nome do cliente',
+  '{{appointment_date}}': 'Data (ex: 20/03/2026)',
+  '{{appointment_time}}': 'Horario (ex: 14:30)',
+  '{{service_name}}': 'Nome do servico',
+  '{{professional_name}}': 'Nome do profissional',
+  '{{company_name}}': 'Nome da empresa',
 };
 
 export default function CompanyTemplates() {
@@ -263,17 +271,21 @@ export default function CompanyTemplates() {
     return footerComponent?.text || '';
   };
 
-  // Extract {{1}}, {{2}} etc. variable placeholders from body and header
+  // Extract {{1}}, {{customer_name}} etc. variable placeholders from body and header
   const extractVariables = (template: MetaTemplate): string[] => {
     const body = getTemplateBodyText(template);
     const header = getTemplateHeaderText(template);
     const allText = `${header} ${body}`;
-    const matches = allText.match(/\{\{\d+\}\}/g);
-    return matches ? [...new Set(matches)].sort() : [];
+    // Match both numeric {{1}} and named {{customer_name}} variables
+    const matches = allText.match(/\{\{[a-zA-Z0-9_]+\}\}/g);
+    return matches ? Array.from(new Set(matches)).sort() : [];
   };
 
   const getVariableLabel = (variable: string): string => {
-    return VARIABLE_LABELS[variable] || `Variavel ${variable}`;
+    if (VARIABLE_LABELS[variable]) return VARIABLE_LABELS[variable];
+    // For named variables like {{customer_name}}, show a readable label
+    const name = variable.replace(/\{\{|\}\}/g, '').replace(/_/g, ' ');
+    return name.charAt(0).toUpperCase() + name.slice(1);
   };
 
   const handleSendTemplate = () => {
@@ -283,10 +295,18 @@ export default function CompanyTemplates() {
     const bodyComponents: any[] = [];
 
     if (variables.length > 0) {
-      const parameters = variables.map((v) => ({
-        type: 'text' as const,
-        text: sendParams[v] || v,
-      }));
+      const isNamedVariables = variables.some(v => !/\{\{\d+\}\}/.test(v));
+      const parameters = variables.map((v) => {
+        const param: any = {
+          type: 'text' as const,
+          text: sendParams[v] || v,
+        };
+        // For named variables (e.g. {{customer_name}}), include parameter_name
+        if (isNamedVariables) {
+          param.parameter_name = v.replace(/\{\{|\}\}/g, '');
+        }
+        return param;
+      });
       bodyComponents.push({
         type: 'body',
         parameters,
