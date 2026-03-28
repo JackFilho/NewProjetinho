@@ -2,7 +2,7 @@
  * AI Agent Handler Service
  *
  * Processa mensagens recebidas via Meta webhook e gera respostas usando OpenAI.
- * Este serviço é chamado pelo callback onMessageReceived do meta-webhook-handler.
+ * Este serviço é chamado pelo callback onMessageReceived do routes.ts.
  */
 
 import { storage } from '../storage';

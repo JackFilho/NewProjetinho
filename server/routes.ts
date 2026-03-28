@@ -23292,7 +23292,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
   // ==========================================
   // Meta Unified Webhook (Cloud API padrão)
   // ==========================================
-  // Implementação modular em: server/services/meta-webhook-handler.ts
+  // Quick Reply handling integrado diretamente neste arquivo (routes.ts)
   // Rotas registradas via createMetaWebhookRouter() no server.ts:
   //   GET  /webhooks/meta/whatsapp  → Verificação (challenge)
   //   POST /webhooks/meta/whatsapp  → Eventos (mensagens, status)
