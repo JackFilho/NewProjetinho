@@ -168,7 +168,8 @@ export async function syncMessageToChatwoot(
   content: string,
   messageType: 'incoming' | 'outgoing',
   mediaAttachment?: { buffer: Buffer; mimeType: string; filename: string },
-  overrideInboxId?: number
+  overrideInboxId?: number,
+  isPrivate: boolean = false
 ): Promise<void> {
   try {
     // Verificar configuração mínima (baseUrl + token + accountId)
@@ -275,8 +276,8 @@ export async function syncMessageToChatwoot(
         await cwService.sendMessage(cwConversationId, content, messageType);
       }
     } else {
-      await cwService.sendMessage(cwConversationId, content, messageType);
-      console.log(`✅ [CW-SYNC] Mensagem ${messageType} sincronizada → Chatwoot conv ${cwConversationId}`);
+      await cwService.sendMessage(cwConversationId, content, messageType, isPrivate);
+      console.log(`✅ [CW-SYNC] Mensagem ${messageType}${isPrivate ? ' (private)' : ''} sincronizada → Chatwoot conv ${cwConversationId}`);
     }
   } catch (err: any) {
     // Se a conversa/contato foi deletado no Chatwoot, limpar cache e tentar recriar
@@ -23779,28 +23780,15 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         components: components || [],
       });
 
-      // Send template preview as private note in existing Chatwoot conversation
+      // Send template preview as private note in Chatwoot conversation
       if (previewText) {
         try {
           const company = await storage.getCompany(companyId);
-          if (company?.chatwootBaseUrl && company?.chatwootApiToken && company?.chatwootAccountId) {
-            const { ChatwootService } = await import('./services/chatwoot');
-            const cwService = new ChatwootService({
-              baseUrl: company.chatwootBaseUrl,
-              apiAccessToken: company.chatwootApiToken,
-              accountId: Number(company.chatwootAccountId),
-              inboxId: company.chatwootInboxId ? Number(company.chatwootInboxId) : undefined,
-            });
-
-            // Search for existing contact by phone number
-            const phoneFormatted = phone.replace(/\D/g, '');
-            const contact = await cwService.findOrCreateContact(phoneFormatted, phoneFormatted);
-            if (contact?.id) {
-              const cwConv = await cwService.findOrCreateConversation(contact.id, company.chatwootInboxId ? Number(company.chatwootInboxId) : undefined);
-              // Private note: visible to agents only, won't trigger webhook back to WhatsApp
-              await cwService.sendMessage(cwConv.id, `📋 Template enviado:\n${previewText}`, 'outgoing', true);
-              console.log(`📋 [TEMPLATE] Private note sent to Chatwoot conv ${cwConv.id}`);
-            }
+          if (company) {
+            await syncMessageToChatwoot(
+              company, phone, phone, `📋 Template enviado:\n${previewText}`,
+              'outgoing', undefined, undefined, true
+            );
           }
         } catch (syncErr) {
           console.warn('Failed to sync template note to Chatwoot:', syncErr);
