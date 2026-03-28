@@ -23787,21 +23787,43 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         components: components || [],
       });
 
-      // Send template preview as private note in Chatwoot conversation
+      // Send template preview as private note in existing Chatwoot conversation
+      // Uses findContactByPhone (never creates new contact) to avoid duplicate contacts
       if (previewText) {
         try {
           const company = await storage.getCompany(companyId);
-          if (company) {
-            // Try to find the client name for the Chatwoot contact
-            const phoneDigits = phone.replace(/\D/g, '');
-            const clients = await storage.getClientsByCompany(companyId);
-            const client = clients.find((c: any) => c.phone?.replace(/\D/g, '').endsWith(phoneDigits.slice(-10)));
-            const contactName = client?.name || phoneDigits;
+          if (company?.chatwootBaseUrl && company?.chatwootApiToken && company?.chatwootAccountId) {
+            const { ChatwootService } = await import('./services/chatwoot');
+            const cwService = new ChatwootService({
+              baseUrl: company.chatwootBaseUrl,
+              apiAccessToken: company.chatwootApiToken,
+              accountId: Number(company.chatwootAccountId),
+              inboxId: company.chatwootInboxId ? Number(company.chatwootInboxId) : undefined,
+            });
 
-            await syncMessageToChatwoot(
-              company, phone, contactName, `📋 Template enviado:\n${previewText}`,
-              'outgoing', undefined, undefined, true
-            );
+            // Try multiple phone formats to find the existing contact
+            const digits = phone.replace(/\D/g, '');
+            const variants = [digits];
+            if (digits.startsWith('55') && digits.length >= 12) {
+              variants.push(digits.slice(2)); // without country code
+            }
+            if (!digits.startsWith('55')) {
+              variants.push('55' + digits); // with country code
+            }
+
+            let contact = null;
+            for (const variant of variants) {
+              contact = await cwService.findContactByPhone(variant);
+              if (contact) break;
+            }
+
+            if (contact?.id) {
+              const cwConv = await cwService.findOrCreateConversation(contact.id, company.chatwootInboxId ? Number(company.chatwootInboxId) : undefined);
+              await cwService.sendMessage(cwConv.id, `📋 Template enviado:\n${previewText}`, 'outgoing', true);
+              console.log(`📋 [TEMPLATE] Private note sent to Chatwoot conv ${cwConv.id} (contact: ${contact.name})`);
+            } else {
+              console.log(`📋 [TEMPLATE] No existing Chatwoot contact found for ${digits} — skipping note`);
+            }
           }
         } catch (syncErr) {
           console.warn('Failed to sync template note to Chatwoot:', syncErr);
