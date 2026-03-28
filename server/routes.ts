@@ -23785,7 +23785,12 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
           const company = await storage.getCompany(companyId);
           if (company?.chatwootBaseUrl && company?.chatwootApiToken && company?.chatwootAccountId) {
             const { ChatwootService } = await import('./services/chatwoot');
-            const cwService = new ChatwootService(company.chatwootBaseUrl, company.chatwootApiToken, Number(company.chatwootAccountId));
+            const cwService = new ChatwootService({
+              baseUrl: company.chatwootBaseUrl,
+              apiAccessToken: company.chatwootApiToken,
+              accountId: Number(company.chatwootAccountId),
+              inboxId: company.chatwootInboxId ? Number(company.chatwootInboxId) : undefined,
+            });
 
             // Search for existing contact by phone number
             const phoneFormatted = phone.replace(/\D/g, '');
