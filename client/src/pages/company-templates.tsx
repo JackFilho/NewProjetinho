@@ -313,11 +313,18 @@ export default function CompanyTemplates() {
       });
     }
 
+    // Build the preview text (same as the on-screen preview)
+    let previewText = getTemplateBodyText(selectedTemplate);
+    Object.entries(sendParams).forEach(([key, value]) => {
+      if (value) previewText = previewText.replaceAll(key, value);
+    });
+
     sendMutation.mutate({
       templateName: selectedTemplate.name,
       to: sendPhone,
       languageCode: selectedTemplate.language || 'pt_BR',
       components: bodyComponents.length > 0 ? bodyComponents : undefined,
+      previewText,
     });
   };
 

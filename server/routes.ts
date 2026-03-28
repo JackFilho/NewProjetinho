@@ -23747,7 +23747,7 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
   app.post('/api/company/meta-templates/send', isCompanyAuthenticated, async (req, res) => {
     try {
       const companyId = req.session.companyId;
-      const { templateName, languageCode, to, components } = req.body;
+      const { templateName, languageCode, to, components, previewText } = req.body;
 
       if (!templateName || !to) {
         return res.status(400).json({ error: 'Campos obrigatórios: templateName, to (número de telefone)' });
@@ -23779,47 +23779,17 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         components: components || [],
       });
 
-      // Send template content as a private note in Chatwoot (visible only to agents, not duplicated as a message)
-      try {
-        const company = await storage.getCompany(companyId);
-        if (company?.chatwootBaseUrl && company?.chatwootApiToken && company?.chatwootAccountId) {
-          const { ChatwootService } = await import('./services/chatwoot');
-          const cwService = new ChatwootService(company.chatwootBaseUrl, company.chatwootApiToken, Number(company.chatwootAccountId));
-
-          // Find or create the contact and conversation
-          const phoneFormatted = phone.replace(/\D/g, '');
-          const contact = await cwService.findOrCreateContact(phoneFormatted, phoneFormatted);
-          if (contact?.id) {
-            const cwConv = await cwService.findOrCreateConversation(contact.id, company.chatwootInboxId ? Number(company.chatwootInboxId) : undefined);
-
-            // Fetch the template to render the body text with actual values
-            const allTemplates = await metaService.listTemplates();
-            const templateInfo = allTemplates.find((t: any) => t.name === templateName);
-            let templateMessage = `📋 Template "${templateName}" enviado`;
-
-            if (templateInfo) {
-              const bodyComp = templateInfo.components?.find((c: any) => c.type === 'BODY');
-              if (bodyComp?.text) {
-                let renderedBody = bodyComp.text;
-                const bodyParams = (components || [])
-                  .filter((c: any) => c.type === 'body')
-                  .flatMap((c: any) => c.parameters || []);
-
-                bodyParams.forEach((p: any, idx: number) => {
-                  if (p.text) renderedBody = renderedBody.replace(`{{${idx + 1}}}`, p.text);
-                  if (p.parameter_name && p.text) renderedBody = renderedBody.replace(`{{${p.parameter_name}}}`, p.text);
-                });
-                templateMessage = `📋 Template enviado:\n${renderedBody}`;
-              }
-            }
-
-            // Send as private note (isPrivate = true) — won't show as a customer-facing message
-            await cwService.sendMessage(cwConv.id, templateMessage, 'outgoing', true);
-            console.log(`📋 [TEMPLATE] Private note sent to Chatwoot conv ${cwConv.id}`);
+      // Sync the rendered preview text to Chatwoot as outgoing message
+      if (previewText) {
+        try {
+          const company = await storage.getCompany(companyId);
+          if (company) {
+            await syncMessageToChatwoot(company, phone, 'Sistema', previewText, 'outgoing');
+            console.log(`📋 [TEMPLATE] Preview synced to Chatwoot for ${phone}`);
           }
+        } catch (syncErr) {
+          console.warn('Failed to sync template preview to Chatwoot:', syncErr);
         }
-      } catch (syncErr) {
-        console.warn('Failed to sync template note to Chatwoot:', syncErr);
       }
 
       res.json({
