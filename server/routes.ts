@@ -10592,11 +10592,15 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
             console.log(`📋 [QUICK-REPLY] Button detected: "${messageText}" | type: ${rawMsgType} | from: ${phoneNumber}`);
 
             if (replyTextLower === 'confirmar') {
-              // Resposta automática de confirmação
+              // 1) Sincronizar o clique do botão (incoming) primeiro no Chatwoot
               try {
-                // Sincronizar o clique do botão (incoming) ANTES da resposta
                 await syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming');
+              } catch (syncErr) {
+                console.warn('[QUICK-REPLY] Failed to sync incoming to Chatwoot:', syncErr);
+              }
 
+              // 2) Enviar resposta automática via Meta API
+              try {
                 if (whatsappInstance.metaPhoneNumberId && whatsappInstance.metaAccessToken) {
                   const metaService = new MetaWhatsAppService({
                     phoneNumberId: whatsappInstance.metaPhoneNumberId,
@@ -10609,11 +10613,15 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                   });
                   console.log('[QUICK-REPLY] Auto-response sent | button=confirmar to=%s', phoneNumber);
                 }
-
-                // Sincronizar a resposta (outgoing) DEPOIS
-                await syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, 'Agendamento confirmado com sucesso! ✅', 'outgoing');
               } catch (autoReplyErr) {
                 console.warn('[QUICK-REPLY] Failed to send auto-response:', autoReplyErr);
+              }
+
+              // 3) Sincronizar a resposta (outgoing) depois no Chatwoot
+              try {
+                await syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, 'Agendamento confirmado com sucesso! ✅', 'outgoing');
+              } catch (syncErr) {
+                console.warn('[QUICK-REPLY] Failed to sync outgoing to Chatwoot:', syncErr);
               }
 
               earlyWebhookLocks.delete(earlyLockKey);
@@ -23770,6 +23778,44 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         languageCode: languageCode || 'pt_BR',
         components: components || [],
       });
+
+      // Sync template message to Chatwoot as conversation context
+      try {
+        const company = await storage.getCompany(companyId);
+        if (company) {
+          // Fetch the template to get the body text
+          const allTemplates = await metaService.listTemplates();
+          const templateInfo = allTemplates.find((t: any) => t.name === templateName);
+          let templateMessage = `📋 Template "${templateName}"`;
+
+          if (templateInfo) {
+            const bodyComp = templateInfo.components?.find((c: any) => c.type === 'BODY');
+            if (bodyComp?.text) {
+              // Replace variables with the actual parameter values
+              let renderedBody = bodyComp.text;
+              const bodyParams = (components || [])
+                .filter((c: any) => c.type === 'body')
+                .flatMap((c: any) => c.parameters || []);
+
+              // Replace numbered variables {{1}}, {{2}}, etc.
+              bodyParams.forEach((p: any, idx: number) => {
+                if (p.text) {
+                  renderedBody = renderedBody.replace(`{{${idx + 1}}}`, p.text);
+                }
+                // Named variables: {{customer_name}} etc.
+                if (p.parameter_name && p.text) {
+                  renderedBody = renderedBody.replace(`{{${p.parameter_name}}}`, p.text);
+                }
+              });
+              templateMessage = renderedBody;
+            }
+          }
+
+          await syncMessageToChatwoot(company, phone, 'Sistema', templateMessage, 'outgoing');
+        }
+      } catch (syncErr) {
+        console.warn('Failed to sync template to Chatwoot:', syncErr);
+      }
 
       res.json({
         success: true,
