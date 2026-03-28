@@ -574,6 +574,40 @@ async function processIncomingMetaMessage(
       }
     }
 
+    // ── Quick Reply de template (botões de resposta rápida) ──
+    const isQuickReply = message.type === 'button' ||
+      (message.type === 'interactive' && (message as any).interactive?.type === 'button_reply');
+
+    if (isQuickReply) {
+      const replyText = (message.text || '').trim().toLowerCase();
+
+      if (replyText === 'confirmar') {
+        // Resposta automática de confirmação
+        try {
+          const metaService = new MetaWhatsAppService({
+            phoneNumberId: instance.metaPhoneNumberId,
+            wabaId: instance.metaWabaId,
+            accessToken: instance.metaAccessToken,
+          });
+          await metaService.sendText({
+            to: message.from,
+            text: 'Agendamento confirmado com sucesso! ✅',
+          });
+          console.log('[meta-webhook] quick reply auto-response sent | button=confirmar to=%s', message.from);
+        } catch (autoReplyErr) {
+          console.warn('[meta-webhook] failed to send quick reply auto-response:', autoReplyErr);
+        }
+        // Não acionar o AI agent para confirmações automáticas
+        return;
+      }
+
+      if (replyText === 'reagendar' || replyText === 'remarcar') {
+        // Não responder — deixar para atendente humano (mensagem já foi para o Chatwoot)
+        console.log('[meta-webhook] quick reply forwarded to human agent | button=%s from=%s', replyText, message.from);
+        return;
+      }
+    }
+
     // AI agent callback (com texto transcrito para áudio)
     if (deps.onMessageReceived) {
       // Enriquecer a mensagem com a transcrição para o AI agent

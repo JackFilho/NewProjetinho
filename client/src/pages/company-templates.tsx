@@ -82,6 +82,7 @@ export default function CompanyTemplates() {
     headerText: '',
     bodyText: '',
     footerText: '',
+    buttons: [] as { type: 'QUICK_REPLY'; text: string }[],
   });
 
   // Fetch templates from Meta API
@@ -130,6 +131,16 @@ export default function CompanyTemplates() {
         });
       }
 
+      if (data.buttons.length > 0) {
+        components.push({
+          type: 'BUTTONS',
+          buttons: data.buttons.map((btn) => ({
+            type: btn.type,
+            text: btn.text,
+          })),
+        });
+      }
+
       const response = await fetch('/api/company/meta-templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -150,7 +161,7 @@ export default function CompanyTemplates() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/company/meta-templates'] });
       toast({ title: 'Template criado', description: 'O template foi enviado para aprovacao da Meta.' });
-      setNewTemplate({ name: '', category: 'UTILITY', language: 'pt_BR', headerText: '', bodyText: '', footerText: '' });
+      setNewTemplate({ name: '', category: 'UTILITY', language: 'pt_BR', headerText: '', bodyText: '', footerText: '', buttons: [] });
     },
     onError: (error: Error) => {
       toast({ title: 'Erro ao criar template', description: error.message, variant: 'destructive' });
@@ -594,6 +605,54 @@ export default function CompanyTemplates() {
                 <p className="text-xs text-muted-foreground">Maximo 60 caracteres</p>
               </div>
 
+              <Separator />
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label>Botoes Quick Reply (opcional)</Label>
+                  {newTemplate.buttons.length < 3 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setNewTemplate(prev => ({
+                        ...prev,
+                        buttons: [...prev.buttons, { type: 'QUICK_REPLY', text: '' }],
+                      }))}
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Adicionar botao
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">Maximo 3 botoes. O cliente pode clicar para responder rapidamente.</p>
+                {newTemplate.buttons.map((btn, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <Input
+                      placeholder={`ex: ${index === 0 ? 'Confirmar' : index === 1 ? 'Reagendar' : 'Cancelar'}`}
+                      value={btn.text}
+                      onChange={(e) => {
+                        const updated = [...newTemplate.buttons];
+                        updated[index] = { ...updated[index], text: e.target.value };
+                        setNewTemplate(prev => ({ ...prev, buttons: updated }));
+                      }}
+                      maxLength={25}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        const updated = newTemplate.buttons.filter((_, i) => i !== index);
+                        setNewTemplate(prev => ({ ...prev, buttons: updated }));
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
               {newTemplate.bodyText && (
                 <>
                   <Separator />
@@ -606,6 +665,15 @@ export default function CompanyTemplates() {
                       <p className="text-sm whitespace-pre-wrap">{newTemplate.bodyText}</p>
                       {newTemplate.footerText && (
                         <p className="text-xs text-muted-foreground mt-2">{newTemplate.footerText}</p>
+                      )}
+                      {newTemplate.buttons.length > 0 && (
+                        <div className="mt-3 border-t border-green-200 pt-2 space-y-1">
+                          {newTemplate.buttons.map((btn, i) => (
+                            <div key={i} className="text-center text-sm text-blue-600 py-1 border border-green-200 rounded bg-white">
+                              {btn.text || `Botao ${i + 1}`}
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
                   </div>
