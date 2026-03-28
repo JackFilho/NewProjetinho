@@ -23771,23 +23771,6 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         components: components || [],
       });
 
-      // Sync template message to Chatwoot so it appears in the conversation
-      try {
-        const company = await storage.getCompany(companyId);
-        if (company) {
-          // Build a readable message from the template name and parameters
-          const paramTexts = (components || [])
-            .filter((c: any) => c.type === 'body' && c.parameters)
-            .flatMap((c: any) => c.parameters.map((p: any) => p.text).filter(Boolean));
-          const templateMessage = paramTexts.length > 0
-            ? `📋 Template "${templateName}": ${paramTexts.join(' | ')}`
-            : `📋 Template "${templateName}" enviado`;
-          await syncMessageToChatwoot(company, phone, 'Sistema', templateMessage, 'outgoing');
-        }
-      } catch (syncErr) {
-        console.warn('Failed to sync template to Chatwoot:', syncErr);
-      }
-
       res.json({
         success: true,
         messageId: result.messages?.[0]?.id,
