@@ -10594,6 +10594,9 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
             if (replyTextLower === 'confirmar') {
               // Resposta automática de confirmação
               try {
+                // Sincronizar o clique do botão (incoming) ANTES da resposta
+                await syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming');
+
                 if (whatsappInstance.metaPhoneNumberId && whatsappInstance.metaAccessToken) {
                   const metaService = new MetaWhatsAppService({
                     phoneNumberId: whatsappInstance.metaPhoneNumberId,
@@ -10607,9 +10610,8 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
                   console.log('[QUICK-REPLY] Auto-response sent | button=confirmar to=%s', phoneNumber);
                 }
 
-                // Sincronizar ambas as mensagens ao Chatwoot
-                syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, messageText, 'incoming');
-                syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, 'Agendamento confirmado com sucesso! ✅', 'outgoing');
+                // Sincronizar a resposta (outgoing) DEPOIS
+                await syncMessageToChatwoot(company, phoneNumber, message.pushName || phoneNumber, 'Agendamento confirmado com sucesso! ✅', 'outgoing');
               } catch (autoReplyErr) {
                 console.warn('[QUICK-REPLY] Failed to send auto-response:', autoReplyErr);
               }
@@ -23768,6 +23770,23 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         languageCode: languageCode || 'pt_BR',
         components: components || [],
       });
+
+      // Sync template message to Chatwoot so it appears in the conversation
+      try {
+        const company = await storage.getCompany(companyId);
+        if (company) {
+          // Build a readable message from the template name and parameters
+          const paramTexts = (components || [])
+            .filter((c: any) => c.type === 'body' && c.parameters)
+            .flatMap((c: any) => c.parameters.map((p: any) => p.text).filter(Boolean));
+          const templateMessage = paramTexts.length > 0
+            ? `📋 Template "${templateName}": ${paramTexts.join(' | ')}`
+            : `📋 Template "${templateName}" enviado`;
+          await syncMessageToChatwoot(company, phone, 'Sistema', templateMessage, 'outgoing');
+        }
+      } catch (syncErr) {
+        console.warn('Failed to sync template to Chatwoot:', syncErr);
+      }
 
       res.json({
         success: true,
