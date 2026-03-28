@@ -9399,6 +9399,13 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
       // ────────────────────────────────────────────────
       // HANDLER: Agent message detection (message_created)
       // ────────────────────────────────────────────────
+
+      // Skip private notes — they should never be forwarded to WhatsApp
+      if (payload.private === true) {
+        console.log('🔒 [CHATWOOT WEBHOOK] Private note ignored — not forwarding to WhatsApp');
+        return res.status(200).json({ received: true, ignored: true, reason: 'Private note' });
+      }
+
       const messageType = payload.message_type;
 
       // message_type: "outgoing" = agent/bot sent, "incoming" = customer sent
@@ -23785,8 +23792,14 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         try {
           const company = await storage.getCompany(companyId);
           if (company) {
+            // Try to find the client name for the Chatwoot contact
+            const phoneDigits = phone.replace(/\D/g, '');
+            const clients = await storage.getClientsByCompany(companyId);
+            const client = clients.find((c: any) => c.phone?.replace(/\D/g, '').endsWith(phoneDigits.slice(-10)));
+            const contactName = client?.name || phoneDigits;
+
             await syncMessageToChatwoot(
-              company, phone, phone, `📋 Template enviado:\n${previewText}`,
+              company, phone, contactName, `📋 Template enviado:\n${previewText}`,
               'outgoing', undefined, undefined, true
             );
           }
