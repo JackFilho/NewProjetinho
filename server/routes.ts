@@ -23779,16 +23779,26 @@ const broadcastEvent = (eventData: any, targetCompanyId?: number) => {
         components: components || [],
       });
 
-      // Sync the rendered preview text to Chatwoot as outgoing message
+      // Send template preview as private note in existing Chatwoot conversation
       if (previewText) {
         try {
           const company = await storage.getCompany(companyId);
-          if (company) {
-            await syncMessageToChatwoot(company, phone, 'Sistema', previewText, 'outgoing');
-            console.log(`📋 [TEMPLATE] Preview synced to Chatwoot for ${phone}`);
+          if (company?.chatwootBaseUrl && company?.chatwootApiToken && company?.chatwootAccountId) {
+            const { ChatwootService } = await import('./services/chatwoot');
+            const cwService = new ChatwootService(company.chatwootBaseUrl, company.chatwootApiToken, Number(company.chatwootAccountId));
+
+            // Search for existing contact by phone number
+            const phoneFormatted = phone.replace(/\D/g, '');
+            const contact = await cwService.findOrCreateContact(phoneFormatted, phoneFormatted);
+            if (contact?.id) {
+              const cwConv = await cwService.findOrCreateConversation(contact.id, company.chatwootInboxId ? Number(company.chatwootInboxId) : undefined);
+              // Private note: visible to agents only, won't trigger webhook back to WhatsApp
+              await cwService.sendMessage(cwConv.id, `📋 Template enviado:\n${previewText}`, 'outgoing', true);
+              console.log(`📋 [TEMPLATE] Private note sent to Chatwoot conv ${cwConv.id}`);
+            }
           }
         } catch (syncErr) {
-          console.warn('Failed to sync template preview to Chatwoot:', syncErr);
+          console.warn('Failed to sync template note to Chatwoot:', syncErr);
         }
       }
 
