@@ -559,6 +559,13 @@ export default function CompanySettings() {
     }
   }, [company?.autoSelectProfessional, aiAgentForm]);
 
+  // Force update enableProfessionalLocations when company data changes
+  useEffect(() => {
+    if (company) {
+      aiAgentForm.setValue('enableProfessionalLocations', !!(company as any).enableProfessionalLocations, { shouldValidate: false, shouldDirty: false });
+    }
+  }, [(company as any)?.enableProfessionalLocations, aiAgentForm]);
+
   // Force update OpenAI fields when company data changes
   useEffect(() => {
     if (company) {
