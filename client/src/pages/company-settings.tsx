@@ -162,6 +162,20 @@ export default function CompanySettings() {
   const [newLocationAddress, setNewLocationAddress] = useState("");
   const [editingLocation, setEditingLocation] = useState<{ id: number; name: string; address: string } | null>(null);
 
+  // Toggle professional locations - independente do form
+  const toggleProfessionalLocationsMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const response = await apiRequest("/api/company/toggle-professional-locations", "PUT", { enabled });
+      return response;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/company/auth/profile"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro", description: error.message || "Falha ao alterar configuração.", variant: "destructive" });
+    },
+  });
+
   // Professional locations query
   const { data: professionalLocations = [], refetch: refetchLocations } = useQuery<any[]>({
     queryKey: ["/api/company/locations"],
@@ -434,7 +448,6 @@ export default function CompanySettings() {
       aiAgentPrompt: "",
       agentInactivityTimeout: 30,
       autoSelectProfessional: false,
-      enableProfessionalLocations: false,
       openaiApiKey: "",
       openaiModel: "gpt-4o-mini",
       openaiTemperature: 0.7,
@@ -444,7 +457,6 @@ export default function CompanySettings() {
       aiAgentPrompt: company.aiAgentPrompt || "",
       agentInactivityTimeout: company.agentInactivityTimeout ? Number(company.agentInactivityTimeout) : 30,
       autoSelectProfessional: company.autoSelectProfessional === true,
-      enableProfessionalLocations: company.enableProfessionalLocations === true,
       openaiApiKey: "",
       openaiModel: company.openaiModel || "gpt-4o-mini",
       openaiTemperature: company.openaiTemperature ? Number(company.openaiTemperature) : 0.7,
@@ -558,13 +570,6 @@ export default function CompanySettings() {
       aiAgentForm.setValue('autoSelectProfessional', company.autoSelectProfessional === true, { shouldValidate: false, shouldDirty: false });
     }
   }, [company?.autoSelectProfessional, aiAgentForm]);
-
-  // Force update enableProfessionalLocations when company data changes
-  useEffect(() => {
-    if (company) {
-      aiAgentForm.setValue('enableProfessionalLocations', (company as any).enableProfessionalLocations === true, { shouldValidate: false, shouldDirty: false });
-    }
-  }, [(company as any)?.enableProfessionalLocations, aiAgentForm]);
 
   // Force update OpenAI fields when company data changes
   useEffect(() => {
@@ -2601,32 +2606,25 @@ export default function CompanySettings() {
                     )}
                   />
 
-                  {/* Toggle Atendimento por Local */}
-                  <FormField
-                    control={aiAgentForm.control}
-                    name="enableProfessionalLocations"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                        <div className="space-y-0.5">
-                          <FormLabel className="text-base">
-                            Atendimento por Local
-                          </FormLabel>
-                          <div className="text-sm text-gray-500">
-                            Permite definir o local de atendimento de cada profissional por dia da semana
-                          </div>
-                        </div>
-                        <FormControl>
-                          <Switch
-                            checked={!!field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                        </FormControl>
-                      </FormItem>
-                    )}
-                  />
+                  {/* Toggle Atendimento por Local - independente do form */}
+                  <div className="flex flex-row items-center justify-between rounded-lg border p-4">
+                    <div className="space-y-0.5">
+                      <Label className="text-base font-medium">
+                        Atendimento por Local
+                      </Label>
+                      <div className="text-sm text-gray-500">
+                        Permite definir o local de atendimento de cada profissional por dia da semana
+                      </div>
+                    </div>
+                    <Switch
+                      checked={!!(company as any)?.enableProfessionalLocations}
+                      onCheckedChange={(checked) => toggleProfessionalLocationsMutation.mutate(checked)}
+                      disabled={toggleProfessionalLocationsMutation.isPending}
+                    />
+                  </div>
 
                   {/* Gerenciar Locais de Atendimento */}
-                  {aiAgentForm.watch("enableProfessionalLocations") && (
+                  {!!(company as any)?.enableProfessionalLocations && (
                     <div className="rounded-lg border p-4 space-y-4">
                       <div className="flex items-center gap-2">
                         <MapPin className="h-5 w-5 text-purple-600" />

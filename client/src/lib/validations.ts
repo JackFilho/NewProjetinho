@@ -111,7 +111,6 @@ export const companyAiAgentSchema = z.object({
   aiAgentPrompt: z.string().min(10, "Prompt deve ter pelo menos 10 caracteres"),
   agentInactivityTimeout: z.number().int().min(30).max(180).default(30),
   autoSelectProfessional: z.boolean().default(false),
-  enableProfessionalLocations: z.boolean().default(false),
   openaiApiKey: z.string().optional(),
   openaiModel: z.string().min(1, "Modelo é obrigatório").default("gpt-4o-mini"),
   openaiTemperature: z.number().min(0).max(2).default(0.7),

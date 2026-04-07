@@ -6804,6 +6804,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Toggle professional locations feature
+  app.put('/api/company/toggle-professional-locations', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+      const { enabled } = req.body;
+      await storage.updateCompany(companyId, {
+        enableProfessionalLocations: enabled ? 1 : 0,
+      });
+      res.json({ enableProfessionalLocations: !!enabled });
+    } catch (error) {
+      console.error("Error toggling professional locations:", error);
+      res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
   // Company human request configuration
   app.put('/api/company/human-request', async (req: any, res) => {
     try {
