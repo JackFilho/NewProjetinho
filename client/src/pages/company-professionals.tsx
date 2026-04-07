@@ -1446,24 +1446,27 @@ export default function CompanyProfessionals() {
                           </div>
 
                           {/* Select de Local de Atendimento */}
-                          {schedule.enabled && companyProfile?.enableProfessionalLocations && professionalLocations.length > 0 && (
+                          {schedule.enabled && companyProfile?.enableProfessionalLocations && (
                             <div className="mt-2 flex items-center gap-2">
                               <MapPin className="h-4 w-4 text-purple-500 flex-shrink-0" />
                               <Label className="text-xs text-gray-600 flex-shrink-0">Local:</Label>
                               <Select
-                                value={schedule.locationId ? String(schedule.locationId) : "none"}
+                                value={schedule.locationId !== null && schedule.locationId !== undefined ? String(schedule.locationId) : "none"}
                                 onValueChange={(value) =>
                                   updateSchedule(day.key, 'locationId', value === "none" ? null : Number(value))
                                 }
                               >
-                                <SelectTrigger className="w-[200px] h-8 text-xs">
+                                <SelectTrigger className="w-[250px] h-8 text-xs">
                                   <SelectValue placeholder="Selecione o local" />
                                 </SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="none">Nenhum</SelectItem>
+                                  <SelectItem value="0">
+                                    Endereço Principal{companyProfile?.address ? ` (${companyProfile.address}${companyProfile.number ? `, ${companyProfile.number}` : ''})` : ''}
+                                  </SelectItem>
                                   {professionalLocations.map((location: any) => (
                                     <SelectItem key={location.id} value={String(location.id)}>
-                                      {location.name}
+                                      {location.name}{location.address ? ` (${location.address})` : ''}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>

@@ -9424,12 +9424,24 @@ if (ignoredNumbers !== undefined) {
                 const locationMap = new Map(locations.map(l => [l.id, l]));
                 const dayNames = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
 
+                // Build company address string for locationId = 0 (endereço principal)
+                const companyAddress = [
+                  company.address,
+                  company.number ? `nº ${company.number}` : null,
+                  company.neighborhood,
+                  company.city && company.state ? `${company.city}/${company.state}` : company.city || company.state
+                ].filter(Boolean).join(', ');
+
                 const profLocationLines: string[] = [];
                 for (const prof of activeProfessionals) {
                   const schedules = await storage.getProfessionalSchedules(prof.id);
                   const daysWithLocation = schedules
-                    .filter(s => s.isEnabled === 1 && s.locationId)
+                    .filter(s => s.isEnabled === 1 && (s.locationId !== null && s.locationId !== undefined))
                     .map(s => {
+                      if (s.locationId === 0) {
+                        // Endereço principal da empresa
+                        return `  - ${dayNames[s.dayOfWeek]}: Endereço Principal${companyAddress ? ` (${companyAddress})` : ''}`;
+                      }
                       const loc = locationMap.get(s.locationId!);
                       return loc ? `  - ${dayNames[s.dayOfWeek]}: ${loc.name}${loc.address ? ` (${loc.address})` : ''}` : null;
                     })
