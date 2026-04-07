@@ -83,6 +83,7 @@ export const aiAgentSchema = z.object({
   aiAgentPrompt: z.string().trim().min(10, "Prompt deve ter pelo menos 10 caracteres").max(50000),
   agentInactivityTimeout: z.coerce.number().int().min(30).max(180).optional().nullable(),
   autoSelectProfessional: z.union([z.boolean(), z.number()]).optional().nullable(),
+  enableProfessionalLocations: z.union([z.boolean(), z.number()]).optional().nullable(),
   openaiApiKey: z.string().max(255).optional().nullable(),
   openaiModel: z.string().max(100).optional().default("gpt-4o-mini"),
   openaiTemperature: z.coerce.number().min(0).max(2).optional().default(0.7),

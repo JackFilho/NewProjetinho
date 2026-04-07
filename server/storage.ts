@@ -77,6 +77,9 @@ import {
   anamnesisRecords,
   clinicalEvolutions,
   treatmentPackages,
+  professionalLocations,
+  type ProfessionalLocation,
+  type InsertProfessionalLocation,
   type AnamnesisTemplate,
   type InsertAnamnesisTemplate,
   type AnamnesisTemplateField,
@@ -1687,6 +1690,7 @@ export class DatabaseStorage implements IStorage {
             startTime: scheduleData.startTime,
             endTime: scheduleData.endTime,
             isEnabled: scheduleData.isEnabled ?? 1,
+            locationId: scheduleData.locationId !== undefined ? scheduleData.locationId : existing.locationId,
             updatedAt: new Date(),
           })
           .where(eq(professionalSchedules.id, existing.id));
@@ -1696,6 +1700,7 @@ export class DatabaseStorage implements IStorage {
           startTime: scheduleData.startTime,
           endTime: scheduleData.endTime,
           isEnabled: scheduleData.isEnabled ?? 1,
+          locationId: scheduleData.locationId !== undefined ? scheduleData.locationId : existing.locationId,
         };
       } else {
         // Create new schedule
@@ -1733,6 +1738,75 @@ export class DatabaseStorage implements IStorage {
       await db.delete(professionalSchedules).where(eq(professionalSchedules.id, id));
     } catch (error: any) {
       console.error("Error deleting professional schedule:", error);
+      throw error;
+    }
+  }
+
+  // Professional Locations CRUD
+  async getProfessionalLocationsByCompany(companyId: number): Promise<ProfessionalLocation[]> {
+    try {
+      const result = await db.select()
+        .from(professionalLocations)
+        .where(eq(professionalLocations.companyId, companyId))
+        .orderBy(professionalLocations.name);
+      return result;
+    } catch (error: any) {
+      console.error("Error getting professional locations:", error);
+      return [];
+    }
+  }
+
+  async getProfessionalLocationById(id: number): Promise<ProfessionalLocation | undefined> {
+    try {
+      const result = await db.select()
+        .from(professionalLocations)
+        .where(eq(professionalLocations.id, id));
+      return result[0];
+    } catch (error: any) {
+      console.error("Error getting professional location by id:", error);
+      return undefined;
+    }
+  }
+
+  async createProfessionalLocation(data: InsertProfessionalLocation): Promise<ProfessionalLocation> {
+    try {
+      const result = await db.insert(professionalLocations).values(data);
+      const insertedId = result[0].insertId;
+      const newLocation = await db.select()
+        .from(professionalLocations)
+        .where(eq(professionalLocations.id, insertedId));
+      return newLocation[0];
+    } catch (error: any) {
+      console.error("Error creating professional location:", error);
+      throw error;
+    }
+  }
+
+  async updateProfessionalLocation(id: number, data: Partial<InsertProfessionalLocation>): Promise<ProfessionalLocation> {
+    try {
+      await db.update(professionalLocations)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(professionalLocations.id, id));
+      const updated = await db.select()
+        .from(professionalLocations)
+        .where(eq(professionalLocations.id, id));
+      return updated[0];
+    } catch (error: any) {
+      console.error("Error updating professional location:", error);
+      throw error;
+    }
+  }
+
+  async deleteProfessionalLocation(id: number): Promise<void> {
+    try {
+      // Remove location references from schedules
+      await db.update(professionalSchedules)
+        .set({ locationId: null })
+        .where(eq(professionalSchedules.locationId, id));
+      // Delete the location
+      await db.delete(professionalLocations).where(eq(professionalLocations.id, id));
+    } catch (error: any) {
+      console.error("Error deleting professional location:", error);
       throw error;
     }
   }

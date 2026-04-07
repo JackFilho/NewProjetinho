@@ -103,9 +103,23 @@ export const companies = mysqlTable("companies", {
   logoUrl: varchar("logo_url", { length: 500 }),
   healthSpecialty: varchar("health_specialty", { length: 100 }),
   primaryColor: varchar("primary_color", { length: 7 }),
+  enableProfessionalLocations: int("enable_professional_locations").notNull().default(0), // 1 = enabled, 0 = disabled
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });
+
+// Professional locations table - reusable locations for scheduling
+export const professionalLocations = mysqlTable("professional_locations", {
+  id: serial("id").primaryKey(),
+  companyId: int("company_id").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  address: varchar("address", { length: 500 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
+});
+
+export type ProfessionalLocation = typeof professionalLocations.$inferSelect;
+export type InsertProfessionalLocation = typeof professionalLocations.$inferInsert;
 
 // Payment alerts table
 export const paymentAlerts = mysqlTable("payment_alerts", {
@@ -354,6 +368,7 @@ export const professionalSchedules = mysqlTable("professional_schedules", {
   startTime: varchar("start_time", { length: 10 }).notNull(), // HH:MM format
   endTime: varchar("end_time", { length: 10 }).notNull(), // HH:MM format
   isEnabled: int("is_enabled").notNull().default(1), // 1=enabled, 0=disabled
+  locationId: int("location_id"), // FK to professional_locations
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow(),
 });

@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Settings, Building2, Lock, User, MessageSquare, Trash2, Plus, Smartphone, QrCode, RefreshCw, Bot, Key, Gift, Calendar, Bell, Clock, CheckCircle, Send, XCircle, LogOut, CreditCard, DollarSign, PhoneOff, PauseCircle, Upload, X, GraduationCap } from "lucide-react";
+import { Settings, Building2, Lock, User, MessageSquare, Trash2, Plus, Smartphone, QrCode, RefreshCw, Bot, Key, Gift, Calendar, Bell, Clock, CheckCircle, Send, XCircle, LogOut, CreditCard, DollarSign, PhoneOff, PauseCircle, Upload, X, GraduationCap, MapPin, Pencil } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useCompanyAuth } from "@/hooks/useCompanyAuth";
 import { FloatingHelpButton } from "@/components/floating-help-button";
@@ -156,6 +156,62 @@ export default function CompanySettings() {
       logoInputRef.current.value = "";
     }
   };
+
+  // Professional locations state
+  const [newLocationName, setNewLocationName] = useState("");
+  const [newLocationAddress, setNewLocationAddress] = useState("");
+  const [editingLocation, setEditingLocation] = useState<{ id: number; name: string; address: string } | null>(null);
+
+  // Professional locations query
+  const { data: professionalLocations = [], refetch: refetchLocations } = useQuery<any[]>({
+    queryKey: ["/api/company/locations"],
+    enabled: !!company,
+  });
+
+  const createLocationMutation = useMutation({
+    mutationFn: async (data: { name: string; address?: string }) => {
+      const response = await apiRequest("/api/company/locations", "POST", data);
+      return response;
+    },
+    onSuccess: () => {
+      toast({ title: "Local criado", description: "Local de atendimento criado com sucesso." });
+      setNewLocationName("");
+      setNewLocationAddress("");
+      refetchLocations();
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro", description: error.message || "Falha ao criar local.", variant: "destructive" });
+    },
+  });
+
+  const updateLocationMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: { name: string; address?: string } }) => {
+      const response = await apiRequest(`/api/company/locations/${id}`, "PUT", data);
+      return response;
+    },
+    onSuccess: () => {
+      toast({ title: "Local atualizado", description: "Local de atendimento atualizado com sucesso." });
+      setEditingLocation(null);
+      refetchLocations();
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro", description: error.message || "Falha ao atualizar local.", variant: "destructive" });
+    },
+  });
+
+  const deleteLocationMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const response = await apiRequest(`/api/company/locations/${id}`, "DELETE");
+      return response;
+    },
+    onSuccess: () => {
+      toast({ title: "Local excluído", description: "Local de atendimento excluído com sucesso." });
+      refetchLocations();
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro", description: error.message || "Falha ao excluir local.", variant: "destructive" });
+    },
+  });
 
   // Company data loaded effect (logging removed for security)
   useEffect(() => {
@@ -378,6 +434,7 @@ export default function CompanySettings() {
       aiAgentPrompt: "",
       agentInactivityTimeout: 30,
       autoSelectProfessional: false,
+      enableProfessionalLocations: false,
       openaiApiKey: "",
       openaiModel: "gpt-4o-mini",
       openaiTemperature: 0.7,
@@ -387,6 +444,7 @@ export default function CompanySettings() {
       aiAgentPrompt: company.aiAgentPrompt || "",
       agentInactivityTimeout: company.agentInactivityTimeout ? Number(company.agentInactivityTimeout) : 30,
       autoSelectProfessional: company.autoSelectProfessional === true,
+      enableProfessionalLocations: company.enableProfessionalLocations === true,
       openaiApiKey: "",
       openaiModel: company.openaiModel || "gpt-4o-mini",
       openaiTemperature: company.openaiTemperature ? Number(company.openaiTemperature) : 0.7,
@@ -2535,6 +2593,153 @@ export default function CompanySettings() {
                       </FormItem>
                     )}
                   />
+
+                  {/* Toggle Atendimento por Local */}
+                  <FormField
+                    control={aiAgentForm.control}
+                    name="enableProfessionalLocations"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">
+                            Atendimento por Local
+                          </FormLabel>
+                          <div className="text-sm text-gray-500">
+                            Permite definir o local de atendimento de cada profissional por dia da semana
+                          </div>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  {/* Gerenciar Locais de Atendimento */}
+                  {aiAgentForm.watch("enableProfessionalLocations") && (
+                    <div className="rounded-lg border p-4 space-y-4">
+                      <div className="flex items-center gap-2">
+                        <MapPin className="h-5 w-5 text-purple-600" />
+                        <h3 className="text-base font-semibold">Locais de Atendimento</h3>
+                      </div>
+                      <p className="text-sm text-gray-500">
+                        Cadastre os locais onde seus profissionais atendem. Depois, em Profissionais &gt; Horários, selecione o local para cada dia da semana.
+                      </p>
+
+                      {/* Lista de locais existentes */}
+                      {professionalLocations.length > 0 && (
+                        <div className="space-y-2">
+                          {professionalLocations.map((location: any) => (
+                            <div key={location.id} className="flex items-center justify-between rounded-md border p-3 bg-gray-50">
+                              {editingLocation?.id === location.id ? (
+                                <div className="flex-1 space-y-2">
+                                  <Input
+                                    value={editingLocation.name}
+                                    onChange={(e) => setEditingLocation({ ...editingLocation, name: e.target.value })}
+                                    placeholder="Nome do local"
+                                    className="h-8"
+                                  />
+                                  <Input
+                                    value={editingLocation.address}
+                                    onChange={(e) => setEditingLocation({ ...editingLocation, address: e.target.value })}
+                                    placeholder="Endereço (opcional)"
+                                    className="h-8"
+                                  />
+                                  <div className="flex gap-2">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      className="bg-purple-600 hover:bg-purple-700 text-white h-7"
+                                      onClick={() => updateLocationMutation.mutate({
+                                        id: editingLocation.id,
+                                        data: { name: editingLocation.name, address: editingLocation.address || undefined }
+                                      })}
+                                      disabled={!editingLocation.name.trim()}
+                                    >
+                                      Salvar
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7"
+                                      onClick={() => setEditingLocation(null)}
+                                    >
+                                      Cancelar
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <div>
+                                    <span className="font-medium text-sm">{location.name}</span>
+                                    {location.address && (
+                                      <span className="text-xs text-gray-500 ml-2">({location.address})</span>
+                                    )}
+                                  </div>
+                                  <div className="flex gap-1">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 w-7 p-0"
+                                      onClick={() => setEditingLocation({ id: location.id, name: location.name, address: location.address || "" })}
+                                    >
+                                      <Pencil className="h-3.5 w-3.5 text-gray-500" />
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 w-7 p-0"
+                                      onClick={() => deleteLocationMutation.mutate(location.id)}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                                    </Button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Adicionar novo local */}
+                      <div className="space-y-2 border-t pt-3">
+                        <Label className="text-sm font-medium">Adicionar novo local</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            value={newLocationName}
+                            onChange={(e) => setNewLocationName(e.target.value)}
+                            placeholder="Nome do local (ex: Clínica Centro)"
+                            className="h-9"
+                          />
+                          <Input
+                            value={newLocationAddress}
+                            onChange={(e) => setNewLocationAddress(e.target.value)}
+                            placeholder="Endereço (opcional)"
+                            className="h-9"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="bg-purple-600 hover:bg-purple-700 text-white h-9 px-3"
+                            onClick={() => createLocationMutation.mutate({
+                              name: newLocationName,
+                              address: newLocationAddress || undefined,
+                            })}
+                            disabled={!newLocationName.trim() || createLocationMutation.isPending}
+                          >
+                            <Plus className="h-4 w-4 mr-1" />
+                            Adicionar
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Configurações OpenAI */}
                   <div className="border-t pt-6 space-y-4">

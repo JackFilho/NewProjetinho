@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Edit, Trash2, Grid, List, User, Mail, Phone, Eye, EyeOff, Clock, Save, Coffee, CalendarOff, Calendar, Archive, ArchiveRestore } from "lucide-react";
+import { Plus, Edit, Trash2, Grid, List, User, Mail, Phone, Eye, EyeOff, Clock, Save, Coffee, CalendarOff, Calendar, Archive, ArchiveRestore, MapPin } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useForm } from "react-hook-form";
@@ -228,7 +228,8 @@ export default function CompanyProfessionals() {
     const defaultSchedule = {
       enabled: false,
       startTime: "09:00",
-      endTime: "18:00"
+      endTime: "18:00",
+      locationId: null as number | null,
     };
     return {
       domingo: defaultSchedule,
@@ -256,7 +257,7 @@ export default function CompanyProfessionals() {
   const timeOptions = generateTimeOptions();
 
   // Handle schedule changes
-  const updateSchedule = (day: string, field: 'enabled' | 'startTime' | 'endTime', value: boolean | string) => {
+  const updateSchedule = (day: string, field: 'enabled' | 'startTime' | 'endTime' | 'locationId', value: boolean | string | number | null) => {
     setSchedules(prev => ({
       ...prev,
       [day]: {
@@ -308,6 +309,7 @@ export default function CompanyProfessionals() {
           startTime: savedDaySchedule.startTime,
           endTime: savedDaySchedule.endTime,
           isEnabled: savedDaySchedule.enabled,
+          locationId: savedDaySchedule.locationId,
         }),
       });
 
@@ -352,6 +354,17 @@ export default function CompanyProfessionals() {
 
   const { data: allProfessionals = [], isLoading } = useQuery<Professional[]>({
     queryKey: ['/api/company/professionals'],
+  });
+
+  // Query company profile to check enableProfessionalLocations
+  const { data: companyProfile } = useQuery<any>({
+    queryKey: ["/api/company/auth/profile"],
+  });
+
+  // Query professional locations
+  const { data: professionalLocations = [] } = useQuery<any[]>({
+    queryKey: ["/api/company/locations"],
+    enabled: companyProfile?.enableProfessionalLocations === true,
   });
 
   // Filtrar profissionais baseado em showArchived
@@ -988,13 +1001,13 @@ export default function CompanyProfessionals() {
         };
 
         const newSchedules: any = {
-          domingo: { enabled: false, startTime: '09:00', endTime: '18:00' },
-          segunda: { enabled: false, startTime: '09:00', endTime: '18:00' },
-          terca: { enabled: false, startTime: '09:00', endTime: '18:00' },
-          quarta: { enabled: false, startTime: '09:00', endTime: '18:00' },
-          quinta: { enabled: false, startTime: '09:00', endTime: '18:00' },
-          sexta: { enabled: false, startTime: '09:00', endTime: '18:00' },
-          sabado: { enabled: false, startTime: '09:00', endTime: '18:00' },
+          domingo: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
+          segunda: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
+          terca: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
+          quarta: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
+          quinta: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
+          sexta: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
+          sabado: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
         };
 
         // Load individual day schedules
@@ -1005,6 +1018,7 @@ export default function CompanyProfessionals() {
               enabled: Boolean(schedule.isEnabled),
               startTime: schedule.startTime,
               endTime: schedule.endTime,
+              locationId: schedule.locationId || null,
             };
           }
         });
@@ -1014,13 +1028,13 @@ export default function CompanyProfessionals() {
     } catch (error) {
       // Fall back to default schedules if loading fails
       setSchedules({
-        domingo: { enabled: false, startTime: '09:00', endTime: '18:00' },
-        segunda: { enabled: false, startTime: '09:00', endTime: '18:00' },
-        terca: { enabled: false, startTime: '09:00', endTime: '18:00' },
-        quarta: { enabled: false, startTime: '09:00', endTime: '18:00' },
-        quinta: { enabled: false, startTime: '09:00', endTime: '18:00' },
-        sexta: { enabled: false, startTime: '09:00', endTime: '18:00' },
-        sabado: { enabled: false, startTime: '09:00', endTime: '18:00' },
+        domingo: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
+        segunda: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
+        terca: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
+        quarta: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
+        quinta: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
+        sexta: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
+        sabado: { enabled: false, startTime: '09:00', endTime: '18:00', locationId: null },
       });
     }
 
@@ -1430,6 +1444,32 @@ export default function CompanyProfessionals() {
                               </Button>
                             </div>
                           </div>
+
+                          {/* Select de Local de Atendimento */}
+                          {schedule.enabled && companyProfile?.enableProfessionalLocations && professionalLocations.length > 0 && (
+                            <div className="mt-2 flex items-center gap-2">
+                              <MapPin className="h-4 w-4 text-purple-500 flex-shrink-0" />
+                              <Label className="text-xs text-gray-600 flex-shrink-0">Local:</Label>
+                              <Select
+                                value={schedule.locationId ? String(schedule.locationId) : "none"}
+                                onValueChange={(value) =>
+                                  updateSchedule(day.key, 'locationId', value === "none" ? null : Number(value))
+                                }
+                              >
+                                <SelectTrigger className="w-[200px] h-8 text-xs">
+                                  <SelectValue placeholder="Selecione o local" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">Nenhum</SelectItem>
+                                  {professionalLocations.map((location: any) => (
+                                    <SelectItem key={location.id} value={String(location.id)}>
+                                      {location.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
 
                           {/* Seção de Pausas */}
                           {schedule.enabled && editingProfessional && (

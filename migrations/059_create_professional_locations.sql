@@ -1,0 +1,9 @@
+-- Tabela de locais de atendimento
+CREATE TABLE IF NOT EXISTS professional_locations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  address VARCHAR(500),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);

@@ -6444,7 +6444,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Get company info
       const companyResult = await db.execute(sql`
-        SELECT id, fantasy_name, document, address, google_maps_location, courses_description, courses_images, courses_pdfs, phone, zip_code, number, neighborhood, city, state, email, password, plan_id, plan_status, is_active, ai_agent_prompt, agent_inactivity_timeout, auto_select_professional, openai_api_key, openai_model, openai_temperature, openai_max_tokens, human_request_enabled, human_request_contact, human_request_message, human_request_keywords, human_request_timeout, course_notification_enabled, course_notification_contact, course_notification_message, course_notification_keywords, course_notification_timeout, ignored_numbers, birthday_message, reset_token, reset_token_expires, tour_enabled, trial_expires_at, trial_alert_shown, subscription_status, n8n_webhook_url, n8n_webhook_enabled, asaas_api_key, asaas_environment, asaas_enabled, financial_password_enabled, logo_url, primary_color, created_at, updated_at
+        SELECT id, fantasy_name, document, address, google_maps_location, courses_description, courses_images, courses_pdfs, phone, zip_code, number, neighborhood, city, state, email, password, plan_id, plan_status, is_active, ai_agent_prompt, agent_inactivity_timeout, auto_select_professional, enable_professional_locations, openai_api_key, openai_model, openai_temperature, openai_max_tokens, human_request_enabled, human_request_contact, human_request_message, human_request_keywords, human_request_timeout, course_notification_enabled, course_notification_contact, course_notification_message, course_notification_keywords, course_notification_timeout, ignored_numbers, birthday_message, reset_token, reset_token_expires, tour_enabled, trial_expires_at, trial_alert_shown, subscription_status, n8n_webhook_url, n8n_webhook_enabled, asaas_api_key, asaas_environment, asaas_enabled, financial_password_enabled, logo_url, primary_color, created_at, updated_at
         FROM companies WHERE id = ${companyId}
       `);
 
@@ -6479,6 +6479,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         aiAgentPrompt: company.ai_agent_prompt,
         agentInactivityTimeout: company.agent_inactivity_timeout,
         autoSelectProfessional: company.auto_select_professional === 1,
+        enableProfessionalLocations: company.enable_professional_locations === 1,
         hasOpenaiApiKey: !!company.openai_api_key,
         openaiModel: company.openai_model,
         openaiTemperature: company.openai_temperature ? parseFloat(company.openai_temperature) : 0.7,
@@ -6742,7 +6743,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
-      const { aiAgentPrompt, agentInactivityTimeout, autoSelectProfessional, openaiApiKey, openaiModel, openaiTemperature, openaiMaxTokens } = req.body;
+      const { aiAgentPrompt, agentInactivityTimeout, autoSelectProfessional, enableProfessionalLocations, openaiApiKey, openaiModel, openaiTemperature, openaiMaxTokens } = req.body;
 
       // Se a key não foi enviada, verificar se já existe no banco
       if (!openaiApiKey || openaiApiKey.trim().length === 0) {
@@ -6775,6 +6776,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updateData.autoSelectProfessional = autoSelectProfessional ? 1 : 0;
       }
 
+      // Only add enableProfessionalLocations if provided
+      if (enableProfessionalLocations !== undefined && enableProfessionalLocations !== null) {
+        updateData.enableProfessionalLocations = enableProfessionalLocations ? 1 : 0;
+      }
+
       const updatedCompany = await storage.updateCompany(companyId, updateData);
 
       console.log('🔧 [AI-AGENT] Updated company aiAgentPrompt:', updatedCompany.aiAgentPrompt?.substring(0, 100));
@@ -6786,6 +6792,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         aiAgentPrompt: updatedCompany.aiAgentPrompt,
         agentInactivityTimeout: updatedCompany.agentInactivityTimeout,
         autoSelectProfessional: updatedCompany.autoSelectProfessional === 1,
+        enableProfessionalLocations: updatedCompany.enableProfessionalLocations === 1,
         hasOpenaiApiKey: !!updatedCompany.openaiApiKey,
         openaiModel: updatedCompany.openaiModel,
         openaiTemperature: updatedCompany.openaiTemperature ? parseFloat(updatedCompany.openaiTemperature.toString()) : 0.7,
@@ -9410,6 +9417,34 @@ if (ignoredNumbers !== undefined) {
                 console.log('📋 Professional availability info generated:', availabilityInfo);
               }
 
+              // Build location info per professional per day if enabled
+              let locationInfo = '';
+              if (company.enableProfessionalLocations === 1) {
+                const locations = await storage.getProfessionalLocationsByCompany(company.id);
+                const locationMap = new Map(locations.map(l => [l.id, l]));
+                const dayNames = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+
+                const profLocationLines: string[] = [];
+                for (const prof of activeProfessionals) {
+                  const schedules = await storage.getProfessionalSchedules(prof.id);
+                  const daysWithLocation = schedules
+                    .filter(s => s.isEnabled === 1 && s.locationId)
+                    .map(s => {
+                      const loc = locationMap.get(s.locationId!);
+                      return loc ? `  - ${dayNames[s.dayOfWeek]}: ${loc.name}${loc.address ? ` (${loc.address})` : ''}` : null;
+                    })
+                    .filter(Boolean);
+
+                  if (daysWithLocation.length > 0) {
+                    profLocationLines.push(`${prof.name}:\n${daysWithLocation.join('\n')}`);
+                  }
+                }
+
+                if (profLocationLines.length > 0) {
+                  locationInfo = `\nLOCAIS DE ATENDIMENTO POR DIA DA SEMANA:\n${profLocationLines.join('\n\n')}\n\nIMPORTANTE: Quando o cliente agendar, informe o local de atendimento correspondente ao dia escolhido.\n`;
+                }
+              }
+
               // Check if user mentioned a specific date beyond 7 days and get real-time availability
               const specificDateInfo = await checkSpecificDateAvailability(
                 messageText,
@@ -9542,6 +9577,7 @@ ${availableServicesWithPrices || 'Nenhum serviço cadastrado no momento'}
 
 ${availabilityInfo}
 ${specificDateInfo}
+${locationInfo}
 
 ═══════════════════════════════════════════════════════════════════
 🚨 REGRA ABSOLUTAMENTE OBRIGATÓRIA - BUSCAR HORÁRIOS 🚨
@@ -14958,6 +14994,88 @@ Obrigado pela preferência! 🙏`;
     }
   });
 
+  // Professional Locations CRUD
+  app.get('/api/company/locations', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+      const locations = await storage.getProfessionalLocationsByCompany(companyId);
+      res.json(locations);
+    } catch (error) {
+      console.error("Error fetching locations:", error);
+      res.status(500).json({ message: "Erro ao buscar locais" });
+    }
+  });
+
+  app.post('/api/company/locations', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+      const { name, address } = req.body;
+      if (!name || name.trim().length === 0) {
+        return res.status(400).json({ message: "Nome do local é obrigatório" });
+      }
+      const location = await storage.createProfessionalLocation({
+        companyId,
+        name: name.trim(),
+        address: address?.trim() || null,
+      });
+      res.status(201).json(location);
+    } catch (error) {
+      console.error("Error creating location:", error);
+      res.status(500).json({ message: "Erro ao criar local" });
+    }
+  });
+
+  app.put('/api/company/locations/:id', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+      const id = parseInt(req.params.id);
+      const existing = await storage.getProfessionalLocationById(id);
+      if (!existing || existing.companyId !== companyId) {
+        return res.status(404).json({ message: "Local não encontrado" });
+      }
+      const { name, address } = req.body;
+      if (!name || name.trim().length === 0) {
+        return res.status(400).json({ message: "Nome do local é obrigatório" });
+      }
+      const updated = await storage.updateProfessionalLocation(id, {
+        name: name.trim(),
+        address: address?.trim() || null,
+      });
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating location:", error);
+      res.status(500).json({ message: "Erro ao atualizar local" });
+    }
+  });
+
+  app.delete('/api/company/locations/:id', isCompanyAuthenticated, async (req: any, res) => {
+    try {
+      const companyId = req.session.companyId;
+      if (!companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+      const id = parseInt(req.params.id);
+      const existing = await storage.getProfessionalLocationById(id);
+      if (!existing || existing.companyId !== companyId) {
+        return res.status(404).json({ message: "Local não encontrado" });
+      }
+      await storage.deleteProfessionalLocation(id);
+      res.json({ message: "Local excluído com sucesso" });
+    } catch (error) {
+      console.error("Error deleting location:", error);
+      res.status(500).json({ message: "Erro ao excluir local" });
+    }
+  });
+
   // Professional Schedules API (individual hours per day)
   app.get('/api/company/professionals/:professionalId/schedules', isCompanyAuthenticated, async (req: any, res) => {
     try {
@@ -14997,7 +15115,7 @@ Obrigado pela preferência! 🙏`;
         return res.status(404).json({ message: "Profissional não encontrado" });
       }
 
-      const { dayOfWeek, startTime, endTime, isEnabled } = req.body;
+      const { dayOfWeek, startTime, endTime, isEnabled, locationId } = req.body;
 
       if (dayOfWeek === undefined || !startTime || !endTime) {
         return res.status(400).json({ message: "Dia, horário de início e fim são obrigatórios" });
@@ -15009,6 +15127,7 @@ Obrigado pela preferência! 🙏`;
         startTime,
         endTime,
         isEnabled: isEnabled !== undefined ? (isEnabled ? 1 : 0) : 1,
+        locationId: locationId !== undefined ? locationId : null,
       });
 
       res.status(200).json(schedule);
