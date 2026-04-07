@@ -562,7 +562,7 @@ export default function CompanySettings() {
   // Force update enableProfessionalLocations when company data changes
   useEffect(() => {
     if (company) {
-      aiAgentForm.setValue('enableProfessionalLocations', !!(company as any).enableProfessionalLocations, { shouldValidate: false, shouldDirty: false });
+      aiAgentForm.setValue('enableProfessionalLocations', (company as any).enableProfessionalLocations === true, { shouldValidate: false, shouldDirty: false });
     }
   }, [(company as any)?.enableProfessionalLocations, aiAgentForm]);
 
