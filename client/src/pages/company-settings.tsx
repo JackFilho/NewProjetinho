@@ -2610,7 +2610,7 @@ export default function CompanySettings() {
                         </div>
                         <FormControl>
                           <Switch
-                            checked={field.value}
+                            checked={!!field.value}
                             onCheckedChange={field.onChange}
                           />
                         </FormControl>

@@ -1462,7 +1462,7 @@ export default function CompanyProfessionals() {
                                 <SelectContent>
                                   <SelectItem value="none">Nenhum</SelectItem>
                                   <SelectItem value="0">
-                                    Endereço Principal{companyProfile?.address ? ` (${companyProfile.address}${companyProfile.number ? `, ${companyProfile.number}` : ''})` : ''}
+                                    {[companyProfile?.address, companyProfile?.number ? `nº ${companyProfile.number}` : null, companyProfile?.neighborhood].filter(Boolean).join(', ') || 'Endereço da empresa'}
                                   </SelectItem>
                                   {professionalLocations.map((location: any) => (
                                     <SelectItem key={location.id} value={String(location.id)}>

@@ -9440,7 +9440,7 @@ if (ignoredNumbers !== undefined) {
                     .map(s => {
                       if (s.locationId === 0) {
                         // Endereço principal da empresa
-                        return `  - ${dayNames[s.dayOfWeek]}: Endereço Principal${companyAddress ? ` (${companyAddress})` : ''}`;
+                        return `  - ${dayNames[s.dayOfWeek]}: ${companyAddress || 'Endereço da empresa'}`;
                       }
                       const loc = locationMap.get(s.locationId!);
                       return loc ? `  - ${dayNames[s.dayOfWeek]}: ${loc.name}${loc.address ? ` (${loc.address})` : ''}` : null;
