@@ -20,7 +20,7 @@ import { useCompanyAuth } from "@/hooks/useCompanyAuth";
 import { FloatingHelpButton } from "@/components/floating-help-button";
 import { z } from "zod";
 import { companyProfileSchema, companyPasswordSchema, companyAiAgentSchema, companyHumanRequestSchema, companyCourseNotificationSchema, companyIgnoredNumbersSchema, whatsappInstanceSchema, webhookConfigSchema, companySettingsSchema, asaasConfigSchema } from "@/lib/validations";
-// import { MetaEmbeddedSignup } from "@/components/meta-embedded-signup"; // Temporariamente desabilitado até aprovação Tech Provider
+import { MetaEmbeddedSignup } from "@/components/meta-embedded-signup";
 import { MetaManualConnect } from "@/components/meta-manual-connect";
 
 // Função formatDocument local para evitar problemas de importação
@@ -1808,7 +1808,14 @@ export default function CompanySettings() {
             </CardContent>
           </Card>
 
-          {/* Conexão manual WhatsApp - temporário até aprovação Tech Provider */}
+          {/* Embedded Signup — fluxo oficial Meta (Login com Facebook) */}
+          <MetaEmbeddedSignup
+            onComplete={() => {
+              queryClient.invalidateQueries({ queryKey: ["/api/company/whatsapp/instances"] });
+            }}
+          />
+
+          {/* Conexão manual WhatsApp — método alternativo (entrada manual de token) */}
           <MetaManualConnect
             onComplete={() => {
               queryClient.invalidateQueries({ queryKey: ["/api/company/whatsapp/instances"] });
