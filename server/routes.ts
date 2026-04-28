@@ -3164,8 +3164,10 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
         }
       }
 
-      // Extract name
+      // Extract name (supports both "Nome" and "Startup" labels)
       const namePatterns = [
+        /🚀\s*Startup:\s*(.+?)(?:\n|$)/i,
+        /Startup:\s*(.+?)(?:\n|$)/i,
         /👤\s*Nome:\s*(.+?)(?:\n|$)/i,
         /Nome:\s*(.+?)(?:\n|$)/i,
       ];
@@ -9731,26 +9733,27 @@ ETAPA 2 - SERVIÇO:
    → "Aqui estão os serviços disponíveis:\n[lista]\n\nQual serviço você gostaria?"
    → AGUARDE o cliente escolher o serviço`}
 
-ETAPA ${shouldAutoSelect ? '2' : '3'} - DATA:
-   → APÓS o cliente escolher o SERVIÇO (ou serviços, se ele pedir mais de um), pergunte a data
-   → "Em qual dia você gostaria de agendar?"
-   → AGUARDE o cliente informar a data
+ETAPA ${shouldAutoSelect ? '2' : '3'} - HORÁRIOS DISPONÍVEIS (PROATIVO):
+   → APÓS o cliente escolher o SERVIÇO, NÃO pergunte a data!
+   → Mostre PROATIVAMENTE os horários disponíveis começando pelo PRÓXIMO DIA ÚTIL
+   → Use o comando: [MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
+   → Use a data de AMANHÃ ou do PRÓXIMO DIA que o profissional trabalha (consulte "PRÓXIMOS DIAS DA SEMANA" e os dias de trabalho do profissional)
+   → Resposta sugerida: "Vou te mostrar os horários disponíveis para [próximo dia útil]:\n[MOSTRAR_HORARIOS_LIVRES:...]"
+   → Se o cliente quiser outro dia específico, use o comando novamente com a data dele
+   → ⚠️ NÃO pergunte "que dia?" - mostre os horários direto e deixe o cliente escolher dia+hora juntos
 
-ETAPA ${shouldAutoSelect ? '3' : '4'} - HORÁRIO:
-   → APÓS ter a data, use o comando para buscar horários:
-   → Se for UM serviço: [MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
-   → Se o cliente pediu MÚLTIPLOS serviços: [MOSTRAR_HORARIOS_LIVRES_MULTI:SERVICO1,SERVICO2:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
-   → Se o resultado mostrar HORÁRIOS (ex: "09:00 | 10:00 | 11:00"): pergunte "Qual horário você prefere?"
-   → Se o resultado mostrar INDISPONIBILIDADE (contém "não trabalha", "não disponível", "não temos horários", "agenda cheia", etc): NÃO ADICIONE NADA - a mensagem já está completa com a pergunta sobre outro dia!
+ETAPA ${shouldAutoSelect ? '3' : '4'} - ESCOLHA DO HORÁRIO:
+   → APÓS mostrar os horários, AGUARDE o cliente escolher um horário (e implicitamente um dia)
+   → Se houver múltiplos dias mostrados, confirme: "Perfeito! Confirmando: [data] às [horário], correto?"
 
-ETAPA ${shouldAutoSelect ? '4' : '5'} - NOME:
-   → SOMENTE APÓS o cliente escolher o HORÁRIO, pergunte o nome
-   → "Qual é o seu nome?"
-   → AGUARDE o cliente informar o nome
-   → ⚠️ NUNCA pergunte o nome ANTES do horário!
+ETAPA ${shouldAutoSelect ? '4' : '5'} - NOME DA STARTUP:
+   → SOMENTE APÓS o cliente escolher o HORÁRIO, pergunte o nome da startup
+   → "Qual é o nome da sua startup?"
+   → AGUARDE o cliente informar o nome da startup
+   → ⚠️ NUNCA pergunte o nome da startup ANTES do horário!
 
 ETAPA ${shouldAutoSelect ? '5' : '6'} - E-MAIL:
-   → APÓS o cliente informar o nome, pergunte o e-mail
+   → APÓS o cliente informar o nome da startup, pergunte o e-mail
    → "Qual é o seu e-mail? (será usado para enviar o convite da reunião)"
    → AGUARDE o cliente informar o e-mail
    → ⚠️ NUNCA pule esta etapa - o e-mail é obrigatório para o agendamento!
@@ -9760,9 +9763,9 @@ ETAPA ${shouldAutoSelect ? '6' : '7'} - CONFIRMAÇÃO:
 
 ⚠️ REGRAS CRÍTICAS:
 - NUNCA pule etapas - siga a ordem EXATA acima
-- NUNCA pergunte o NOME antes de ter o HORÁRIO
-- NUNCA pergunte o E-MAIL antes de ter o NOME
-- NUNCA pergunte a DATA antes de ter o SERVIÇO
+- NUNCA pergunte o NOME DA STARTUP antes de ter o HORÁRIO
+- NUNCA pergunte o E-MAIL antes do NOME DA STARTUP
+- NUNCA pergunte "que dia você quer?" - sempre mostre os horários disponíveis proativamente
 - Se o cliente pular etapas, volte e colete os dados faltantes NA ORDEM CORRETA
 - Ao listar serviços, mostre APENAS o nome (sem preço nem duração)
 
@@ -9779,8 +9782,8 @@ INSTRUÇÕES ADICIONAIS:
   * NÃO invente horários - confie apenas no que o comando retornar
 - NÃO peça o telefone do cliente - o sistema usará automaticamente o número do WhatsApp
 - REGRA OBRIGATÓRIA DE RESUMO E CONFIRMAÇÃO:
-  * Quando tiver TODOS os dados (profissional, serviço, nome, e-mail, data/hora disponível), NÃO confirme imediatamente
-  * PRIMEIRO envie um RESUMO COMPLETO do agendamento: "Perfeito! Vou confirmar seu agendamento:\n\n👤 Nome: [nome]\n📧 E-mail: [email]\n🏢 Profissional: [profissional]\n💼 Serviço: [serviço]\n📅 Data: [dia da semana], [data]\n🕐 Horário: [horário]\n\nEstá tudo correto? Responda SIM para confirmar ou me informe se algo precisa ser alterado."
+  * Quando tiver TODOS os dados (profissional, serviço, nome da startup, e-mail, data/hora disponível), NÃO confirme imediatamente
+  * PRIMEIRO envie um RESUMO COMPLETO do agendamento: "Perfeito! Vou confirmar seu agendamento:\n\n🚀 Startup: [nome da startup]\n📧 E-mail: [email]\n🏢 Profissional: [profissional]\n💼 Serviço: [serviço]\n📅 Data: [dia da semana], [data]\n🕐 Horário: [horário]\n\nEstá tudo correto? Responda SIM para confirmar ou me informe se algo precisa ser alterado."
   * AGUARDE o cliente responder "SIM", "OK", "CONFIRMO" ou confirmação similar
   * APENAS APÓS a confirmação explícita (SIM, OK, CONFIRMO), confirme o agendamento final
   * Se cliente pedir ALTERAÇÃO (ex: "meu nome está errado", "quero outro horário", "mudar para terça"), processe a alteração normalmente e envie novo resumo
@@ -16826,8 +16829,10 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
         }
       }
 
-      // Extract name
+      // Extract name (supports both "Nome" and "Startup" labels)
       const namePatterns = [
+        /🚀\s*Startup:\s*(.+?)(?:\n|$)/i,
+        /Startup:\s*(.+?)(?:\n|$)/i,
         /👤\s*Nome:\s*(.+?)(?:\n|$)/i,
         /Nome:\s*(.+?)(?:\n|$)/i,
       ];
