@@ -1,0 +1,119 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Executa semanalmente às segundas 9h (UTC)
+    - cron: "0 9 * * 1"
+
+jobs:
+  # 1. Scanning de dependências vulneráveis
+  dependency-audit:
+    name: Auditoria de Dependências
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: NPM Audit (vulnerabilidades conhecidas)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: NPM Audit (relatório JSON)
+        run: npm audit --json > audit-report.json || true
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report
+          path: audit-report.json
+
+  # 2. Detecção de secrets no código
+  secret-detection:
+    name: Detecção de Secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect secrets com trufflehog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
+
+  # 3. Análise estática de segurança (SAST)
+  sast:
+    name: Análise Estática (SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npm run check
+        continue-on-error: true
+
+  # 4. Checklist de configurações de segurança
+  security-config:
+    name: Verificação de Configuração
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar .env não commitado
+        run: |
+          if git ls-files --error-unmatch .env 2>/dev/null; then
+            echo "::error::Arquivo .env encontrado no repositório!"
+            exit 1
+          fi
+          echo "✅ .env não está no repositório"
+
+      - name: Verificar .env.example existe
+        run: |
+          if [ ! -f .env.example ]; then
+            echo "::warning::.env.example não encontrado"
+          else
+            echo "✅ .env.example encontrado"
+          fi
+
+      - name: Verificar secrets hardcoded
+        run: |
+          # Procurar padrões comuns de secrets
+          FOUND=0
+          for pattern in "password\s*=\s*['\"][^'\"]*['\"]" "sk-[A-Za-z0-9]{20,}" "AKIA[0-9A-Z]{16}"; do
+            MATCHES=$(grep -rn --include="*.ts" --include="*.js" --include="*.tsx" \
+              -E "$pattern" server/ client/ shared/ 2>/dev/null \
+              | grep -v "node_modules" \
+              | grep -v ".env.example" \
+              | grep -v "detect-secrets" \
+              | grep -v "validation-schemas" || true)
+            if [ -n "$MATCHES" ]; then
+              echo "::warning::Possível secret encontrado:"
+              echo "$MATCHES"
+              FOUND=1
+            fi
+          done
+          if [ $FOUND -eq 0 ]; then
+            echo "✅ Nenhum secret hardcoded detectado"
+          fi

@@ -1,0 +1,355 @@
+import "https://deno.land/x/xhr@0.1.0/mod.ts";
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+const supabaseUrl = Deno.env.get('SUPABASE_URL') || 'https://rpeejpqxprpacpzqmoel.supabase.co';
+const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+const openAIApiKey = Deno.env.get('OPENAI_API_KEY');
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
+};
+serve(async (req)=>{
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      headers: corsHeaders
+    });
+  }
+  try {
+    console.log('🚀 === WEBHOOK RECEBIDO (SEM AUTENTICAÇÃO) ===');
+    console.log('⏰ Timestamp:', new Date().toISOString());
+    console.log('🔗 Method:', req.method);
+    console.log('🌐 URL:', req.url);
+    console.log('📋 Headers:', JSON.stringify([
+      ...req.headers.entries()
+    ]));
+    const webhookData = await req.json();
+    console.log('📦 Dados completos do webhook:', JSON.stringify(webhookData, null, 2));
+    // Verificar diferentes formatos de webhook da Evolution API
+    let messageData = null;
+    let instanceName = null;
+    let phoneNumber = null;
+    let messageText = null;
+    // Formato 1: messages.upsert (padrão Evolution)
+    if (webhookData.event === 'messages.upsert' && webhookData.data) {
+      console.log('✅ Formato detectado: messages.upsert');
+      messageData = webhookData.data;
+      instanceName = webhookData.instance;
+      if (messageData.key?.fromMe) {
+        console.log('⚠️ Mensagem própria ignorada (fromMe: true)');
+        return new Response('OK - Mensagem própria', {
+          status: 200
+        });
+      }
+      phoneNumber = messageData.key?.remoteJid?.replace('@s.whatsapp.net', '');
+      messageText = messageData.message?.conversation || messageData.message?.extendedTextMessage?.text;
+    } else if (webhookData.event === 'MESSAGES_UPSERT' && webhookData.data) {
+      console.log('✅ Formato detectado: MESSAGES_UPSERT');
+      messageData = webhookData.data;
+      instanceName = webhookData.instance;
+      if (messageData.key?.fromMe) {
+        console.log('⚠️ Mensagem própria ignorada (fromMe: true)');
+        return new Response('OK - Mensagem própria', {
+          status: 200
+        });
+      }
+      phoneNumber = messageData.key?.remoteJid?.replace('@s.whatsapp.net', '');
+      messageText = messageData.message?.conversation || messageData.message?.extendedTextMessage?.text;
+    } else if (webhookData.message && webhookData.key) {
+      console.log('✅ Formato detectado: message direto');
+      messageData = webhookData;
+      instanceName = webhookData.instanceName || webhookData.instance;
+      if (webhookData.key?.fromMe) {
+        console.log('⚠️ Mensagem própria ignorada (fromMe: true)');
+        return new Response('OK - Mensagem própria', {
+          status: 200
+        });
+      }
+      phoneNumber = webhookData.key?.remoteJid?.replace('@s.whatsapp.net', '');
+      messageText = webhookData.message?.conversation || webhookData.message?.extendedTextMessage?.text;
+    } else if (webhookData.instance && webhookData.data?.message) {
+      console.log('✅ Formato detectado: webhook por eventos');
+      messageData = webhookData.data;
+      instanceName = webhookData.instance;
+      if (messageData.key?.fromMe) {
+        console.log('⚠️ Mensagem própria ignorada (fromMe: true)');
+        return new Response('OK - Mensagem própria', {
+          status: 200
+        });
+      }
+      phoneNumber = messageData.key?.remoteJid?.replace('@s.whatsapp.net', '');
+      messageText = messageData.message?.conversation || messageData.message?.extendedTextMessage?.text;
+    } else if (webhookData.key && webhookData.message) {
+      console.log('✅ Formato detectado: dados diretos');
+      messageData = webhookData;
+      instanceName = webhookData.instanceName || 'default';
+      if (webhookData.key?.fromMe) {
+        console.log('⚠️ Mensagem própria ignorada (fromMe: true)');
+        return new Response('OK - Mensagem própria', {
+          status: 200
+        });
+      }
+      phoneNumber = webhookData.key?.remoteJid?.replace('@s.whatsapp.net', '');
+      messageText = webhookData.message?.conversation || webhookData.message?.extendedTextMessage?.text;
+    } else {
+      console.log('❌ Formato não reconhecido ou evento ignorado.');
+      console.log('🔍 Event:', webhookData.event);
+      console.log('📊 Estrutura do webhook:', Object.keys(webhookData));
+      console.log('🔍 Dados completos para análise:', JSON.stringify(webhookData, null, 2));
+      // Log mais detalhado para depuração
+      if (webhookData.data) {
+        console.log('📦 Dados dentro de .data:', JSON.stringify(webhookData.data, null, 2));
+      }
+      return new Response('OK - Evento ignorado ou formato não reconhecido', {
+        status: 200
+      });
+    }
+    console.log('🎯 === DADOS EXTRAÍDOS ===');
+    console.log('🏢 Instance:', instanceName);
+    console.log('📞 Phone:', phoneNumber);
+    console.log('💬 Message:', messageText);
+    // Validações mais rigorosas
+    if (!instanceName) {
+      console.log('❌ ERRO: instanceName não encontrado');
+      return new Response('OK - Instance name não encontrado', {
+        status: 200
+      });
+    }
+    if (!phoneNumber) {
+      console.log('❌ ERRO: phoneNumber não encontrado');
+      return new Response('OK - Phone number não encontrado', {
+        status: 200
+      });
+    }
+    if (!messageText || messageText.trim().length === 0) {
+      console.log('❌ ERRO: messageText vazio ou não encontrado');
+      return new Response('OK - Mensagem vazia', {
+        status: 200
+      });
+    }
+    // Limpar o número de telefone
+    phoneNumber = phoneNumber.replace(/[^\d]/g, '');
+    console.log('📱 Telefone limpo:', phoneNumber);
+    // Inicializar cliente Supabase
+    if (!supabaseKey) {
+      console.error('❌ ERRO: SUPABASE_SERVICE_ROLE_KEY não configurada');
+      return new Response(JSON.stringify({
+        error: 'Configuração do servidor incompleta'
+      }), {
+        status: 500,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    console.log('✅ === SUPABASE INICIALIZADO ===');
+    // Buscar a empresa pela instância do WhatsApp
+    console.log('🔍 Buscando empresa para instância:', instanceName);
+    const { data: whatsappInstance, error: instanceError } = await supabase.from('whatsapp_instances').select('empresa_id').eq('instance_name', instanceName).single();
+    if (instanceError || !whatsappInstance) {
+      console.error('❌ ERRO: Instância não encontrada:', instanceError);
+      return new Response(JSON.stringify({
+        error: 'Instância não encontrada',
+        instance: instanceName
+      }), {
+        status: 404,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    const empresaId = whatsappInstance.empresa_id;
+    console.log('🏢 Empresa encontrada:', empresaId);
+    // Buscar configurações de IA da empresa
+    console.log('🤖 Buscando configurações de IA...');
+    const { data: configIA, error: configError } = await supabase.from('empresa_configuracoes_ia').select('*').eq('empresa_id', empresaId).eq('ativo', true).single();
+    if (configError || !configIA) {
+      console.log('⚠️ AVISO: IA não configurada ou inativa para esta empresa');
+      return new Response(JSON.stringify({
+        message: 'IA não configurada ou inativa',
+        empresa_id: empresaId
+      }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    console.log('⚙️ Configurações de IA encontradas:', configIA);
+    // Buscar configurações do WhatsApp
+    console.log('📱 Buscando configurações do WhatsApp...');
+    const { data: configs, error: configsError } = await supabase.from('configuracoes').select('chave, valor').in('chave', [
+      'whatsappUrl',
+      'whatsappChave'
+    ]);
+    if (configsError || !configs || configs.length < 2) {
+      console.error('❌ ERRO: Configurações do WhatsApp não encontradas:', configsError);
+      return new Response(JSON.stringify({
+        error: 'Configurações do WhatsApp não encontradas'
+      }), {
+        status: 500,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    const whatsappConfig = configs.find((c)=>c.chave === 'whatsappUrl');
+    const whatsappKey = configs.find((c)=>c.chave === 'whatsappChave');
+    if (!whatsappConfig?.valor || !whatsappKey?.valor) {
+      console.error('❌ ERRO: URLs ou chaves do WhatsApp não configuradas');
+      return new Response(JSON.stringify({
+        error: 'Configurações do WhatsApp incompletas'
+      }), {
+        status: 500,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    const evolutionUrl = whatsappConfig.valor;
+    const evolutionApiKey = whatsappKey.valor;
+    console.log('📱 Configurações WhatsApp:', {
+      url: evolutionUrl,
+      hasKey: !!evolutionApiKey
+    });
+    console.log('🤖 === CHAMANDO FUNÇÃO CHAT-IA ===');
+    // Chamar a função chat-ia para obter resposta
+    const { data: chatResponse, error: chatError } = await supabase.functions.invoke('chat-ia', {
+      body: {
+        message: messageText,
+        empresa_id: empresaId,
+        cliente_telefone: phoneNumber,
+        configuracoes: {
+          prompt_sistema: configIA.prompt_sistema,
+          personalidade: configIA.personalidade,
+          modelo: configIA.modelo,
+          temperatura: configIA.temperatura,
+          max_tokens: configIA.max_tokens
+        }
+      }
+    });
+    if (chatError) {
+      console.error('❌ ERRO ao chamar chat-ia:', chatError);
+      return new Response(JSON.stringify({
+        error: 'Erro na função chat-ia',
+        details: chatError
+      }), {
+        status: 500,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    // CORREÇÃO: Usar 'resposta' em vez de 'response'
+    if (!chatResponse?.resposta) {
+      console.error('❌ ERRO: Resposta da IA vazia:', chatResponse);
+      return new Response(JSON.stringify({
+        error: 'Resposta da IA vazia'
+      }), {
+        status: 500,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    console.log('🤖 Resposta da IA obtida:', chatResponse.resposta);
+    console.log('📤 === ENVIANDO RESPOSTA VIA EVOLUTION ===');
+    // Usar EXATAMENTE o mesmo formato que funcionou no teste direto
+    const sendMessageUrl = `${evolutionUrl}/message/sendText/${instanceName}`;
+    const sendMessageBody = {
+      number: phoneNumber,
+      text: chatResponse.resposta
+    };
+    console.log('📤 === ENVIANDO COM FORMATO QUE FUNCIONOU NO TESTE ===');
+    console.log('🌐 URL de envio:', sendMessageUrl);
+    console.log('📦 Corpo da mensagem:', JSON.stringify(sendMessageBody, null, 2));
+    console.log('🔑 API Key configurada:', evolutionApiKey ? 'SIM' : 'NÃO');
+    try {
+      const evolutionResponse = await fetch(sendMessageUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': evolutionApiKey
+        },
+        body: JSON.stringify(sendMessageBody)
+      });
+      console.log('📊 Status da resposta Evolution:', evolutionResponse.status);
+      console.log('📋 Headers da resposta Evolution:', JSON.stringify([
+        ...evolutionResponse.headers.entries()
+      ]));
+      const evolutionResult = await evolutionResponse.text();
+      console.log('📤 Resposta da Evolution API (raw):', evolutionResult);
+      let parsedResult;
+      try {
+        parsedResult = JSON.parse(evolutionResult);
+        console.log('📦 Resposta da Evolution API (parsed):', JSON.stringify(parsedResult, null, 2));
+      } catch (parseError) {
+        console.log('⚠️ Não foi possível fazer parse da resposta, mantendo como texto');
+        parsedResult = {
+          message: evolutionResult
+        };
+      }
+      if (evolutionResponse.ok) {
+        console.log('🎉 === SUCESSO: MENSAGEM ENVIADA ===');
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Resposta enviada com sucesso',
+          response: chatResponse.resposta,
+          evolutionResponse: parsedResult
+        }), {
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      } else {
+        console.error('❌ ERRO no envio:', evolutionResponse.status, evolutionResult);
+        return new Response(JSON.stringify({
+          error: 'Erro na Evolution API',
+          status: evolutionResponse.status,
+          details: parsedResult
+        }), {
+          status: 500,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+    } catch (fetchError) {
+      console.error('❌ ERRO de conexão com Evolution API:', fetchError);
+      return new Response(JSON.stringify({
+        error: 'Erro de conexão com Evolution API',
+        details: fetchError.message
+      }), {
+        status: 500,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+  } catch (error) {
+    console.error('💥 === ERRO GERAL NO WEBHOOK ===');
+    console.error('❌ Erro:', error);
+    console.error('📚 Stack:', error.stack);
+    return new Response(JSON.stringify({
+      error: error.message || 'Erro interno do servidor',
+      stack: error.stack
+    }), {
+      status: 500,
+      headers: {
+        ...corsHeaders,
+        'Content-Type': 'application/json'
+      }
+    });
+  }
+});
