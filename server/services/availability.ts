@@ -170,7 +170,7 @@ export async function getAvailableSlots(
         availableSlots: [],
         occupiedSlots: [],
         breaks: [],
-        message: 'Profissional não encontrado',
+        message: 'Mentor não encontrado',
         error: 'PROFESSIONAL_NOT_FOUND'
       };
     }
@@ -212,11 +212,10 @@ export async function getAvailableSlots(
     let isExceptional = false;
 
     if (exceptionalSchedules.length > 0) {
-      // Usar horário excepcional
-      workStartTime = exceptionalSchedules[0].startTime;
-      workEndTime = exceptionalSchedules[0].endTime;
+      const sorted = [...exceptionalSchedules].sort((a: any, b: any) => a.startTime.localeCompare(b.startTime));
+      workStartTime = sorted[0].startTime;
+      workEndTime = sorted.reduce((max: string, s: any) => s.endTime > max ? s.endTime : max, sorted[0].endTime);
       isExceptional = true;
-      // Horário excepcional aplicado
     } else {
       // Usar horário regular
       const daySchedule = regularSchedules.find(s => s.dayOfWeek === dayOfWeek && s.isEnabled);
@@ -249,9 +248,17 @@ export async function getAvailableSlots(
     let dayBreaks: { startTime: string; endTime: string }[] = [];
 
     if (isExceptional && exceptionalSchedules.length > 0) {
-      // Usar pausas específicas do horário excepcional
-      const exceptionBreaks = await storage.getExceptionBreaks(exceptionalSchedules[0].id);
-      dayBreaks = exceptionBreaks;
+      // Combinar pausas de todos os horários excepcionais + gaps entre eles
+      const sorted = [...exceptionalSchedules].sort((a: any, b: any) => a.startTime.localeCompare(b.startTime));
+      for (let i = 0; i < sorted.length - 1; i++) {
+        if (sorted[i].endTime < sorted[i + 1].startTime) {
+          dayBreaks.push({ startTime: sorted[i].endTime, endTime: sorted[i + 1].startTime });
+        }
+      }
+      for (const exc of exceptionalSchedules) {
+        const excBreaks = await storage.getExceptionBreaks(exc.id);
+        dayBreaks.push(...excBreaks);
+      }
     } else {
       // Usar pausas regulares por dia da semana
       const dayOfWeekKeyMap: { [key: number]: string } = {
@@ -380,7 +387,7 @@ export async function getAvailableSlots(
       message = `❌ Não há horários disponíveis para ${service.name} (${serviceDuration}min) com ${professional.name} no dia ${formatDateBR(dateStr)} (${dayName}).\n\nTodos os horários estão ocupados ou não há espaço suficiente para este serviço.`;
     } else {
       message = `✅ Horários disponíveis para ${service.name} (${serviceDuration}min)\n`;
-      message += `👤 Profissional: ${professional.name}\n`;
+      message += `👤 Mentor: ${professional.name}\n`;
       message += `📅 Data: ${formatDateBR(dateStr)} (${dayName})\n`;
       message += `⏰ Horário de trabalho: ${workStartTime} às ${workEndTime}\n\n`;
       message += `📋 Horários livres:\n`;

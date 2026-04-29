@@ -741,7 +741,7 @@ async function listClientAppointments(clientPhone: string, companyId: number): P
       appointmentsList += `📅 ${dayName}, ${date.toLocaleDateString('pt-BR')}\n`;
       appointmentsList += `🕐 ${apt.appointmentTime}\n`;
       appointmentsList += `💼 ${service?.name || 'Serviço'}\n`;
-      appointmentsList += `👤 ${professional?.name || 'Profissional'}\n`;
+      appointmentsList += `👤 ${professional?.name || 'Mentor'}\n`;
       appointmentsList += `ID: ${apt.id}\n\n`;
     }
 
@@ -811,7 +811,7 @@ async function listClientAppointmentsNumbered(clientPhone: string, companyId: nu
       const dayName = dayNames[date.getDay()];
 
       appointmentsList += `${numberEmojis[i]} ${dayName}, ${date.toLocaleDateString('pt-BR')} às ${apt.appointment_time}\n`;
-      appointmentsList += `   💼 ${apt.service_name || 'Serviço'} | 👤 ${apt.professional_name || 'Profissional'}\n\n`;
+      appointmentsList += `   💼 ${apt.service_name || 'Serviço'} | 👤 ${apt.professional_name || 'Mentor'}\n\n`;
     }
 
     appointmentsList += `Qual agendamento você deseja ${actionText}? (responda com o número)`;
@@ -889,7 +889,7 @@ async function rescheduleAppointment(
 
     return {
       success: true,
-      message: `✅ Agendamento remarcado com sucesso!\n\n📅 Nova data: ${dayName}, ${formattedDate}\n🕐 Novo horário: ${newTime}\n💼 Serviço: ${service?.name}\n👤 Profissional: ${professional?.name}\n\nNos vemos lá! 😊`
+      message: `✅ Agendamento remarcado com sucesso!\n\n📅 Nova data: ${dayName}, ${formattedDate}\n🕐 Novo horário: ${newTime}\n💼 Serviço: ${service?.name}\n👤 Mentor: ${professional?.name}\n\nNos vemos lá! 😊`
     };
   } catch (error) {
     console.error('Error rescheduling appointment:', error);
@@ -1021,6 +1021,24 @@ export function clearAvailabilityCache(companyId: number): void {
 
 // ==================== FIM DO SISTEMA INTELIGENTE ====================
 
+function mergeExceptionalSchedules(schedules: any[]): { workStart: string; workEnd: string; gapBreaks: { startTime: string; endTime: string }[] } {
+  if (schedules.length === 1) {
+    return { workStart: schedules[0].startTime, workEnd: schedules[0].endTime, gapBreaks: [] };
+  }
+  const sorted = [...schedules].sort((a, b) => a.startTime.localeCompare(b.startTime));
+  const workStart = sorted[0].startTime;
+  const workEnd = sorted.reduce((max: string, s: any) => s.endTime > max ? s.endTime : max, sorted[0].endTime);
+  const gapBreaks: { startTime: string; endTime: string }[] = [];
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const currentEnd = sorted[i].endTime;
+    const nextStart = sorted[i + 1].startTime;
+    if (currentEnd < nextStart) {
+      gapBreaks.push({ startTime: currentEnd, endTime: nextStart });
+    }
+  }
+  return { workStart, workEnd, gapBreaks };
+}
+
 /**
  * Gera informações básicas dos profissionais e serviços (SEM horários pré-calculados)
  * Os horários serão buscados sob demanda quando o usuário informar a data
@@ -1048,7 +1066,7 @@ async function generateBasicAvailabilityInfo(
 
   // Listar profissionais ativos com seus dias/horários de trabalho
   const activeProfessionals = professionals.filter(p => p.active);
-  text += `👥 PROFISSIONAIS DISPONÍVEIS:\n`;
+  text += `👥 MENTORES DISPONÍVEIS:\n`;
   for (const prof of activeProfessionals) {
     text += `   • ${prof.name} (ID: ${prof.id})\n`;
 
@@ -1156,7 +1174,7 @@ async function generatePrecalculatedAvailability(
 - Se um horário NÃO está na lista, ele NÃO PODE ser agendado
 - NÃO tente calcular ou deduzir outros horários
 - O sistema de backend JÁ calculou tudo considerando:
-  • Horário de trabalho do profissional
+  • Horário de trabalho do mentor
   • Pausas/intervalos (almoço, etc.)
   • Agendamentos existentes
   • Duração de cada serviço
@@ -1167,7 +1185,7 @@ async function generatePrecalculatedAvailability(
   const activeProfessionals = professionals.filter(p => p.active);
 
   for (const prof of activeProfessionals) {
-    text += `\n👤 PROFISSIONAL: ${prof.name.toUpperCase()} (ID: ${prof.id})\n`;
+    text += `\n👤 MENTOR: ${prof.name.toUpperCase()} (ID: ${prof.id})\n`;
     text += `${'─'.repeat(50)}\n`;
 
     // Para cada serviço, calcular horários disponíveis
@@ -1210,7 +1228,7 @@ async function generatePrecalculatedAvailability(
 📌 COMO USAR ESTAS INFORMAÇÕES:
 ═══════════════════════════════════════════════════════════════════
 
-1. Quando o cliente escolher PROFISSIONAL + SERVIÇO + DATA:
+1. Quando o cliente escolher MENTOR + SERVIÇO + DATA:
    → Consulte a lista acima para aquela combinação específica
    → Mostre APENAS os horários que aparecem como ✅
 
@@ -1221,7 +1239,7 @@ async function generatePrecalculatedAvailability(
 3. NUNCA tente agendar um horário que não aparece na lista ✅
 
 4. Se todos os horários estão ocupados para uma data:
-   → Sugira outra data ou outro profissional
+   → Sugira outra data ou outro mentor
 
 5. Se o cliente pedir uma data que NÃO está na lista acima:
    → Use a função de buscar horários passando a data específica
@@ -1262,7 +1280,7 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
     });
   }
 
-  let availabilityText = 'DISPONIBILIDADE REAL DOS PROFISSIONAIS POR DATA:\n\n';
+  let availabilityText = 'DISPONIBILIDADE REAL DOS MENTORES POR DATA:\n\n';
 
   for (const prof of professionals) {
     if (!prof.active || prof.archived) continue;
@@ -1452,9 +1470,8 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
         continue;
       }
 
-      // Check if there's an exceptional schedule for this specific date
-      const exceptionalSchedule = professionalExceptionalSchedules.find(exc => {
-        // Use UTC methods to extract date without timezone conversion
+      // Check if there are exceptional schedules for this specific date
+      const dayExceptionalSchedules = professionalExceptionalSchedules.filter(exc => {
         const dateObj = new Date(exc.exceptionDate);
         const year = dateObj.getUTCFullYear();
         const month = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
@@ -1467,13 +1484,12 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
       let workEnd: string;
       let isExceptional = false;
 
-      if (exceptionalSchedule) {
-        // Use exceptional schedule hours
-        workStart = exceptionalSchedule.startTime;
-        workEnd = exceptionalSchedule.endTime;
+      if (dayExceptionalSchedules.length > 0) {
+        const merged = mergeExceptionalSchedules(dayExceptionalSchedules);
+        workStart = merged.workStart;
+        workEnd = merged.workEnd;
         isExceptional = true;
       } else {
-        // Check if professional has regular schedule for this day
         const daySchedule = professionalSchedules.find(s => s.dayOfWeek === dayOfWeek && s.isEnabled);
         if (!daySchedule) {
           availabilityText += `  ${day.dayName} (${day.formatted}): NÃO TRABALHA\n`;
@@ -1485,8 +1501,13 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
 
       // Get breaks for this specific day (exception breaks or regular day-of-week breaks)
       let dayBreaks: { startTime: string; endTime: string }[] = [];
-      if (isExceptional && exceptionalSchedule) {
-        dayBreaks = await storage.getExceptionBreaks(exceptionalSchedule.id);
+      if (isExceptional && dayExceptionalSchedules.length > 0) {
+        const merged = mergeExceptionalSchedules(dayExceptionalSchedules);
+        dayBreaks = [...merged.gapBreaks];
+        for (const exc of dayExceptionalSchedules) {
+          const excBreaks = await storage.getExceptionBreaks(exc.id);
+          dayBreaks.push(...excBreaks);
+        }
       } else {
         dayBreaks = professionalBreaks.filter(brk => brk.dayOfWeek === day.dayKey);
       }
@@ -1723,8 +1744,9 @@ async function getSpecificDateAvailability(
     let isExceptionalDay = false;
 
     if (exceptionalSchedules.length > 0) {
-      workStart = exceptionalSchedules[0].startTime;
-      workEnd = exceptionalSchedules[0].endTime;
+      const merged = mergeExceptionalSchedules(exceptionalSchedules);
+      workStart = merged.workStart;
+      workEnd = merged.workEnd;
       isExceptionalDay = true;
     } else {
       // Check if professional has schedule for this day
@@ -1742,7 +1764,12 @@ async function getSpecificDateAvailability(
     // Get breaks for this specific day (exception breaks or regular day-of-week breaks)
     let dayBreaks: { startTime: string; endTime: string }[] = [];
     if (isExceptionalDay && exceptionalSchedules.length > 0) {
-      dayBreaks = await storage.getExceptionBreaks(exceptionalSchedules[0].id);
+      const merged = mergeExceptionalSchedules(exceptionalSchedules);
+      dayBreaks = [...merged.gapBreaks];
+      for (const exc of exceptionalSchedules) {
+        const excBreaks = await storage.getExceptionBreaks(exc.id);
+        dayBreaks.push(...excBreaks);
+      }
     } else {
       dayBreaks = professionalBreaks.filter(brk => brk.dayOfWeek === dayKey);
     }
@@ -1827,19 +1854,11 @@ async function checkSpecificDateAvailability(
     return '';
   }
 
-  // Se for além de 30 dias, bloqueia
-  if (daysDiff > 30) {
-    const [year, month, day] = specificDate.split('-');
-    const dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    const formatted = dateObj.toLocaleDateString('pt-BR');
-    return `\n\n⚠️ ATENÇÃO: A data ${formatted} está além do período de agendamento permitido (máximo 30 dias). Por favor, escolha uma data dentro dos próximos 30 dias.\n`;
-  }
-
-  // Se for entre 8-30 dias, busca disponibilidade em tempo real
-  console.log(`🔍 Buscando disponibilidade em tempo real para ${specificDate}`);
-  const availability = await getSpecificDateAvailability(specificDate, professionals, existingAppointments);
-
-  return availability;
+  // Se for além de 7 dias, bloqueia
+  const [year, month, day] = specificDate.split('-');
+  const dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+  const formatted = dateObj.toLocaleDateString('pt-BR');
+  return `\n\n⚠️ ATENÇÃO: A data ${formatted} está além do período de agendamento permitido (máximo 7 dias). Por favor, escolha uma data dentro dos próximos 7 dias.\n`;
 }
 
 // ==================== FIM DA VERIFICAÇÃO DE DISPONIBILIDADE PARA DATAS ESPECÍFICAS ====================
@@ -1859,7 +1878,7 @@ async function checkSpecificTimeAvailability(
     const professional = professionals.find(p => p.id === professionalId);
 
     if (!professional) {
-      return `Desculpe, não consegui identificar o profissional.`;
+      return `Desculpe, não consegui identificar o mentor.`;
     }
 
     // Gerar próximos dias (usando timezone Brasil)
@@ -1909,8 +1928,8 @@ async function checkSpecificTimeAvailability(
 
       if (isDayOff) continue;
 
-      // Verificar horário excepcional
-      const exceptionalSchedule = professionalExceptionalSchedules.find(exc => {
+      // Verificar horários excepcionais
+      const dayExcSchedules = professionalExceptionalSchedules.filter(exc => {
         const dateObj = new Date(exc.exceptionDate);
         const excDate = `${dateObj.getUTCFullYear()}-${String(dateObj.getUTCMonth() + 1).padStart(2, '0')}-${String(dateObj.getUTCDate()).padStart(2, '0')}`;
         return excDate === day.date;
@@ -1919,9 +1938,10 @@ async function checkSpecificTimeAvailability(
       let workStart: string;
       let workEnd: string;
 
-      if (exceptionalSchedule) {
-        workStart = exceptionalSchedule.startTime;
-        workEnd = exceptionalSchedule.endTime;
+      if (dayExcSchedules.length > 0) {
+        const merged = mergeExceptionalSchedules(dayExcSchedules);
+        workStart = merged.workStart;
+        workEnd = merged.workEnd;
       } else {
         const daySchedule = professionalSchedules.find(s => s.dayOfWeek === day.dayOfWeek && s.isEnabled);
         if (!daySchedule) continue;
@@ -2076,17 +2096,17 @@ async function validateAvailabilityInResponse(
       );
 
       if (exceptionalSchedules.length > 0) {
-        const exc = exceptionalSchedules[0];
+        const merged = mergeExceptionalSchedules(exceptionalSchedules);
         const timeMatch = aiResponse.match(/(\d{1,2}):(\d{2})/);
         if (timeMatch) {
           const suggestedMinutes = parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]);
-          const [excStartH, excStartM] = exc.startTime.split(':').map(Number);
-          const [excEndH, excEndM] = exc.endTime.split(':').map(Number);
+          const [excStartH, excStartM] = merged.workStart.split(':').map(Number);
+          const [excEndH, excEndM] = merged.workEnd.split(':').map(Number);
           const excStart = excStartH * 60 + excStartM;
           const excEnd = excEndH * 60 + excEndM;
 
           if (suggestedMinutes < excStart || suggestedMinutes >= excEnd) {
-            console.log(`🚫 VALIDAÇÃO PÓS-RESPOSTA: IA sugeriu ${timeMatch[0]} em ${dateInfo.day}/${dateInfo.month} mas expediente excepcional é ${exc.startTime}-${exc.endTime}. Corrigindo...`);
+            console.log(`🚫 VALIDAÇÃO PÓS-RESPOSTA: IA sugeriu ${timeMatch[0]} em ${dateInfo.day}/${dateInfo.month} mas expediente excepcional é ${merged.workStart}-${merged.workEnd}. Corrigindo...`);
             const correctedResponse = await checkSpecificTimeAvailability(
               companyId,
               targetProfessional.id,
@@ -2137,7 +2157,7 @@ async function getAvailableTimesForService(
     if (!professional) {
       console.log(`⚠️ Profissional ID ${professionalId} não encontrado. Profissionais disponíveis:`, professionals.map(p => `${p.id}:${p.name}`));
       // Retornar mensagem amigável ao invés de erro
-      return `Desculpe, não consegui identificar o profissional. Pode me informar novamente com quem você gostaria de agendar?`;
+      return `Desculpe, não consegui identificar o mentor. Pode me informar novamente com quem você gostaria de agendar?`;
     }
 
     // Buscar horários de trabalho do profissional
@@ -2180,10 +2200,9 @@ async function getAvailableTimesForService(
     let workEndTime: string;
 
     if (professionalExceptionalSchedules.length > 0) {
-      // Usar horário excepcional
-      const exceptionalSchedule = professionalExceptionalSchedules[0];
-      workStartTime = exceptionalSchedule.startTime;
-      workEndTime = exceptionalSchedule.endTime;
+      const mergedExc = mergeExceptionalSchedules(professionalExceptionalSchedules);
+      workStartTime = mergedExc.workStart;
+      workEndTime = mergedExc.workEnd;
     } else {
       // Buscar horário regular de trabalho para este dia
       const daySchedule = professionalSchedules.find(s => s.dayOfWeek === dayOfWeek && s.isEnabled);
@@ -2303,7 +2322,12 @@ async function getAvailableTimesForService(
       let isBreakTime = false;
       let breaksToCheck: { startTime: string; endTime: string }[] = [];
       if (professionalExceptionalSchedules.length > 0) {
-        breaksToCheck = await storage.getExceptionBreaks(professionalExceptionalSchedules[0].id);
+        const mergedExc = mergeExceptionalSchedules(professionalExceptionalSchedules);
+        breaksToCheck = [...mergedExc.gapBreaks];
+        for (const exc of professionalExceptionalSchedules) {
+          const excBreaks = await storage.getExceptionBreaks(exc.id);
+          breaksToCheck.push(...excBreaks);
+        }
       } else {
         breaksToCheck = professionalBreaks.filter(brk => brk.dayOfWeek === dayOfWeekKey);
       }
@@ -2396,7 +2420,7 @@ async function getAvailableTimesForMultipleServices(
     const professional = professionals.find(p => p.id === professionalId);
 
     if (!professional) {
-      return `Desculpe, não consegui identificar o profissional. Pode me informar novamente com quem você gostaria de agendar?`;
+      return `Desculpe, não consegui identificar o mentor. Pode me informar novamente com quem você gostaria de agendar?`;
     }
 
     // Buscar horários de trabalho do profissional
@@ -2549,7 +2573,12 @@ async function getAvailableTimesForMultipleServices(
       let isBreakTime = false;
       let breaksToCheck: { startTime: string; endTime: string }[] = [];
       if (professionalExceptionalSchedules.length > 0) {
-        breaksToCheck = await storage.getExceptionBreaks(professionalExceptionalSchedules[0].id);
+        const mergedExc = mergeExceptionalSchedules(professionalExceptionalSchedules);
+        breaksToCheck = [...mergedExc.gapBreaks];
+        for (const exc of professionalExceptionalSchedules) {
+          const excBreaks = await storage.getExceptionBreaks(exc.id);
+          breaksToCheck.push(...excBreaks);
+        }
       } else {
         breaksToCheck = professionalBreaks.filter(brk => brk.dayOfWeek === dayOfWeekKey);
       }
@@ -2759,12 +2788,11 @@ function extractDataFromAppointmentBlock(blockText: string): any {
   if (nameMatch) data.clientName = nameMatch[1].trim();
 
   // Extract professional
-  const profMatch = blockText.match(/🏢\s*Profissional:\s*(.+?)(?:\n|$)/i) ||
-                   blockText.match(/Profissional:\s*(.+?)(?:\n|$)/i) ||
-                   blockText.match(/👨‍💼\s*Profissional:\s*(.+?)(?:\n|$)/i) ||
-                   // Fallback: "com o profissional X" ou "com X"
-                   blockText.match(/com\s+(?:o\s+)?profissional\s+([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i) ||
-                   blockText.match(/todos\s+com\s+(?:o\s+)?(?:profissional\s+)?([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+)/i);
+  const profMatch = blockText.match(/🏢\s*(?:Mentor|Profissional):\s*(.+?)(?:\n|$)/i) ||
+                   blockText.match(/(?:Mentor|Profissional):\s*(.+?)(?:\n|$)/i) ||
+                   blockText.match(/👨‍💼\s*(?:Mentor|Profissional):\s*(.+?)(?:\n|$)/i) ||
+                   blockText.match(/com\s+(?:o\s+)?(?:mentor|profissional)\s+([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i) ||
+                   blockText.match(/todos\s+com\s+(?:o\s+)?(?:mentor\s+|profissional\s+)?([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+)/i);
   if (profMatch) data.professional = profMatch[1].trim();
 
   // Extract date
@@ -2978,8 +3006,8 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
 
       // Extrair profissional do texto geral (ex: "todos com o profissional Estevão")
       let headerProfessional = '';
-      const headerProfMatch = messageToExtractFrom.match(/todos\s+com\s+(?:o\s+)?(?:profissional\s+)?([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i) ||
-                              messageToExtractFrom.match(/com\s+(?:o\s+)?profissional\s+([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i);
+      const headerProfMatch = messageToExtractFrom.match(/todos\s+com\s+(?:o\s+)?(?:mentor\s+|profissional\s+)?([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i) ||
+                              messageToExtractFrom.match(/com\s+(?:o\s+)?(?:mentor|profissional)\s+([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i);
       if (headerProfMatch) {
         headerProfessional = headerProfMatch[1].trim();
       }
@@ -3102,7 +3130,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
                   },
                   professional: {
                     id: multiProfessional?.id || null,
-                    name: multiProfessional?.name || blockData.professional || 'Profissional',
+                    name: multiProfessional?.name || blockData.professional || 'Mentor',
                     email: multiProfessional?.email || null
                   },
                   company: {
@@ -3201,9 +3229,9 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
 
       // Extract professional - múltiplos formatos possíveis
       const profPatterns = [
-        /🏢\s*Profissional:\s*(.+?)(?:\n|$)/i,
-        /Profissional:\s*(.+?)(?:\n|$)/i,
-        /👨‍💼\s*Profissional:\s*(.+?)(?:\n|$)/i,
+        /🏢\s*(?:Mentor|Profissional):\s*(.+?)(?:\n|$)/i,
+        /(?:Mentor|Profissional):\s*(.+?)(?:\n|$)/i,
+        /👨‍💼\s*(?:Mentor|Profissional):\s*(.+?)(?:\n|$)/i,
         /👨‍💼\s*:\s*(.+?)(?:\n|$)/i,
         /👨‍💼\s+(.+?)(?:\n|$)/i,
         /🏢\s+(.+?)(?:\n|$)/i,
@@ -3452,7 +3480,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
         'excelente', 'certo', 'beleza', 'legal', 'show', 'confirmo', 'confirmar',
         'obrigado', 'obrigada', 'valeu', 'tchau', 'oi', 'olá', 'bom', 'dia', 'tarde', 'noite',
         // Palavras do sistema e comuns
-        'whatsapp', 'profissional', 'serviço', 'agendar', 'agendamento',
+        'whatsapp', 'profissional', 'mentor', 'serviço', 'agendar', 'agendamento',
         'atendimento', 'com', 'para', 'por', 'mais', 'menos', 'tem', 'qual', 'quais',
         'pode', 'ser', 'esta', 'está', 'esse', 'essa', 'aqui', 'ali', 'que', 'quero',
         'fazer', 'gostaria', 'preciso', 'queria', 'quer', 'vou', 'vai',
@@ -4104,7 +4132,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
         id: appointment?.id || Date.now(),
         clientName: extractedName,
         serviceName: service.name,
-        professionalName: professional?.name || 'Profissional',
+        professionalName: professional?.name || 'Mentor',
         appointmentDate: formatDateLocal(appointmentDate),
         appointmentTime: formattedTime,
         professionalId: professional.id,
@@ -4467,7 +4495,7 @@ PRÓXIMOS DIAS DA SEMANA (use apenas se cliente NÃO especificou data exata):
 - Sexta-feira: ${getNextWeekdayDate('sexta')}
 - Sábado: ${getNextWeekdayDate('sábado')}
 
-PROFISSIONAIS DISPONÍVEIS:
+MENTORES DISPONÍVEIS:
 ${professionals.map(p => `- ${p.name} (ID: ${p.id})`).join('\n')}
 
 SERVIÇOS DISPONÍVEIS:
@@ -4623,7 +4651,7 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
         // Identificar quais campos estão faltando
         const missingFields = [];
         if (!appointmentData.clientName) missingFields.push('nome do cliente');
-        if (!appointmentData.professionalId) missingFields.push('profissional');
+        if (!appointmentData.professionalId) missingFields.push('mentor');
         if (!appointmentData.serviceId) missingFields.push('serviço');
         if (!appointmentData.appointmentDate) missingFields.push('data');
         if (!appointmentData.appointmentTime) missingFields.push('horário');
@@ -4734,7 +4762,7 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
           id: appointment.id,
           clientName: appointmentData.clientName,
           serviceName: service.name,
-          professionalName: professional?.name || 'Profissional',
+          professionalName: professional?.name || 'Mentor',
           appointmentDate: appointmentData.appointmentDate,
           appointmentTime: appointmentData.appointmentTime
         }
@@ -9460,6 +9488,8 @@ if (ignoredNumbers !== undefined) {
                 });
               }
 
+              const shouldAutoSelectService = filteredServices.length === 1;
+
               // Função auxiliar para formatar duração
               const formatDuration = (minutes: number): string => {
                 const hours = Math.floor(minutes / 60);
@@ -9564,7 +9594,7 @@ if (ignoredNumbers !== undefined) {
 
               // Gerar exemplo dinâmico para cancelamento/remarcação
               const exampleService = filteredServices[0]?.name || 'seu serviço';
-              const exampleProfessional = professionals.find(p => p.active)?.name || 'profissional';
+              const exampleProfessional = professionals.find(p => p.active)?.name || 'mentor';
               const rescheduleExample = `15/12/2025 às 14:00, ${exampleService} com ${exampleProfessional}`;
 
               // Verificar se Asaas está habilitado para esta empresa
@@ -9581,6 +9611,47 @@ if (ignoredNumbers !== undefined) {
   * Após o cliente escolher, responda: "Perfeito! Estou gerando seu [PIX/link de pagamento]. Aguarde um momento..."
   * O sistema enviará automaticamente o QR Code (para PIX) ou link (para cartão)
   * NUNCA diga que o agendamento foi confirmado antes do pagamento ser processado` : '';
+
+              // Build etapas text dynamically based on auto-selections
+              let etapaNum = 1;
+              let etapasText = '';
+              let autoSelectInfo = '';
+
+              if (shouldAutoSelect && shouldAutoSelectService) {
+                autoSelectInfo = `(Mentor único: ${activeProfessionals[0].name} - auto-selecionado | Serviço único: ${filteredServices[0].name} - auto-selecionado)`;
+              } else if (shouldAutoSelect) {
+                autoSelectInfo = `(Mentor único: ${activeProfessionals[0].name} - auto-selecionado)`;
+              } else if (shouldAutoSelectService) {
+                autoSelectInfo = `(Serviço único: ${filteredServices[0].name} - auto-selecionado)`;
+              }
+
+              if (autoSelectInfo) {
+                etapasText += autoSelectInfo + '\n\n';
+              }
+
+              if (!shouldAutoSelect) {
+                etapasText += `ETAPA ${etapaNum} - MENTOR:\n   → Quando cliente quiser agendar, mostre a lista de mentores PRIMEIRO\n   → "Temos os seguintes mentores:\\n[lista]\\n\\nCom qual você gostaria de agendar?"\n   → AGUARDE o cliente escolher o mentor\n\n`;
+                etapaNum++;
+              }
+
+              if (!shouldAutoSelectService) {
+                etapasText += `ETAPA ${etapaNum} - SERVIÇO:\n   → ${!shouldAutoSelect ? 'APÓS escolher o mentor, mostre' : 'Quando cliente quiser agendar, mostre'} a lista de serviços IMEDIATAMENTE\n   → "Aqui estão os serviços disponíveis:\\n[lista]\\n\\nQual serviço você gostaria?"\n   → AGUARDE o cliente escolher o serviço\n\n`;
+                etapaNum++;
+              }
+
+              etapasText += `ETAPA ${etapaNum} - HORÁRIOS DISPONÍVEIS (PROATIVO):\n   → APÓS ${shouldAutoSelectService && shouldAutoSelect ? 'o cliente pedir para agendar' : 'o cliente escolher o SERVIÇO'}, NÃO pergunte a data!\n   → Mostre PROATIVAMENTE os horários disponíveis começando pelo PRÓXIMO DIA ÚTIL\n   → Use o comando: [MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_MENTOR:DATA_YYYY-MM-DD]\n   → Use a data de AMANHÃ ou do PRÓXIMO DIA que o mentor trabalha (consulte "PRÓXIMOS DIAS DA SEMANA" e os dias de trabalho do mentor)\n   → Resposta sugerida: "Vou te mostrar os horários disponíveis para [próximo dia útil]:\\n[MOSTRAR_HORARIOS_LIVRES:...]"\n   → Se o cliente quiser outro dia específico, use o comando novamente com a data dele\n   → ⚠️ NÃO pergunte "que dia?" - mostre os horários direto e deixe o cliente escolher dia+hora juntos\n\n`;
+              etapaNum++;
+
+              etapasText += `ETAPA ${etapaNum} - ESCOLHA DO HORÁRIO:\n   → APÓS mostrar os horários, AGUARDE o cliente escolher um horário (e implicitamente um dia)\n   → Se houver múltiplos dias mostrados, confirme: "Perfeito! Confirmando: [data] às [horário], correto?"\n\n`;
+              etapaNum++;
+
+              etapasText += `ETAPA ${etapaNum} - NOME DA STARTUP:\n   → SOMENTE APÓS o cliente escolher o HORÁRIO, pergunte o nome da startup\n   → "Qual é o nome da sua startup?"\n   → AGUARDE o cliente informar o nome da startup\n   → ⚠️ NUNCA pergunte o nome da startup ANTES do horário!\n\n`;
+              etapaNum++;
+
+              etapasText += `ETAPA ${etapaNum} - E-MAIL:\n   → APÓS o cliente informar o nome da startup, pergunte o e-mail\n   → "Qual é o seu e-mail? (será usado para enviar o convite da reunião)"\n   → AGUARDE o cliente informar o e-mail\n   → ⚠️ NUNCA pule esta etapa - o e-mail é obrigatório para o agendamento!\n\n`;
+              etapaNum++;
+
+              etapasText += `ETAPA ${etapaNum} - CONFIRMAÇÃO:\n   → APÓS ter todos os dados (incluindo e-mail), mostre o RESUMO e peça confirmação com "SIM"`;
 
               const systemPrompt = `${company.aiAgentPrompt}
 
@@ -9629,8 +9700,8 @@ PRÓXIMOS DIAS DA SEMANA:
 - Sexta-feira: ${getNextWeekdayDateForAI('sexta')}
 - Sábado: ${getNextWeekdayDateForAI('sábado')}
 
-PROFISSIONAIS DISPONÍVEIS PARA AGENDAMENTO:
-${availableProfessionals || 'Nenhum profissional cadastrado no momento'}
+MENTORES DISPONÍVEIS PARA AGENDAMENTO:
+${availableProfessionals || 'Nenhum mentor cadastrado no momento'}
 
 SERVIÇOS DISPONÍVEIS:
 ${availableServices || 'Nenhum serviço cadastrado no momento'}
@@ -9646,19 +9717,19 @@ ${specificDateInfo}
 ═══════════════════════════════════════════════════════════════════
 
 Quando o cliente informar a DATA desejada, você DEVE incluir na sua resposta o comando:
-[MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
+[MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_MENTOR:DATA_YYYY-MM-DD]
 
 O sistema vai SUBSTITUIR esse comando pelos horários disponíveis automaticamente.
 
 ✅ COMO USAR:
-1. Colete: SERVIÇO + PROFISSIONAL + DATA
+1. Colete: SERVIÇO + MENTOR + DATA
 2. Quando tiver a DATA, inclua o comando na resposta usando os NOMES exatos
 3. O sistema mostrará os horários disponíveis
 
 📋 EXEMPLO:
 Cliente quer: "Corte de cabelo com Estevão amanhã" (amanhã = 31/01/2026)
 → Serviço: Corte de cabelo
-→ Profissional: Estevão
+→ Mentor: Estevão
 → Data: 2026-01-31
 
 Sua resposta deve ser:
@@ -9668,10 +9739,10 @@ Sua resposta deve ser:
 
 APÓS o comando ser processado, o sistema vai retornar:
 - Se HOUVER horários: uma lista de horários → aí sim você pergunta "Qual horário você prefere?"
-- Se NÃO houver horários ou profissional não trabalha: uma mensagem COMPLETA já perguntando outro dia → NUNCA adicione "Qual horário você prefere?" pois não faz sentido!
+- Se NÃO houver horários ou mentor não trabalha: uma mensagem COMPLETA já perguntando outro dia → NUNCA adicione "Qual horário você prefere?" pois não faz sentido!
 
 ⚠️ IMPORTANTE:
-• Use o NOME EXATO do serviço e profissional (como aparecem nas listas acima)
+• Use o NOME EXATO do serviço e mentor (como aparecem nas listas acima)
 • A data DEVE estar no formato YYYY-MM-DD (ex: 2026-01-31)
 • NÃO invente horários - o comando retorna apenas horários REAIS
 • Se "amanhã" = 31/01/2026, use 2026-01-31
@@ -9695,7 +9766,7 @@ Exemplo:
 
 Quando o cliente perguntar se tem um HORÁRIO ESPECÍFICO disponível na semana (ex: "Tem 18:30?", "Quando tem às 17h?", "Algum dia tem 19:00?"):
 
-Use o comando: [VERIFICAR_HORARIO_SEMANA:NOME_PROFISSIONAL:HH:MM]
+Use o comando: [VERIFICAR_HORARIO_SEMANA:NOME_MENTOR:HH:MM]
 
 📋 EXEMPLOS:
 - Cliente: "Tem algum dia com horário às 18:30?"
@@ -9717,49 +9788,7 @@ O sistema vai retornar quais dias da semana têm esse horário disponível, cons
 
 🚨🚨🚨 ORDEM OBRIGATÓRIA DE COLETA DE DADOS - SIGA EXATAMENTE ESTA SEQUÊNCIA 🚨🚨🚨
 
-${shouldAutoSelect ?
-`ETAPA 1 - SERVIÇO (profissional único: ${activeProfessionals[0].name}):
-   → Quando cliente quiser agendar, mostre a lista de serviços IMEDIATAMENTE
-   → "Aqui estão os serviços disponíveis:\n[lista]\n\nQual serviço você gostaria?"
-   → AGUARDE o cliente escolher o serviço`
-:
-`ETAPA 1 - PROFISSIONAL:
-   → Quando cliente quiser agendar, mostre a lista de profissionais PRIMEIRO
-   → "Temos os seguintes profissionais:\n[lista]\n\nCom qual você gostaria de agendar?"
-   → AGUARDE o cliente escolher o profissional
-
-ETAPA 2 - SERVIÇO:
-   → APÓS escolher o profissional, mostre a lista de serviços
-   → "Aqui estão os serviços disponíveis:\n[lista]\n\nQual serviço você gostaria?"
-   → AGUARDE o cliente escolher o serviço`}
-
-ETAPA ${shouldAutoSelect ? '2' : '3'} - HORÁRIOS DISPONÍVEIS (PROATIVO):
-   → APÓS o cliente escolher o SERVIÇO, NÃO pergunte a data!
-   → Mostre PROATIVAMENTE os horários disponíveis começando pelo PRÓXIMO DIA ÚTIL
-   → Use o comando: [MOSTRAR_HORARIOS_LIVRES:NOME_SERVICO:NOME_PROFISSIONAL:DATA_YYYY-MM-DD]
-   → Use a data de AMANHÃ ou do PRÓXIMO DIA que o profissional trabalha (consulte "PRÓXIMOS DIAS DA SEMANA" e os dias de trabalho do profissional)
-   → Resposta sugerida: "Vou te mostrar os horários disponíveis para [próximo dia útil]:\n[MOSTRAR_HORARIOS_LIVRES:...]"
-   → Se o cliente quiser outro dia específico, use o comando novamente com a data dele
-   → ⚠️ NÃO pergunte "que dia?" - mostre os horários direto e deixe o cliente escolher dia+hora juntos
-
-ETAPA ${shouldAutoSelect ? '3' : '4'} - ESCOLHA DO HORÁRIO:
-   → APÓS mostrar os horários, AGUARDE o cliente escolher um horário (e implicitamente um dia)
-   → Se houver múltiplos dias mostrados, confirme: "Perfeito! Confirmando: [data] às [horário], correto?"
-
-ETAPA ${shouldAutoSelect ? '4' : '5'} - NOME DA STARTUP:
-   → SOMENTE APÓS o cliente escolher o HORÁRIO, pergunte o nome da startup
-   → "Qual é o nome da sua startup?"
-   → AGUARDE o cliente informar o nome da startup
-   → ⚠️ NUNCA pergunte o nome da startup ANTES do horário!
-
-ETAPA ${shouldAutoSelect ? '5' : '6'} - E-MAIL:
-   → APÓS o cliente informar o nome da startup, pergunte o e-mail
-   → "Qual é o seu e-mail? (será usado para enviar o convite da reunião)"
-   → AGUARDE o cliente informar o e-mail
-   → ⚠️ NUNCA pule esta etapa - o e-mail é obrigatório para o agendamento!
-
-ETAPA ${shouldAutoSelect ? '6' : '7'} - CONFIRMAÇÃO:
-   → APÓS ter todos os dados (incluindo e-mail), mostre o RESUMO e peça confirmação com "SIM"
+${etapasText}
 
 ⚠️ REGRAS CRÍTICAS:
 - NUNCA pule etapas - siga a ordem EXATA acima
@@ -9776,14 +9805,14 @@ INSTRUÇÕES ADICIONAIS:
 - NUNCA peça data e horário na mesma mensagem - sempre separado em duas etapas
 - REGRA DE CONFIRMAÇÃO DE DATA: Quando cliente mencionar dias da semana, use as datas da seção "PRÓXIMOS DIAS DA SEMANA"
 - Se cliente falar "segunda" (sem data), use a data da segunda-feira listada acima
-- AGENDAMENTOS FUTUROS: Cliente pode agendar até 30 dias. Se pedir data além dos 7 dias mostrados, aceite normalmente
+- AGENDAMENTOS FUTUROS: Cliente pode agendar até 7 dias. Se pedir data além dos 7 dias, informe que o limite é de 7 dias
 - HORÁRIOS INDISPONÍVEIS:
   * Se não houver horários disponíveis, sugira outra data
   * NÃO invente horários - confie apenas no que o comando retornar
 - NÃO peça o telefone do cliente - o sistema usará automaticamente o número do WhatsApp
 - REGRA OBRIGATÓRIA DE RESUMO E CONFIRMAÇÃO:
-  * Quando tiver TODOS os dados (profissional, serviço, nome da startup, e-mail, data/hora disponível), NÃO confirme imediatamente
-  * PRIMEIRO envie um RESUMO COMPLETO do agendamento: "Perfeito! Vou confirmar seu agendamento:\n\n🚀 Startup: [nome da startup]\n📧 E-mail: [email]\n🏢 Profissional: [profissional]\n💼 Serviço: [serviço]\n📅 Data: [dia da semana], [data]\n🕐 Horário: [horário]\n\nEstá tudo correto? Responda SIM para confirmar ou me informe se algo precisa ser alterado."
+  * Quando tiver TODOS os dados (mentor, serviço, nome da startup, e-mail, data/hora disponível), NÃO confirme imediatamente
+  * PRIMEIRO envie um RESUMO COMPLETO do agendamento: "Perfeito! Vou confirmar seu agendamento:\n\n🚀 Startup: [nome da startup]\n📧 E-mail: [email]\n🏢 Mentor: [mentor]\n💼 Serviço: [serviço]\n📅 Data: [dia da semana], [data]\n🕐 Horário: [horário]\n\nEstá tudo correto? Responda SIM para confirmar ou me informe se algo precisa ser alterado."
   * AGUARDE o cliente responder "SIM", "OK", "CONFIRMO" ou confirmação similar
   * APENAS APÓS a confirmação explícita (SIM, OK, CONFIRMO), confirme o agendamento final
   * Se cliente pedir ALTERAÇÃO (ex: "meu nome está errado", "quero outro horário", "mudar para terça"), processe a alteração normalmente e envie novo resumo
@@ -9792,10 +9821,10 @@ INSTRUÇÕES ADICIONAIS:
 \${asaasPaymentInstructions}
 - NÃO invente serviços - use APENAS os serviços listados acima
 - NÃO confirme horários sem verificar disponibilidade real
-- 🚨 REGRA CRÍTICA - DISPONIBILIDADE POR DIA DA SEMANA: Antes de dizer que um profissional "trabalha" ou "tem atendimento" em determinado dia, SEMPRE consulte a seção "Dias de trabalho" e "NÃO trabalha" de cada profissional nas INFORMAÇÕES PARA AGENDAMENTO. Se o dia da semana mencionado pelo cliente (amanhã, domingo, segunda, etc.) estiver na lista "NÃO trabalha", NUNCA diga que tem atendimento. Diga diretamente que o profissional não trabalha naquele dia e sugira os dias disponíveis.
-- 🚨 REGRA CRÍTICA - FOLGAS E DIAS INDISPONÍVEIS: Se uma data estiver listada na seção "⛔ FOLGAS" do profissional, esse dia é INDISPONÍVEL. NUNCA sugira, ofereça ou confirme agendamento em datas que estejam nas FOLGAS, mesmo que seja um dia normal de trabalho. Sempre verifique as FOLGAS antes de sugerir qualquer data.
-- NUNCA responda "Sim, temos atendimento!" ou "Sim, trabalhamos!" sem antes verificar se o dia solicitado está nos dias de trabalho do profissional E se NÃO está nas FOLGAS. Em caso de dúvida, use o comando [MOSTRAR_HORARIOS_LIVRES] para verificar
-- SEMPRE mostre todos os profissionais/serviços disponíveis antes de pedir para escolher
+- 🚨 REGRA CRÍTICA - DISPONIBILIDADE POR DIA DA SEMANA: Antes de dizer que um mentor "trabalha" ou "tem atendimento" em determinado dia, SEMPRE consulte a seção "Dias de trabalho" e "NÃO trabalha" de cada mentor nas INFORMAÇÕES PARA AGENDAMENTO. Se o dia da semana mencionado pelo cliente (amanhã, domingo, segunda, etc.) estiver na lista "NÃO trabalha", NUNCA diga que tem atendimento. Diga diretamente que o mentor não trabalha naquele dia e sugira os dias disponíveis.
+- 🚨 REGRA CRÍTICA - FOLGAS E DIAS INDISPONÍVEIS: Se uma data estiver listada na seção "⛔ FOLGAS" do mentor, esse dia é INDISPONÍVEL. NUNCA sugira, ofereça ou confirme agendamento em datas que estejam nas FOLGAS, mesmo que seja um dia normal de trabalho. Sempre verifique as FOLGAS antes de sugerir qualquer data.
+- NUNCA responda "Sim, temos atendimento!" ou "Sim, trabalhamos!" sem antes verificar se o dia solicitado está nos dias de trabalho do mentor E se NÃO está nas FOLGAS. Em caso de dúvida, use o comando [MOSTRAR_HORARIOS_LIVRES] para verificar
+- SEMPRE mostre todos os mentores/serviços disponíveis antes de pedir para escolher
 - Mantenha respostas concisas e adequadas para mensagens de texto
 - Seja profissional mas amigável
 - Use o histórico da conversa para dar respostas contextualizadas
@@ -9829,21 +9858,21 @@ Quando o cliente quiser agendar para MÚLTIPLAS PESSOAS (ex: "quero agendar para
 
    1️⃣
    👤 Nome: [nome da pessoa 1]
-   🏢 Profissional: [profissional]
+   🏢 Mentor: [mentor]
    💼 Serviço: [serviço]
    📅 Data: [dia da semana], [data]
    🕐 Horário: [horário 1]
 
    2️⃣
    👤 Nome: [nome da pessoa 2]
-   🏢 Profissional: [profissional]
+   🏢 Mentor: [mentor]
    💼 Serviço: [serviço]
    📅 Data: [dia da semana], [data]
    🕐 Horário: [horário 2]
 
    3️⃣
    👤 Nome: [nome da pessoa 3]
-   🏢 Profissional: [profissional]
+   🏢 Mentor: [mentor]
    💼 Serviço: [serviço]
    📅 Data: [dia da semana], [data]
    🕐 Horário: [horário 3]
@@ -9920,14 +9949,14 @@ FLUXO:
 
    1️⃣
    👤 Nome: [nome]
-   🏢 Profissional: [profissional]
+   🏢 Mentor: [mentor]
    💼 Serviço: [serviço 1]
    📅 Data: [data]
    🕐 Horário: [horário do serviço 1]
 
    2️⃣
    👤 Nome: [nome]
-   🏢 Profissional: [profissional]
+   🏢 Mentor: [mentor]
    💼 Serviço: [serviço 2]
    📅 Data: [data]
    🕐 Horário: [horário do serviço 2]
@@ -11091,7 +11120,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
 
 📅 ${dayName}, ${date.toLocaleDateString('pt-BR')} às ${selectedAppointment.appointmentTime}
 💼 ${service?.name || 'Serviço'}
-👤 ${professional?.name || 'Profissional'}
+👤 ${professional?.name || 'Mentor'}
 
 Confirma o cancelamento? Digite *CANCELAR* para confirmar ou *NÃO* para manter o agendamento.`;
 
@@ -15892,7 +15921,7 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
     });
   }
 
-  let availabilityText = 'DISPONIBILIDADE REAL DOS PROFISSIONAIS POR DATA:\n\n';
+  let availabilityText = 'DISPONIBILIDADE REAL DOS MENTORES POR DATA:\n\n';
 
   for (const prof of professionals) {
     if (!prof.active || prof.archived) continue;
@@ -16082,9 +16111,8 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
         continue;
       }
 
-      // Check if there's an exceptional schedule for this specific date
-      const exceptionalSchedule = professionalExceptionalSchedules.find(exc => {
-        // Use UTC methods to extract date without timezone conversion
+      // Check if there are exceptional schedules for this specific date
+      const dayExceptionalSchedules = professionalExceptionalSchedules.filter(exc => {
         const dateObj = new Date(exc.exceptionDate);
         const year = dateObj.getUTCFullYear();
         const month = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
@@ -16097,13 +16125,12 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
       let workEnd: string;
       let isExceptional = false;
 
-      if (exceptionalSchedule) {
-        // Use exceptional schedule hours
-        workStart = exceptionalSchedule.startTime;
-        workEnd = exceptionalSchedule.endTime;
+      if (dayExceptionalSchedules.length > 0) {
+        const merged = mergeExceptionalSchedules(dayExceptionalSchedules);
+        workStart = merged.workStart;
+        workEnd = merged.workEnd;
         isExceptional = true;
       } else {
-        // Check if professional has regular schedule for this day
         const daySchedule = professionalSchedules.find(s => s.dayOfWeek === dayOfWeek && s.isEnabled);
         if (!daySchedule) {
           availabilityText += `  ${day.dayName} (${day.formatted}): NÃO TRABALHA\n`;
@@ -16115,8 +16142,13 @@ async function generateAvailabilityInfo(professionals: any[], existingAppointmen
 
       // Get breaks for this specific day (exception breaks or regular day-of-week breaks)
       let dayBreaks: { startTime: string; endTime: string }[] = [];
-      if (isExceptional && exceptionalSchedule) {
-        dayBreaks = await storage.getExceptionBreaks(exceptionalSchedule.id);
+      if (isExceptional && dayExceptionalSchedules.length > 0) {
+        const merged = mergeExceptionalSchedules(dayExceptionalSchedules);
+        dayBreaks = [...merged.gapBreaks];
+        for (const exc of dayExceptionalSchedules) {
+          const excBreaks = await storage.getExceptionBreaks(exc.id);
+          dayBreaks.push(...excBreaks);
+        }
       } else {
         dayBreaks = professionalBreaks.filter(brk => brk.dayOfWeek === day.dayKey);
       }
@@ -16353,8 +16385,9 @@ async function getSpecificDateAvailability(
     let isExceptionalDay = false;
 
     if (exceptionalSchedules.length > 0) {
-      workStart = exceptionalSchedules[0].startTime;
-      workEnd = exceptionalSchedules[0].endTime;
+      const merged = mergeExceptionalSchedules(exceptionalSchedules);
+      workStart = merged.workStart;
+      workEnd = merged.workEnd;
       isExceptionalDay = true;
     } else {
       // Check if professional has schedule for this day
@@ -16372,7 +16405,12 @@ async function getSpecificDateAvailability(
     // Get breaks for this specific day (exception breaks or regular day-of-week breaks)
     let dayBreaks: { startTime: string; endTime: string }[] = [];
     if (isExceptionalDay && exceptionalSchedules.length > 0) {
-      dayBreaks = await storage.getExceptionBreaks(exceptionalSchedules[0].id);
+      const merged = mergeExceptionalSchedules(exceptionalSchedules);
+      dayBreaks = [...merged.gapBreaks];
+      for (const exc of exceptionalSchedules) {
+        const excBreaks = await storage.getExceptionBreaks(exc.id);
+        dayBreaks.push(...excBreaks);
+      }
     } else {
       dayBreaks = professionalBreaks.filter(brk => brk.dayOfWeek === dayKey);
     }
@@ -16457,19 +16495,11 @@ async function checkSpecificDateAvailability(
     return '';
   }
 
-  // Se for além de 30 dias, bloqueia
-  if (daysDiff > 30) {
-    const [year, month, day] = specificDate.split('-');
-    const dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    const formatted = dateObj.toLocaleDateString('pt-BR');
-    return `\n\n⚠️ ATENÇÃO: A data ${formatted} está além do período de agendamento permitido (máximo 30 dias). Por favor, escolha uma data dentro dos próximos 30 dias.\n`;
-  }
-
-  // Se for entre 8-30 dias, busca disponibilidade em tempo real
-  console.log(`🔍 Buscando disponibilidade em tempo real para ${specificDate}`);
-  const availability = await getSpecificDateAvailability(specificDate, professionals, existingAppointments);
-
-  return availability;
+  // Se for além de 7 dias, bloqueia
+  const [year, month, day] = specificDate.split('-');
+  const dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+  const formatted = dateObj.toLocaleDateString('pt-BR');
+  return `\n\n⚠️ ATENÇÃO: A data ${formatted} está além do período de agendamento permitido (máximo 7 dias). Por favor, escolha uma data dentro dos próximos 7 dias.\n`;
 }
 
 // ==================== FIM DA VERIFICAÇÃO DE DISPONIBILIDADE PARA DATAS ESPECÍFICAS ====================
@@ -16643,8 +16673,8 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
 
       // Extrair profissional do texto geral (ex: "todos com o profissional Estevão")
       let headerProfessional = '';
-      const headerProfMatch = messageToExtractFrom.match(/todos\s+com\s+(?:o\s+)?(?:profissional\s+)?([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i) ||
-                              messageToExtractFrom.match(/com\s+(?:o\s+)?profissional\s+([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i);
+      const headerProfMatch = messageToExtractFrom.match(/todos\s+com\s+(?:o\s+)?(?:mentor\s+|profissional\s+)?([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i) ||
+                              messageToExtractFrom.match(/com\s+(?:o\s+)?(?:mentor|profissional)\s+([A-ZÀ-Ÿ][a-záéíóúâêôãõüç]+(?:\s+[A-ZÀ-Ÿa-záéíóúâêôãõüç]+)*)/i);
       if (headerProfMatch) {
         headerProfessional = headerProfMatch[1].trim();
       }
@@ -16767,7 +16797,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
                   },
                   professional: {
                     id: multiProfessional?.id || null,
-                    name: multiProfessional?.name || blockData.professional || 'Profissional',
+                    name: multiProfessional?.name || blockData.professional || 'Mentor',
                     email: multiProfessional?.email || null
                   },
                   company: {
@@ -16866,9 +16896,9 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
 
       // Extract professional - múltiplos formatos possíveis
       const profPatterns = [
-        /🏢\s*Profissional:\s*(.+?)(?:\n|$)/i,
-        /Profissional:\s*(.+?)(?:\n|$)/i,
-        /👨‍💼\s*Profissional:\s*(.+?)(?:\n|$)/i,
+        /🏢\s*(?:Mentor|Profissional):\s*(.+?)(?:\n|$)/i,
+        /(?:Mentor|Profissional):\s*(.+?)(?:\n|$)/i,
+        /👨‍💼\s*(?:Mentor|Profissional):\s*(.+?)(?:\n|$)/i,
         /👨‍💼\s*:\s*(.+?)(?:\n|$)/i,
         /👨‍💼\s+(.+?)(?:\n|$)/i,
         /🏢\s+(.+?)(?:\n|$)/i,
@@ -17117,7 +17147,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
         'excelente', 'certo', 'beleza', 'legal', 'show', 'confirmo', 'confirmar',
         'obrigado', 'obrigada', 'valeu', 'tchau', 'oi', 'olá', 'bom', 'dia', 'tarde', 'noite',
         // Palavras do sistema e comuns
-        'whatsapp', 'profissional', 'serviço', 'agendar', 'agendamento',
+        'whatsapp', 'profissional', 'mentor', 'serviço', 'agendar', 'agendamento',
         'atendimento', 'com', 'para', 'por', 'mais', 'menos', 'tem', 'qual', 'quais',
         'pode', 'ser', 'esta', 'está', 'esse', 'essa', 'aqui', 'ali', 'que', 'quero',
         'fazer', 'gostaria', 'preciso', 'queria', 'quer', 'vou', 'vai',
@@ -17769,7 +17799,7 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
         id: appointment?.id || Date.now(),
         clientName: extractedName,
         serviceName: service.name,
-        professionalName: professional?.name || 'Profissional',
+        professionalName: professional?.name || 'Mentor',
         appointmentDate: formatDateLocal(appointmentDate),
         appointmentTime: formattedTime,
         professionalId: professional.id,
@@ -18132,7 +18162,7 @@ PRÓXIMOS DIAS DA SEMANA (use apenas se cliente NÃO especificou data exata):
 - Sexta-feira: ${getNextWeekdayDate('sexta')}
 - Sábado: ${getNextWeekdayDate('sábado')}
 
-PROFISSIONAIS DISPONÍVEIS:
+MENTORES DISPONÍVEIS:
 ${professionals.map(p => `- ${p.name} (ID: ${p.id})`).join('\n')}
 
 SERVIÇOS DISPONÍVEIS:
@@ -18288,7 +18318,7 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
         // Identificar quais campos estão faltando
         const missingFields = [];
         if (!appointmentData.clientName) missingFields.push('nome do cliente');
-        if (!appointmentData.professionalId) missingFields.push('profissional');
+        if (!appointmentData.professionalId) missingFields.push('mentor');
         if (!appointmentData.serviceId) missingFields.push('serviço');
         if (!appointmentData.appointmentDate) missingFields.push('data');
         if (!appointmentData.appointmentTime) missingFields.push('horário');
@@ -18399,7 +18429,7 @@ ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025",
           id: appointment.id,
           clientName: appointmentData.clientName,
           serviceName: service.name,
-          professionalName: professional?.name || 'Profissional',
+          professionalName: professional?.name || 'Mentor',
           appointmentDate: appointmentData.appointmentDate,
           appointmentTime: appointmentData.appointmentTime
         }
