@@ -118,7 +118,10 @@ export function MetaEmbeddedSignup({ instanceId, onComplete }: EmbeddedSignupPro
         override_default_response_type: true,
         extras: {
           setup: {},
-          sessionInfoVersion: "4",
+          // Habilita modo de coexistência: cliente continua usando o app
+          // WhatsApp Business no celular E o Cloud API simultaneamente.
+          featureType: "whatsapp_business_app_onboarding",
+          sessionInfoVersion: "3",
         },
       }
     );
