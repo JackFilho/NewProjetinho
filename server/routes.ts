@@ -3713,6 +3713,17 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       }
     }
 
+    // PRIORIDADE 4: Auto-selecionar se há apenas 1 serviço disponível
+    if (!service) {
+      const activeServices = services.filter(s => s.isActive !== false);
+      if (activeServices.length === 1) {
+        service = activeServices[0];
+        console.log(`✅ Serviço auto-selecionado (único disponível): ${service.name}`);
+      } else {
+        console.log(`⚠️ ${activeServices.length} serviços ativos - não é possível auto-selecionar`);
+      }
+    }
+
     console.log('==================================================');
     console.log('🔍 VALIDAÇÃO CRÍTICA - Verificando dados extraídos');
     console.log('==================================================');
@@ -17480,6 +17491,17 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
           console.log(`✅ Serviço encontrado nas mensagens recentes: ${serv.name}`);
           break;
         }
+      }
+    }
+
+    // PRIORIDADE 4: Auto-selecionar se há apenas 1 serviço disponível
+    if (!service) {
+      const activeServices = services.filter(s => s.isActive !== false);
+      if (activeServices.length === 1) {
+        service = activeServices[0];
+        console.log(`✅ Serviço auto-selecionado (único disponível): ${service.name}`);
+      } else {
+        console.log(`⚠️ ${activeServices.length} serviços ativos - não é possível auto-selecionar`);
       }
     }
 
