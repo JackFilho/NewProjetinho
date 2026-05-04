@@ -3751,9 +3751,17 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       }
     }
 
-    // Find matching service - PRIORIDADE: buscar primeiro na resposta da IA
+    // Find matching service - PRIORIDADE: auto-select se apenas 1 serviço
     let service = null;
+    const activeServices = services.filter((s: any) => s.isActive !== false);
 
+    // PRIORIDADE 0: Auto-selecionar se há apenas 1 serviço ativo
+    if (activeServices.length === 1) {
+      service = activeServices[0];
+      console.log(`✅ Serviço auto-selecionado (único disponível): ${service.name} (ID: ${service.id})`);
+    }
+
+    if (!service) {
     console.log('🔍 Buscando serviço - PRIORIDADE 1: Resposta da IA');
     // PRIORIDADE 1: Buscar na resposta da IA (mensagem de confirmação)
     for (const serv of services) {
@@ -3809,6 +3817,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
         }
       }
     }
+    } // end if (!service) - skip search if auto-selected
 
     console.log('==================================================');
     console.log('🔍 VALIDAÇÃO CRÍTICA - Verificando dados extraídos');
@@ -17418,9 +17427,17 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
       }
     }
 
-    // Find matching service - PRIORIDADE: buscar primeiro na resposta da IA
+    // Find matching service - PRIORIDADE: auto-select se apenas 1 serviço
     let service = null;
+    const activeServices = services.filter((s: any) => s.isActive !== false);
 
+    // PRIORIDADE 0: Auto-selecionar se há apenas 1 serviço ativo
+    if (activeServices.length === 1) {
+      service = activeServices[0];
+      console.log(`✅ Serviço auto-selecionado (único disponível): ${service.name} (ID: ${service.id})`);
+    }
+
+    if (!service) {
     console.log('🔍 Buscando serviço - PRIORIDADE 1: Resposta da IA');
     // PRIORIDADE 1: Buscar na resposta da IA (mensagem de confirmação)
     for (const serv of services) {
@@ -17476,6 +17493,7 @@ async function createAppointmentFromAIConfirmation(conversationId: number, compa
         }
       }
     }
+    } // end if (!service) - skip search if auto-selected
 
     console.log('==================================================');
     console.log('🔍 VALIDAÇÃO CRÍTICA - Verificando dados extraídos');
