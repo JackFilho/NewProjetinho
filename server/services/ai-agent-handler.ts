@@ -379,10 +379,16 @@ Quando o cliente mencionar "remarcar", "reagendar", etc:
     const OpenAI = (await import('openai')).default;
     const openai = new OpenAI({ apiKey: company.openaiApiKey });
 
+    // Modelos de raciocínio (o1, o3, etc.) não suportam o parâmetro temperature
+    const selectedModel = company.openaiModel || 'gpt-4o-mini';
+    const isReasoningModel = /^o\d/i.test(selectedModel);
+
     const completion = await openai.chat.completions.create({
-      model: company.openaiModel || 'gpt-4o-mini',
+      model: selectedModel,
       messages: messages,
-      temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7,
+      ...(isReasoningModel ? {} : {
+        temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7,
+      }),
       max_tokens: company.openaiMaxTokens || 180,
     });
 

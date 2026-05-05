@@ -4557,10 +4557,11 @@ NOTA: O telefone NÃO precisa estar no JSON - será preenchido automaticamente p
 
 ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025", você DEVE retornar appointmentDate como "2025-12-18" (formato YYYY-MM-DD). NÃO use o dia da semana para calcular a data, use a DATA EXATA mostrada!`;
 
+    const _extractionModel = company.openaiModel || "gpt-4o-mini";
     const extraction = await openai.chat.completions.create({
-      model: company.openaiModel || "gpt-4o-mini",
+      model: _extractionModel,
       messages: [{ role: "user", content: extractionPrompt }],
-      temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7,
+      ...(/^o\d/i.test(_extractionModel) ? {} : { temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7 }),
       max_tokens: company.openaiMaxTokens || 180
     });
 
@@ -8405,10 +8406,11 @@ REGRAS CRÍTICAS PARA CANCELAMENTO:
             { role: 'user', content: messageText },
           ];
 
+          const _aiModel = company.openaiModel || 'gpt-4o-mini';
           const completion = await openai.chat.completions.create({
-            model: company.openaiModel || 'gpt-4o-mini',
+            model: _aiModel,
             messages: messages,
-            temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7,
+            ...(/^o\d/i.test(_aiModel) ? {} : { temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7 }),
             max_tokens: company.openaiMaxTokens || 180,
           });
 
@@ -12421,10 +12423,11 @@ Pedimos desculpas pelo transtorno. Aguarde alguns instantes e tente novamente.`;
               // FIM DA PRÉ-VALIDAÇÃO
               // ========================================
 
+              const _cancelModel = company.openaiModel || 'gpt-4o-mini';
               const completion = !isConfirmingCancel ? await openai.chat.completions.create({
-                model: company.openaiModel || 'gpt-4o-mini',
+                model: _cancelModel,
                 messages: messages,
-                temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7,
+                ...(/^o\d/i.test(_cancelModel) ? {} : { temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7 }),
                 max_tokens: company.openaiMaxTokens || 180,
               }) : null;
 
@@ -20013,10 +20016,11 @@ NOTA: O telefone NÃO precisa estar no JSON - será preenchido automaticamente p
 
 ATENÇÃO FINAL: Se no resumo do agendamento aparece uma data como "18/12/2025", você DEVE retornar appointmentDate como "2025-12-18" (formato YYYY-MM-DD). NÃO use o dia da semana para calcular a data, use a DATA EXATA mostrada!`;
 
+    const _extractionModel = company.openaiModel || "gpt-4o-mini";
     const extraction = await openai.chat.completions.create({
-      model: company.openaiModel || "gpt-4o-mini",
+      model: _extractionModel,
       messages: [{ role: "user", content: extractionPrompt }],
-      temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7,
+      ...(/^o\d/i.test(_extractionModel) ? {} : { temperature: company.openaiTemperature ? parseFloat(company.openaiTemperature.toString()) : 0.7 }),
       max_tokens: company.openaiMaxTokens || 180
     });
 
