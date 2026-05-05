@@ -120,63 +120,126 @@ export async function debugToken(
 /**
  * Busca o Shared WABA ID a partir do token do Embedded Signup.
  *
- * A Meta retorna o WABA ID dentro de granular_scopes do debug_token
- * ou via endpoint /me/businesses -> WABAs.
- *
- * Estratégia:
- * 1. debug_token -> granular_scopes -> whatsapp_business_management -> target_ids (WABA IDs)
- * 2. Se não encontrar, busca WABAs do business via Graph API
+ * Estratégia com múltiplos fallbacks:
+ * 1. debug_token -> granular_scopes -> whatsapp_business_management -> target_ids
+ * 2. /me/businesses -> whatsapp_business_accounts (businesses do usuário com WABAs)
+ * 3. /{business-id}/owned_whatsapp_business_accounts (WABAs de cada business)
+ * 4. /{business-id}/client_whatsapp_business_accounts (WABAs compartilhados com Tech Provider)
  */
 export async function resolveSharedWABA(
   userToken: string,
   appId: string,
   appSecret: string
 ): Promise<SharedWABAInfo> {
-  // App-level token for debug_token call
   const appToken = `${appId}|${appSecret}`;
-
-  // Step 1: debug_token to find WABA IDs in granular_scopes
-  const debugData = await debugToken(userToken, appToken);
 
   let wabaId: string | null = null;
   let businessId: string | null = null;
 
-  // Extract from granular_scopes
-  if (debugData?.granular_scopes) {
-    for (const scope of debugData.granular_scopes) {
-      if (scope.permission === 'whatsapp_business_management' && scope.target_ids?.length > 0) {
-        wabaId = scope.target_ids[0]; // First shared WABA
-      }
-      if (scope.permission === 'business_management' && scope.target_ids?.length > 0) {
-        businessId = scope.target_ids[0];
+  // ─── Step 1: debug_token → granular_scopes ───────────────────────────────
+  try {
+    const debugData = await debugToken(userToken, appToken);
+    console.log('🔍 [WABA] debug_token granular_scopes:', JSON.stringify(debugData?.granular_scopes || []));
+
+    if (debugData?.granular_scopes) {
+      for (const scope of debugData.granular_scopes) {
+        if (
+          (scope.permission === 'whatsapp_business_management' ||
+           scope.permission === 'whatsapp_business_messaging') &&
+          scope.target_ids?.length > 0
+        ) {
+          wabaId = wabaId || scope.target_ids[0];
+        }
+        if (scope.permission === 'business_management' && scope.target_ids?.length > 0) {
+          businessId = businessId || scope.target_ids[0];
+        }
       }
     }
+    console.log('🔍 [WABA] Após debug_token: wabaId=', wabaId, 'businessId=', businessId);
+  } catch (err) {
+    console.warn('⚠️ [WABA] debug_token falhou:', err);
   }
 
-  // Step 2: If no WABA from debug_token, try to list WABAs from business
-  if (!wabaId && businessId) {
-    const wabaUrl = `${META_GRAPH_API_BASE}/${businessId}/owned_whatsapp_business_accounts?fields=id,name,currency,timezone_id`;
-    const wabaResponse = await fetch(wabaUrl, {
-      headers: { Authorization: `Bearer ${userToken}` },
-    });
-    if (wabaResponse.ok) {
-      const wabaData = await wabaResponse.json();
-      if (wabaData?.data?.length > 0) {
-        wabaId = wabaData.data[0].id;
-      }
-    }
-  }
-
-  // Step 3: If still no WABA, try shared WABAs
+  // ─── Step 2: /me/businesses com WABAs expandidos ─────────────────────────
   if (!wabaId) {
-    // Try to find shared WABAs via the user's businesses
-    const meUrl = `${META_GRAPH_API_BASE}/me?fields=id,name`;
-    const meResponse = await fetch(meUrl, {
-      headers: { Authorization: `Bearer ${userToken}` },
-    });
-    if (meResponse.ok) {
-      const meData = await meResponse.json();
-      if (!businessId) businessId = meData.id;
+    try {
+      const bizUrl = `${META_GRAPH_API_BASE}/me/businesses?fields=id,name,whatsapp_business_accounts{id,name,currency,timezone_id}`;
+      const bizResp = await fetch(bizUrl, {
+        headers: { Authorization: `Bearer ${userToken}` },
+      });
+      if (bizResp.ok) {
+        const bizData = await bizResp.json();
+        console.log('🔍 [WABA] /me/businesses:', JSON.stringify(bizData?.data?.map((b: any) => ({
+          id: b.id,
+          name: b.name,
+          wabas: b.whatsapp_business_accounts?.data?.map((w: any) => w.id),
+        })) || []));
+
+        for (const biz of bizData?.data || []) {
+          businessId = businessId || biz.id;
+          if (biz.whatsapp_business_accounts?.data?.length > 0) {
+            wabaId = biz.whatsapp_business_accounts.data[0].id;
+            businessId = biz.id;
+            break;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ [WABA] /me/businesses falhou:', err);
+    }
+  }
+
+  // ─── Step 3: /{business-id}/owned_whatsapp_business_accounts ─────────────
+  if (!wabaId && businessId) {
+    try {
+      const ownedUrl = `${META_GRAPH_API_BASE}/${businessId}/owned_whatsapp_business_accounts?fields=id,name`;
+      const ownedResp = await fetch(ownedUrl, {
+        headers: { Authorization: `Bearer ${userToken}` },
+      });
+      if (ownedResp.ok) {
+        const ownedData = await ownedResp.json();
+        console.log('🔍 [WABA] owned_whatsapp_business_accounts:', JSON.stringify(ownedData?.data));
+        if (ownedData?.data?.length > 0) {
+          wabaId = ownedData.data[0].id;
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ [WABA] owned_whatsapp_business_accounts falhou:', err);
+    }
+  }
+
+  // ─── Step 4: /{business-id}/client_whatsapp_business_accounts ────────────
+  if (!wabaId && businessId) {
+    try {
+      const clientUrl = `${META_GRAPH_API_BASE}/${businessId}/client_whatsapp_business_accounts?fields=id,name`;
+      const clientResp = await fetch(clientUrl, {
+        headers: { Authorization: `Bearer ${userToken}` },
+      });
+      if (clientResp.ok) {
+        const clientData = await clientResp.json();
+        console.log('🔍 [WABA] client_whatsapp_business_accounts:', JSON.stringify(clientData?.data));
+        if (clientData?.data?.length > 0) {
+          wabaId = clientData.data[0].id;
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ [WABA] client_whatsapp_business_accounts falhou:', err);
+    }
+  }
+
+  // ─── Step 5: /me → user ID como fallback de businessId ──────────────────
+  if (!wabaId && !businessId) {
+    try {
+      const meResp = await fetch(`${META_GRAPH_API_BASE}/me?fields=id,name`, {
+        headers: { Authorization: `Bearer ${userToken}` },
+      });
+      if (meResp.ok) {
+        const meData = await meResp.json();
+        console.log('🔍 [WABA] /me:', JSON.stringify(meData));
+        businessId = meData.id;
+      }
+    } catch (err) {
+      console.warn('⚠️ [WABA] /me falhou:', err);
     }
   }
 
@@ -186,15 +249,15 @@ export async function resolveSharedWABA(
     );
   }
 
-  // Get WABA details
+  // ─── Resolve businessId via WABA details se ainda não temos ──────────────
   if (!businessId) {
     try {
       const wabaDetailsUrl = `${META_GRAPH_API_BASE}/${wabaId}?fields=id,owner_business_info`;
-      const detailsResponse = await fetch(wabaDetailsUrl, {
+      const detailsResp = await fetch(wabaDetailsUrl, {
         headers: { Authorization: `Bearer ${userToken}` },
       });
-      if (detailsResponse.ok) {
-        const details = await detailsResponse.json();
+      if (detailsResp.ok) {
+        const details = await detailsResp.json();
         businessId = details?.owner_business_info?.id || '';
       }
     } catch {
